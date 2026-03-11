@@ -1,0 +1,109 @@
+{
+    "library": "Built-in Standard",
+    "symbols": [
+        {
+            "name": "Resistor",
+            "category": "Passives",
+            "prefix": "R",
+            "primitives": [
+                {"type": "Line", "x1": -60, "y1": 0, "x2": -45, "y2": 0},
+                {"type": "Rect", "x": -45, "y": -15, "w": 90, "h": 30, "filled": false},
+                {"type": "Line", "x1": 45, "y1": 0, "x2": 60, "y2": 0},
+                {"type": "Pin", "x": -60, "y": 0, "number": 1, "name": "1", "orientation": "Right", "length": 15},
+                {"type": "Pin", "x": 60, "y": 0, "number": 2, "name": "2", "orientation": "Left", "length": 15}
+            ]
+        },
+        {
+            "name": "Capacitor",
+            "category": "Passives",
+            "prefix": "C",
+            "primitives": [
+                {"type": "Line", "x1": -45, "y1": 0, "x2": -7.5, "y2": 0},
+                {"type": "Line", "x1": -7.5, "y1": -22.5, "x2": -7.5, "y2": 22.5},
+                {"type": "Line", "x1": 7.5, "y1": -22.5, "x2": 7.5, "y2": 22.5},
+                {"type": "Line", "x1": 7.5, "y1": 0, "x2": 45, "y2": 0},
+                {"type": "Pin", "x": -45, "y": 0, "number": 1, "name": "1", "orientation": "Right", "length": 37.5},
+                {"type": "Pin", "x": 45, "y": 0, "number": 2, "name": "2", "orientation": "Left", "length": 37.5}
+            ]
+        },
+        {
+            "name": "Inductor",
+            "category": "Passives",
+            "prefix": "L",
+            "primitives": [
+                {"type": "Line", "x1": -60, "y1": 0, "x2": -45, "y2": 0},
+                {"type": "Arc", "x": -45, "y": -11.25, "w": 22.5, "h": 22.5, "start": 0, "span": 180},
+                {"type": "Arc", "x": -22.5, "y": -11.25, "w": 22.5, "h": 22.5, "start": 0, "span": 180},
+                {"type": "Arc", "x": 0, "y": -11.25, "w": 22.5, "h": 22.5, "start": 0, "span": 180},
+                {"type": "Arc", "x": 22.5, "y": -11.25, "w": 22.5, "h": 22.5, "start": 0, "span": 180},
+                {"type": "Line", "x1": 45, "y1": 0, "x2": 60, "y2": 0},
+                {"type": "Pin", "x": -60, "y": 0, "number": 1, "name": "1", "orientation": "Right", "length": 15},
+                {"type": "Pin", "x": 60, "y": 0, "number": 2, "name": "2", "orientation": "Left", "length": 15}
+            ]
+        },
+        {
+            "name": "Diode",
+            "category": "Semiconductors",
+            "prefix": "D",
+            "primitives": [
+                {"type": "Line", "x1": -45, "y1": 0, "x2": -15, "y2": 0},
+                {"type": "Polygon", "points": [{"x": -15, "y": -15}, {"x": -15, "y": 15}, {"x": 15, "y": 0}], "filled": true},
+                {"type": "Line", "x1": 15, "y1": -15, "x2": 15, "y2": 15},
+                {"type": "Line", "x1": 15, "y1": 0, "x2": 45, "y2": 0},
+                {"type": "Pin", "x": -45, "y": 0, "number": 1, "name": "A", "orientation": "Right", "length": 30},
+                {"type": "Pin", "x": 45, "y": 0, "number": 2, "name": "K", "orientation": "Left", "length": 30}
+            ]
+        },
+        {
+            "name": "GND",
+            "category": "Power",
+            "prefix": "#PWR",
+            "primitives": [
+                {"type": "Line", "x1": 0, "y1": -15, "x2": 0, "y2": 0},
+                {"type": "Line", "x1": -15, "y1": 0, "x2": 15, "y2": 0},
+                {"type": "Line", "x1": -9, "y1": 6, "x2": 9, "y2": 6},
+                {"type": "Line", "x1": -3, "y1": 12, "x2": 3, "y2": 12},
+                {"type": "Pin", "x": 0, "y": -15, "number": 1, "name": "GND", "orientation": "Down", "length": 0}
+            ]
+        },
+        {
+            "name": "VCC",
+            "category": "Power",
+            "prefix": "#PWR",
+            "primitives": [
+                {"type": "Line", "x1": 0, "y1": 15, "x2": 0, "y2": 0},
+                {"type": "Line", "x1": -7.5, "y1": 7.5, "x2": 0, "y2": 0},
+                {"type": "Line", "x1": 7.5, "y1": 7.5, "x2": 0, "y2": 0},
+                {"type": "Pin", "x": 0, "y": 15, "number": 1, "name": "VCC", "orientation": "Up", "length": 0}
+            ]
+        },
+        {
+            "name": "TL494",
+            "category": "Integrated Circuits",
+            "referencePrefix": "U",
+            "description": "PWM controller TL494 (16-pin)",
+            "defaultValue": "SUBCKT:TL494",
+            "primitives": [
+                {"type": "Rect", "x": -60, "y": -90, "w": 120, "h": 180, "filled": false},
+
+                {"type": "Pin", "x": -75, "y": -70, "number": 1, "name": "1", "orientation": "Right", "length": 15},
+                {"type": "Pin", "x": -75, "y": -50, "number": 2, "name": "2", "orientation": "Right", "length": 15},
+                {"type": "Pin", "x": -75, "y": -30, "number": 3, "name": "3", "orientation": "Right", "length": 15},
+                {"type": "Pin", "x": -75, "y": -10, "number": 4, "name": "4", "orientation": "Right", "length": 15},
+                {"type": "Pin", "x": -75, "y": 10, "number": 5, "name": "5", "orientation": "Right", "length": 15},
+                {"type": "Pin", "x": -75, "y": 30, "number": 6, "name": "6", "orientation": "Right", "length": 15},
+                {"type": "Pin", "x": -75, "y": 50, "number": 7, "name": "7", "orientation": "Right", "length": 15},
+                {"type": "Pin", "x": -75, "y": 70, "number": 8, "name": "8", "orientation": "Right", "length": 15},
+
+                {"type": "Pin", "x": 75, "y": 70, "number": 9, "name": "9", "orientation": "Left", "length": 15},
+                {"type": "Pin", "x": 75, "y": 50, "number": 10, "name": "10", "orientation": "Left", "length": 15},
+                {"type": "Pin", "x": 75, "y": 30, "number": 11, "name": "11", "orientation": "Left", "length": 15},
+                {"type": "Pin", "x": 75, "y": 10, "number": 12, "name": "12", "orientation": "Left", "length": 15},
+                {"type": "Pin", "x": 75, "y": -10, "number": 13, "name": "13", "orientation": "Left", "length": 15},
+                {"type": "Pin", "x": 75, "y": -30, "number": 14, "name": "14", "orientation": "Left", "length": 15},
+                {"type": "Pin", "x": 75, "y": -50, "number": 15, "name": "15", "orientation": "Left", "length": 15},
+                {"type": "Pin", "x": 75, "y": -70, "number": 16, "name": "16", "orientation": "Left", "length": 15}
+            ]
+        }
+    ]
+}

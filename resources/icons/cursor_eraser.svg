@@ -1,0 +1,8 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Eraser body (pink part) -->
+  <path d="M10 26L4 20L18 6L24 12L10 26Z" fill="#ffb3ba" stroke="#1a1a1a" stroke-width="1.5"/>
+  <!-- Eraser base (blue part) -->
+  <path d="M18 6L24 12L28 6L22 0L18 6Z" fill="#bae1ff" stroke="#1a1a1a" stroke-width="1.5"/>
+  <!-- Bottom edge highlight -->
+  <path d="M4 20L10 26" stroke="#ff4d4d" stroke-width="2" stroke-linecap="round"/>
+</svg>

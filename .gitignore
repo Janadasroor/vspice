@@ -1,0 +1,71 @@
+# CMake
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+_deps/
+
+# Qt
+*.user
+*.user.6.0
+*.user.*
+Qt6*
+*.qch
+.qtc_clangd/
+
+# IDES
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build Artifacts
+viospice
+viospice.exe
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+*.log
+
+# Simulation Artifacts
+*.raw
+*.cir
+*.flxsch.bak
+test_netlist.cir
+test_schematic.sch
+
+# Local Config
+local_config.h
+build_log.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Workspace data
+.gemini/
+.agent/
+.agents/
+brain/
+implementation_plan.md
+walkthrough.md
+task.md
+viora_core_files.txt
+viora_core_sources.txt
+viora_include_files.txt
+viora_schematic_files.txt
+viospice_core_files.txt
+viospice_core_sources.txt
+viospice_include_files.txt
+viospice_schematic_files.txt

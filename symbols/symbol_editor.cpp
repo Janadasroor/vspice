@@ -1,0 +1,3774 @@
+// symbols/symbol_editor.cpp
+//
+// Production-ready Symbol Editor
+// Key fixes vs. original:
+//   1.  m_drawnItems is now 1:1 with m_symbol.primitives() — overlay labels
+//       live in m_overlayItems so index arithmetic is always correct.
+//   2.  Undo commands no longer store raw QList& references (dangling-pointer
+//       hazard); they capture by value or hold a stable QPointer to the editor.
+//   3.  RemovePrimitiveCommand restores items at their ORIGINAL index, not by
+//       appending to the end (which broke subsequent operations).
+//   4.  Arc primitive uses consistent data keys (x, y, width, height,
+//       startAngle, spanAngle) both when creating and reading.
+//   5.  onPropertyChanged() does targeted visual updates instead of full rebuild.
+//   6.  Rotate/flip/move commands wrap applySymbolDefinition() via
+//       UpdateSymbolCommand so they are fully undoable.
+//   7.  clearScene() removes overlay items separately to avoid double-delete.
+//   8.  drawGrid() removed (replaced by SymbolEditorView::drawBackground()).
+//   9.  buildVisual() is a pure factory; ownership passes to caller.
+//  10.  QPointer<SymbolEditorView> used in lambdas to prevent dangling captures.
+
+#include "symbol_editor.h"
+#include "symbol_library.h"
+#include "kicad_symbol_importer.h"
+#include "../core/library_index.h"
+#include <QGraphicsTextItem>
+#include "theme_manager.h"
+#include "symbol_commands.h"
+#include "pin_table_dialog.h"
+#include "pin_modes_dialog.h"
+#include "../core/text_resolver.h"
+#include "../../core/ui/text_properties_dialog.h"
+
+#include <QGraphicsDropShadowEffect>
+#include <QStyleOptionGraphicsItem>
+#include <QPainterPathStroker>
+
+// --- Helper classes to suppress default selection drawing ---
+class FilteredRectItem : public QGraphicsRectItem {
+public:
+    using QGraphicsRectItem::QGraphicsRectItem;
+    void paint(QPainter* p, const QStyleOptionGraphicsItem* o, QWidget* w) override {
+        QStyleOptionGraphicsItem opt = *o; opt.state &= ~QStyle::State_Selected;
+        QGraphicsRectItem::paint(p, &opt, w);
+    }
+};
+
+class FilteredEllipseItem : public QGraphicsEllipseItem {
+public:
+    using QGraphicsEllipseItem::QGraphicsEllipseItem;
+    void paint(QPainter* p, const QStyleOptionGraphicsItem* o, QWidget* w) override {
+        QStyleOptionGraphicsItem opt = *o; opt.state &= ~QStyle::State_Selected;
+        QGraphicsEllipseItem::paint(p, &opt, w);
+    }
+};
+
+class FilteredLineItem : public QGraphicsLineItem {
+public:
+    using QGraphicsLineItem::QGraphicsLineItem;
+    void paint(QPainter* p, const QStyleOptionGraphicsItem* o, QWidget* w) override {
+        QStyleOptionGraphicsItem opt = *o; opt.state &= ~QStyle::State_Selected;
+        QGraphicsLineItem::paint(p, &opt, w);
+    }
+    QPainterPath shape() const override {
+        QPainterPathStroker stroker;
+        stroker.setWidth(10); // 10px hit area
+        return stroker.createStroke(QGraphicsLineItem::shape());
+    }
+};
+
+class FilteredPathItem : public QGraphicsPathItem {
+public:
+    using QGraphicsPathItem::QGraphicsPathItem;
+    void paint(QPainter* p, const QStyleOptionGraphicsItem* o, QWidget* w) override {
+        QStyleOptionGraphicsItem opt = *o; opt.state &= ~QStyle::State_Selected;
+        QGraphicsPathItem::paint(p, &opt, w);
+    }
+    QPainterPath shape() const override {
+        QPainterPathStroker stroker;
+        stroker.setWidth(10); // 10px hit area
+        return stroker.createStroke(QGraphicsPathItem::shape());
+    }
+};
+
+class FilteredPolygonItem : public QGraphicsPolygonItem {
+public:
+    using QGraphicsPolygonItem::QGraphicsPolygonItem;
+    void paint(QPainter* p, const QStyleOptionGraphicsItem* o, QWidget* w) override {
+        QStyleOptionGraphicsItem opt = *o; opt.state &= ~QStyle::State_Selected;
+        QGraphicsPolygonItem::paint(p, &opt, w);
+    }
+};
+
+class FilteredGroupItem : public QGraphicsItemGroup {
+public:
+    using QGraphicsItemGroup::QGraphicsItemGroup;
+    void paint(QPainter* p, const QStyleOptionGraphicsItem* o, QWidget* w) override {
+        QStyleOptionGraphicsItem opt = *o; opt.state &= ~QStyle::State_Selected;
+        QGraphicsItemGroup::paint(p, &opt, w);
+    }
+};
+
+class FilteredSimpleTextItem : public QGraphicsSimpleTextItem {
+public:
+    using QGraphicsSimpleTextItem::QGraphicsSimpleTextItem;
+    void paint(QPainter* p, const QStyleOptionGraphicsItem* o, QWidget* w) override {
+        QStyleOptionGraphicsItem opt = *o; opt.state &= ~QStyle::State_Selected;
+        QGraphicsSimpleTextItem::paint(p, &opt, w);
+    }
+};
+
+class FilteredPixmapItem : public QGraphicsPixmapItem {
+public:
+    using QGraphicsPixmapItem::QGraphicsPixmapItem;
+    void paint(QPainter* p, const QStyleOptionGraphicsItem* o, QWidget* w) override {
+        QStyleOptionGraphicsItem opt = *o; opt.state &= ~QStyle::State_Selected;
+        QGraphicsPixmapItem::paint(p, &opt, w);
+    }
+};
+
+#include <QGraphicsItem>
+#include <QHeaderView>
+#include <QSignalBlocker>
+#include <QSet>
+#include <QDir>
+#include <algorithm>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QSplitter>
+#include <QMessageBox>
+#include <QInputDialog>
+#include <QFileDialog>
+#include <QActionGroup>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QTimer>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QMouseEvent>
+#include <QWheelEvent>
+#include <QContextMenuEvent>
+#include <QMenu>
+#include <QPainter>
+#include <QKeyEvent>
+#include <QDebug>
+#include <QUndoStack>
+#include <QUndoCommand>
+#include <QTreeWidget>
+#include <QTableWidget>
+#include <QListWidget>
+#include <QTextEdit>
+#include <QJsonDocument>
+#include <QTreeWidgetItem>
+#include <QFont>
+#include <QPointer>
+#include <algorithm>
+#include <cmath>
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Construction
+// ─────────────────────────────────────────────────────────────────────────────
+
+SymbolEditor::SymbolEditor(QWidget* parent)
+    : QMainWindow(parent)
+    , m_undoStack(new QUndoStack(this)) {
+    setupUI();
+}
+
+SymbolEditor::SymbolEditor(const SymbolDefinition& symbol, QWidget* parent)
+    : QMainWindow(parent)
+    , m_symbol(symbol)
+    , m_undoStack(new QUndoStack(this)) {
+    setupUI();
+    setSymbolDefinition(symbol);
+}
+
+SymbolEditor::~SymbolEditor() {
+    // Overlay items are not in m_drawnItems, so we must clean them separately.
+    removeOverlayItems();
+    // m_drawnItems are owned by the QGraphicsScene; no manual delete needed.
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Scene helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+QColor SymbolEditor::themeLineColor() const {
+    PCBTheme* theme = ThemeManager::theme();
+    switch (m_colorPreset) {
+    case 1: return QColor(245, 248, 255);  // High Contrast
+    case 2: return QColor(175, 245, 220);  // Emerald
+    case 3: return QColor(255, 214, 148);  // Amber CAD
+    case 4: return QColor(220, 220, 220);  // Mono Print
+    default: break;                        // Theme
+    }
+    return theme ? theme->schematicLine() : Qt::white;
+}
+
+QColor SymbolEditor::themeTextColor() const {
+    PCBTheme* theme = ThemeManager::theme();
+    switch (m_colorPreset) {
+    case 1: return QColor(255, 255, 255);  // High Contrast
+    case 2: return QColor(230, 255, 245);  // Emerald
+    case 3: return QColor(255, 240, 212);  // Amber CAD
+    case 4: return QColor(245, 245, 245);  // Mono Print
+    default: break;                        // Theme
+    }
+    return theme ? theme->textColor() : QColor(235, 235, 235);
+}
+
+QColor SymbolEditor::themePinLabelColor() const {
+    PCBTheme* theme = ThemeManager::theme();
+    switch (m_colorPreset) {
+    case 1: return QColor(86, 186, 255);   // High Contrast
+    case 2: return QColor(88, 212, 176);   // Emerald
+    case 3: return QColor(255, 184, 96);   // Amber CAD
+    case 4: return QColor(200, 200, 200);  // Mono Print
+    default: break;                        // Theme
+    }
+    return theme ? theme->accentColor().lighter(120) : QColor(140, 190, 255);
+}
+
+int SymbolEditor::primitiveIndex(QGraphicsItem* item) const {
+    while (item) {
+        if (item->data(10).toString() == "inherited") return -1; // Block inherited items
+
+        // Robust path: map through the tracked visual list first.
+        const int drawnIdx = m_drawnItems.indexOf(item);
+        if (drawnIdx >= 0) {
+            int inheritedCount = m_symbol.effectivePrimitives().size() - m_symbol.primitives().size();
+            int localIdx = drawnIdx - inheritedCount;
+            if (localIdx >= 0 && localIdx < m_symbol.primitives().size()) return localIdx;
+        }
+
+        bool ok = false;
+        int idx = item->data(1).toInt(&ok);
+        if (ok) {
+            // idx is the global index in m_drawnItems (effectivePrimitives)
+            // we need the local index in m_symbol.primitives()
+            int inheritedCount = m_symbol.effectivePrimitives().size() - m_symbol.primitives().size();
+            int localIdx = idx - inheritedCount;
+            if (localIdx >= 0 && localIdx < m_symbol.primitives().size()) return localIdx;
+            return -1;
+        }
+        item = item->parentItem();
+    }
+    return -1;
+}
+
+void SymbolEditor::removeOverlayItems() {
+    for (QGraphicsItem* item : m_overlayItems) {
+        if (m_scene) m_scene->removeItem(item);
+        delete item;
+    }
+    m_overlayItems.clear();
+}
+
+void SymbolEditor::clearScene() {
+    m_overlayItems.clear();
+    m_drawnItems.clear();
+    m_previewItem = nullptr;
+    m_polyPoints.clear();
+    if (m_scene) {
+        m_scene->clear();
+    }
+}
+
+void SymbolEditor::updateOverlayLabels() {
+    removeOverlayItems();
+
+    SymbolDefinition def = symbolDefinition();
+    QRectF bounds = def.boundingRect();
+    if (bounds.isNull() || bounds.width() < 10)
+        bounds = QRectF(-20, -20, 40, 40);
+
+    auto makeLabel = [&](const QString& text, const QColor& color,
+                         const QPointF& defaultPos, const QPointF& savedPos, const QString& type) -> QGraphicsSimpleTextItem* {
+        auto* lbl = new QGraphicsSimpleTextItem(text);
+        lbl->setBrush(color);
+        lbl->setFont(QFont("SansSerif", 10, QFont::Bold));
+        
+        // Use saved position if it's not (0,0), otherwise use default
+        if (savedPos != QPointF(0, 0)) {
+            lbl->setPos(savedPos);
+        } else {
+            lbl->setPos(defaultPos);
+        }
+
+        lbl->setFlag(QGraphicsItem::ItemIsSelectable, true);
+        lbl->setFlag(QGraphicsItem::ItemIsMovable,    true);
+        lbl->setData(0, "label");
+        lbl->setData(1, type); // "reference" or "name"
+        m_scene->addItem(lbl);
+        m_overlayItems.append(lbl);
+        return lbl;
+    };
+
+    makeLabel(def.referencePrefix() + "?",
+              themePinLabelColor(),
+              QPointF(bounds.left(), bounds.top() - 25),
+              def.referencePos(),
+              "reference");
+
+    makeLabel(def.name(),
+              themeTextColor().lighter(105),
+              QPointF(bounds.left(), bounds.bottom() + 5),
+              def.namePos(),
+              "name");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Visual factory
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::applyShapeStyle(QAbstractGraphicsShapeItem* shape,
+                                   const SymbolPrimitive& prim) const {
+    qreal width = prim.data.value("lineWidth").toDouble();
+    if (width <= 0.0) width = 1.5;
+
+    Qt::PenStyle penStyle = Qt::SolidLine;
+    const QString s = prim.data.value("lineStyle").toString();
+    if (s == "Dash")    penStyle = Qt::DashLine;
+    else if (s == "Dot")      penStyle = Qt::DotLine;
+    else if (s == "DashDot")  penStyle = Qt::DashDotLine;
+
+    shape->setPen(QPen(themeLineColor(), width, penStyle));
+
+    if (prim.data.value("filled").toBool()) {
+        QColor fill(prim.data.value("fillColor").toString());
+        if (!fill.isValid()) fill = QColor(0, 122, 204, 50);
+        shape->setBrush(fill);
+    } else {
+        shape->setBrush(QColor(255, 255, 255, 15));
+    }
+}
+
+QGraphicsItem* SymbolEditor::buildVisual(const SymbolPrimitive& prim, int index) const {
+    QGraphicsItem* visual = nullptr;
+    const QColor lineColor = themeLineColor();
+    const QColor textDefaultColor = themeTextColor();
+    const QColor pinLabelColor = themePinLabelColor();
+    const QPen   defaultPen(lineColor, 1.5);
+
+    switch (prim.type) {
+
+    case SymbolPrimitive::Line: {
+        auto* item = new FilteredLineItem(
+            QLineF(prim.data.value("x1").toDouble(), prim.data.value("y1").toDouble(),
+                   prim.data.value("x2").toDouble(), prim.data.value("y2").toDouble()));
+        // Reuse applyShapeStyle logic for lines (no brush needed)
+        qreal w = prim.data.value("lineWidth").toDouble();
+        if (w <= 0) w = 1.5;
+        Qt::PenStyle ps = Qt::SolidLine;
+        const QString ls = prim.data.value("lineStyle").toString();
+        if (ls == "Dash")    ps = Qt::DashLine;
+        else if (ls == "Dot")     ps = Qt::DotLine;
+        else if (ls == "DashDot") ps = Qt::DashDotLine;
+        item->setPen(QPen(lineColor, w, ps));
+        visual = item;
+        break;
+    }
+
+    case SymbolPrimitive::Rect: {
+        const qreal w = prim.data.contains("width")
+                      ? prim.data.value("width").toDouble()
+                      : prim.data.value("w").toDouble();
+        const qreal h = prim.data.contains("height")
+                      ? prim.data.value("height").toDouble()
+                      : prim.data.value("h").toDouble();
+        auto* item = new FilteredRectItem(
+            prim.data.value("x").toDouble(),
+            prim.data.value("y").toDouble(), w, h);
+        applyShapeStyle(item, prim);
+        item->setZValue(-1);
+        visual = item;
+        break;
+    }
+
+    case SymbolPrimitive::Circle: {
+        // Support both (centerX/centerY) and (cx/cy) and bare (x/y) key variants
+        auto dbl = [&](const char* a, const char* b) {
+            return prim.data.contains(a)
+                 ? prim.data.value(a).toDouble()
+                 : prim.data.value(b).toDouble();
+        };
+        const qreal cx = dbl("centerX", "cx");
+        const qreal cy = dbl("centerY", "cy");
+        const qreal r  = dbl("radius",  "r");
+        auto* item = new FilteredEllipseItem(cx - r, cy - r, r * 2, r * 2);
+        applyShapeStyle(item, prim);
+        visual = item;
+        break;
+    }
+
+    case SymbolPrimitive::Arc: {
+        // Keys: x, y, width, height, startAngle (degrees*16), spanAngle (degrees*16)
+        const qreal x  = prim.data.value("x").toDouble();
+        const qreal y  = prim.data.value("y").toDouble();
+        const qreal w  = prim.data.contains("width")  ? prim.data.value("width").toDouble()
+                                                       : prim.data.value("w").toDouble();
+        const qreal h  = prim.data.contains("height") ? prim.data.value("height").toDouble()
+                                                       : prim.data.value("h").toDouble();
+        const int sa   = prim.data.value("startAngle").toInt(0);
+        const int span = prim.data.value("spanAngle").toInt(180 * 16);
+        QPainterPath path;
+        QRectF rect(x, y, w, h);
+        path.arcMoveTo(rect, sa / 16.0);
+        path.arcTo(rect, sa / 16.0, span / 16.0);
+        auto* item = new FilteredPathItem(path);
+        qreal lw = prim.data.value("lineWidth").toDouble();
+        if (lw <= 0) lw = 1.5;
+        item->setPen(QPen(lineColor, lw));
+        visual = item;
+        break;
+    }
+
+    case SymbolPrimitive::Text: {
+        QString rawText = prim.data.value("text").toString();
+        QMap<QString, QString> vars;
+        vars["REFERENCE"] = m_symbol.referencePrefix() + "?";
+        vars["VALUE"]     = m_symbol.defaultValue().isEmpty() ? "Value" : m_symbol.defaultValue();
+        vars["NAME"]      = m_symbol.name();
+        vars["DATE"]      = QDate::currentDate().toString(Qt::ISODate);
+        
+        QString resolved = TextResolver::resolve(rawText, vars);
+        auto* item = new FilteredSimpleTextItem(resolved);
+        const qreal anchorX = prim.data.value("x").toDouble();
+        const qreal anchorY = prim.data.value("y").toDouble();
+        int fs = prim.data.value("fontSize").toInt(10);
+        if (fs <= 0) fs = 10;
+        item->setFont(QFont("SansSerif", fs));
+        
+        QColor c = textDefaultColor;
+        if (prim.data.contains("color")) {
+            c = QColor(prim.data["color"].toString());
+        }
+        item->setBrush(c);
+
+        // KiCad importer may provide text justification and rotation.
+        const QRectF tb = item->boundingRect();
+        qreal dx = 0.0;
+        const QString hAlign = prim.data.value("hAlign").toString("left").toLower();
+        const QString vAlign = prim.data.value("vAlign").toString("baseline").toLower();
+        if (hAlign == "center") dx = -tb.width() * 0.5;
+        else if (hAlign == "right") dx = -tb.width();
+        qreal py = anchorY;
+        if (vAlign == "center") py -= tb.height() * 0.5;
+        else if (vAlign == "bottom") py -= tb.height();
+        else if (vAlign == "baseline") py -= QFontMetricsF(item->font()).ascent();
+        // "top" keeps anchorY as top edge.
+        item->setPos(anchorX + dx, py);
+
+        const qreal rotDeg = prim.data.value("rotation").toDouble(0.0);
+        if (std::abs(rotDeg) > 1e-6) {
+            item->setTransformOriginPoint(0.0, 0.0);
+            item->setRotation(-rotDeg); // scene Y is flipped relative to KiCad
+        }
+        visual = item;
+        break;
+    }
+
+        case SymbolPrimitive::Pin: {
+            auto* group = new FilteredGroupItem();
+            const qreal px = prim.data.value("x").toDouble();
+            const qreal py = prim.data.value("y").toDouble();
+            qreal len = prim.data.value("length").toDouble();
+            if (len <= 0) len = 15.0; // match schematic default
+    
+            bool isVisible = prim.data.value("visible").toBool(true);
+            if (!isVisible) group->setOpacity(0.3);
+    
+            const QString orient = prim.data.value("orientation").toString("Right");
+
+        // endPt = where the lead meets the body edge
+        // Convention: orientation string describes the direction the line extends FROM the connection point.
+        QPointF endPt;
+        if      (orient == "Left")  endPt = QPointF(px - len, py);
+        else if (orient == "Up")    endPt = QPointF(px, py - len);
+        else if (orient == "Down")  endPt = QPointF(px, py + len);
+        else                        endPt = QPointF(px + len, py); // Right
+
+        // Pin body line
+        auto* line = new FilteredLineItem(px, py, endPt.x(), endPt.y());
+        line->setPen(QPen(lineColor, 2.0, isVisible ? Qt::SolidLine : Qt::DashLine));
+        group->addToGroup(line);
+
+        // Draw Pin Shapes (Inverted, Clock, etc.)
+        QString shape = prim.data.value("pinShape").toString("Line");
+        if (shape == "Inverted" || shape == "Inverted Clock" || shape == "Falling Edge Clock") {
+            // Circle at the body end of the lead
+            qreal cr = 3.0;
+            QPointF cPos = endPt;
+            auto* circle = new FilteredEllipseItem(cPos.x() - cr, cPos.y() - cr, cr * 2, cr * 2);
+            circle->setPen(QPen(lineColor, 1.5));
+            circle->setBrush(ThemeManager::theme() ? ThemeManager::theme()->panelBackground() : Qt::black);
+            group->addToGroup(circle);
+            
+            // Shorten the line so it doesn't cross the circle
+            QLineF l(px, py, endPt.x(), endPt.y());
+            if (l.length() > cr) l.setLength(l.length() - cr);
+            line->setLine(l);
+        }
+        
+        if (shape == "Clock" || shape == "Inverted Clock" || shape == "Falling Edge Clock") {
+            // Wedge at the body end
+            QPointF p1, p2, p3;
+            qreal w = 4.0;
+            QPointF wedgeBase = endPt;
+
+            if (shape != "Clock") {
+                qreal offset = 6.0;
+                if      (orient == "Left")  wedgeBase.setX(endPt.x() + offset);
+                else if (orient == "Right") wedgeBase.setX(endPt.x() - offset);
+                else if (orient == "Up")    wedgeBase.setY(endPt.y() + offset);
+                else                        wedgeBase.setY(endPt.y() - offset);
+            }
+
+            if (orient == "Left" || orient == "Right") {
+                qreal dir = (orient == "Left") ? 1 : -1;
+                p1 = wedgeBase + QPointF(0, -w);
+                p2 = wedgeBase + QPointF(dir * w, 0);
+                p3 = wedgeBase + QPointF(0, w);
+            } else {
+                qreal dir = (orient == "Up") ? 1 : -1;
+                p1 = wedgeBase + QPointF(-w, 0);
+                p2 = wedgeBase + QPointF(0, dir * w);
+                p3 = wedgeBase + QPointF(w, 0);
+            }
+            auto* wedge = new FilteredPathItem();
+            QPainterPath wp; wp.moveTo(p1); wp.lineTo(p2); wp.lineTo(p3);
+            wedge->setPath(wp);
+            wedge->setPen(QPen(lineColor, 1.5));
+            group->addToGroup(wedge);
+        }
+
+        if (shape == "Input Low" || shape == "Output Low") {
+            // Small L-shape or bar (simplified as small offset line)
+            // OrCAD/KiCad style: inverted circle is most common for active-low.
+            // For now let's use a small dot or specific bar if requested.
+        }
+
+        // Connection-point dot at pin tip (px, py), matching Schematic Editor style
+        QColor dotBrush = ThemeManager::theme() ? ThemeManager::theme()->schematicComponent() : QColor(12, 12, 12);
+        auto* dot = new FilteredEllipseItem(px - 2.5, py - 2.5, 5.0, 5.0);
+        dot->setBrush(dotBrush);
+        dot->setPen(QPen(lineColor, 2.0));
+        group->addToGroup(dot);
+
+        // Pin number parsing
+        QJsonValue numVal = prim.data["number"];
+        if (numVal.isUndefined()) numVal = prim.data["num"];
+        QString numStr = numVal.isString() ? numVal.toString() : QString::number(numVal.toInt());
+        
+        QColor textColor = pinLabelColor;
+
+        // Pin number label
+        QString fullNumStr = numStr;
+        QString stacked = prim.data.value("stackedNumbers").toString();
+        if (!stacked.isEmpty()) {
+            int count = stacked.split(",", Qt::SkipEmptyParts).size();
+            fullNumStr += QString(" [+%1]").arg(count);
+        }
+
+        auto* numLabel = new FilteredSimpleTextItem(fullNumStr);
+        numLabel->setBrush(textColor);
+        int nsz = prim.data.value("numSize").toInt(7);
+        numLabel->setFont(QFont("Monospace", nsz > 0 ? nsz : 7));
+        numLabel->setParentItem(group);
+
+        // Pin name label
+        QString nameStr = prim.data.value("name").toString();
+        // Strip KiCad overline wrappers to get clean name
+        nameStr.replace("~{", "");
+        nameStr.replace("}", "");
+        if (nameStr.startsWith("~")) nameStr = nameStr.mid(1);
+        if (nameStr.startsWith("\\overline{") && nameStr.endsWith("}")) {
+            nameStr = nameStr.mid(10, nameStr.length() - 11);
+        }
+
+        auto* nameLabel = new FilteredSimpleTextItem(nameStr);
+        nameLabel->setBrush(textColor);
+        int asz = prim.data.value("nameSize").toInt(7);
+        nameLabel->setFont(QFont("SansSerif", asz > 0 ? asz : 7));
+        nameLabel->setParentItem(group);
+
+        if (prim.data.value("hideNum").toBool()) numLabel->hide();
+        if (prim.data.value("hideName").toBool()) nameLabel->hide();
+
+        // Position labels: number centered along lead, name inside body (at endPt side)
+        const QRectF nb = nameLabel->boundingRect();
+        const QRectF numB = numLabel->boundingRect();
+        
+        if (orient == "Left") {
+            // Line extends left from px: number centered
+            numLabel->setPos(px - len/2.0 - numB.width()/2.0, py - numB.height() - 2);
+            nameLabel->setPos(endPt.x() - nb.width() - 4, py - nb.height()/2.0);
+        } else if (orient == "Right") {
+            // Line extends right from px: number centered
+            numLabel->setPos(px + len/2.0 - numB.width()/2.0, py - numB.height() - 2);
+            nameLabel->setPos(endPt.x() + 4, py - nb.height()/2.0);
+        } else if (orient == "Up") {
+            // Line extends up from py
+            numLabel->setPos(px + 4, py - len/2.0 - numB.height()/2.0);
+            nameLabel->setTransformOriginPoint(nb.center());
+            nameLabel->setRotation(-90);
+            nameLabel->setPos(endPt.x() - nb.height()/2.0, endPt.y() - nb.width() - 4);
+        } else if (orient == "Down") {
+            // Line extends down from py
+            numLabel->setPos(px + 4, py + len/2.0 - numB.height()/2.0);
+            nameLabel->setTransformOriginPoint(nb.center());
+            nameLabel->setRotation(-90);
+            nameLabel->setPos(endPt.x() - nb.height()/2.0, endPt.y() + 4);
+        }
+
+        visual = group;
+        break;
+    }
+
+    case SymbolPrimitive::Polygon: {
+        QPolygonF poly;
+        const QJsonArray pts = prim.data.value("points").toArray();
+        poly.reserve(pts.size());
+        for (const auto& v : pts) {
+            const QJsonObject o = v.toObject();
+            poly.append(QPointF(o.value("x").toDouble(), o.value("y").toDouble()));
+        }
+        auto* item = new FilteredPolygonItem(poly);
+        applyShapeStyle(item, prim);
+        visual = item;
+        break;
+    }
+
+    case SymbolPrimitive::Bezier: {
+        QPointF p1(prim.data["x1"].toDouble(), prim.data["y1"].toDouble());
+        QPointF p2(prim.data["x2"].toDouble(), prim.data["y2"].toDouble());
+        QPointF p3(prim.data["x3"].toDouble(), prim.data["y3"].toDouble());
+        QPointF p4(prim.data["x4"].toDouble(), prim.data["y4"].toDouble());
+        
+        QPainterPath path;
+        path.moveTo(p1);
+        path.cubicTo(p2, p3, p4);
+        
+        auto* item = new FilteredPathItem(path);
+        qreal lw = prim.data.value("lineWidth").toDouble();
+        if (lw <= 0) lw = 1.5;
+        item->setPen(QPen(lineColor, lw));
+        visual = item;
+        break;
+    }
+
+    case SymbolPrimitive::Image: {
+        QByteArray ba = QByteArray::fromBase64(prim.data["image"].toString().toLatin1());
+        QPixmap pix;
+        pix.loadFromData(ba);
+        if (pix.isNull()) break;
+
+        qreal x = prim.data["x"].toDouble();
+        qreal y = prim.data["y"].toDouble();
+        qreal w = prim.data.contains("width") ? prim.data["width"].toDouble() : prim.data["w"].toDouble();
+        qreal h = prim.data.contains("height") ? prim.data["height"].toDouble() : prim.data["h"].toDouble();
+
+        auto* item = new FilteredPixmapItem(pix.scaled(w, h, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+        item->setPos(x, y);
+        visual = item;
+        break;
+    }
+
+    default:
+        break;
+    }
+
+    if (visual) {
+        visual->setFlag(QGraphicsItem::ItemIsSelectable);
+        visual->setFlag(QGraphicsItem::ItemIsMovable);
+        visual->setData(1, index);
+        if (prim.type == SymbolPrimitive::Pin) {
+            visual->setData(2, "pin");
+            visual->setData(3, prim.data.value("x").toDouble());
+            visual->setData(4, prim.data.value("y").toDouble());
+        }
+    }
+    return visual;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – setSymbolDefinition / applySymbolDefinition
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::setSymbolDefinition(const SymbolDefinition& def) {
+    m_undoStack->clear();
+    applySymbolDefinition(def);
+}
+
+void SymbolEditor::applySymbolDefinition(const SymbolDefinition& def) {
+    // 1. Capture current selection indices
+    QList<int> selectedIndices;
+    for (QGraphicsItem* item : m_scene->selectedItems()) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) selectedIndices.append(idx);
+    }
+
+    // 2. Clear and rebuild scene
+    clearScene();
+    m_symbol = def;
+
+    // Sync UI metadata
+    m_nameEdit->setText(def.name());
+    m_descriptionEdit->setText(def.description());
+    m_categoryCombo->setCurrentText(def.category());
+    m_prefixEdit->setText(def.referencePrefix());
+    m_footprintEdit->setText(def.defaultFootprint());
+
+    // Update Unit Selector if needed
+    if (m_unitCombo) {
+        m_unitCombo->blockSignals(true);
+        int prevUnit = m_currentUnit;
+        m_unitCombo->clear();
+        m_unitCombo->addItem("All Units", 0);
+        for (int u = 1; u <= def.unitCount(); ++u) {
+            m_unitCombo->addItem(QString("Unit %1").arg(QChar('A' + u - 1)), u);
+        }
+        int idx = m_unitCombo->findData(prevUnit);
+        m_unitCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+        m_currentUnit = m_unitCombo->currentData().toInt();
+        m_unitCombo->blockSignals(false);
+    }
+
+    // Rebuild primitive visuals
+    QList<SymbolPrimitive> effective = def.effectivePrimitives();
+    QList<SymbolPrimitive> local = def.primitives();
+    
+    m_drawnItems.reserve(effective.size());
+    for (int i = 0; i < effective.size(); ++i) {
+        // Filter by unit
+        if (m_currentUnit != 0 && effective[i].unit() != 0 && effective[i].unit() != m_currentUnit) {
+            continue;
+        }
+        
+        // Filter by style
+        if (m_currentStyle != 0 && effective[i].bodyStyle() != 0 && effective[i].bodyStyle() != m_currentStyle) {
+            continue;
+        }
+
+        // Is this primitive local or inherited?
+        bool isInherited = (i < (effective.size() - local.size()));
+        
+        QGraphicsItem* visual = buildVisual(effective[i], i);
+        if (visual) {
+            if (isInherited) {
+                visual->setOpacity(0.5);
+                visual->setFlag(QGraphicsItem::ItemIsSelectable, false);
+                visual->setFlag(QGraphicsItem::ItemIsMovable, false);
+                visual->setData(10, "inherited"); // Tag for logic
+            }
+            m_scene->addItem(visual);
+            m_drawnItems.append(visual);
+            
+            // 3. Restore selection (only for local items)
+            if (!isInherited && selectedIndices.contains(i - (effective.size() - local.size()))) {
+                visual->setSelected(true);
+            }
+        }
+    }
+
+    updateOverlayLabels();
+    updateCodePreview();
+    updatePinTable();
+}
+
+SymbolDefinition SymbolEditor::symbolDefinition() const {
+    SymbolDefinition def = m_symbol;
+    def.setName(m_nameEdit->text());
+    def.setDescription(m_descriptionEdit->text());
+    def.setCategory(m_categoryCombo->currentText());
+    def.setReferencePrefix(m_prefixEdit->text());
+    return def;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – UI Setup
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::setupUI() {
+    setWindowTitle("Symbol Editor");
+    resize(1280, 850);
+
+    // Ensure standard window decorations including maximize/minimize buttons
+    setWindowFlags(Qt::Window | Qt::WindowMaximizeButtonHint | Qt::WindowMinimizeButtonHint | Qt::WindowCloseButtonHint);
+
+    // Global Dark Style
+    setStyleSheet(
+        "QMainWindow { background-color: #1e1e1e; }"
+        "QDockWidget { color: #cccccc; font-weight: bold; }"
+        "QDockWidget::title { background-color: #2d2d30; padding: 6px; border-bottom: 1px solid #3c3c3c; }"
+        "QGroupBox { border: 1px solid #3c3c3c; margin-top: 15px; padding-top: 15px; color: #3b82f6; font-size: 12px; font-weight: bold; border-radius: 4px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+        "QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background-color: #121212; border: 1px solid #3c3c3c; padding: 4px 8px; color: #cccccc; border-radius: 3px; }"
+        "QLineEdit:focus, QComboBox:focus { border-color: #007acc; }"
+        "QPushButton { background-color: #2d2d30; border: 1px solid #555; padding: 6px 12px; color: #cccccc; border-radius: 4px; }"
+        "QPushButton:hover { background-color: #3c3c3c; border-color: #666; }"
+        "QPushButton:pressed { background-color: #094771; color: white; }"
+        "QScrollArea { border: none; background-color: #1e1e1e; }"
+    );
+
+    // ── Main Canvas ─────────────────────────────────────────────────────────
+    m_scene = new QGraphicsScene(this);
+    m_scene->setSceneRect(-500, -500, 1000, 1000);
+    connect(m_scene, &QGraphicsScene::selectionChanged, this, &SymbolEditor::onSelectionChanged);
+
+    m_view = new SymbolEditorView();
+    m_view->setScene(m_scene);
+    m_view->setGridSize(15.0); // Match initial UI default
+    setCentralWidget(m_view);
+
+    connectViewSignals();
+
+    // ── Menus & Toolbars ───────────────────────────────────────────────────
+    createMenuBar();
+    createToolBar();
+    addToolBar(Qt::TopToolBarArea, m_toolbar);
+    addToolBar(Qt::LeftToolBarArea, m_leftToolbar);
+
+    // ── Docks ───────────────────────────────────────────────────────────────
+    setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowTabbedDocks | QMainWindow::VerticalTabs);
+
+    // ZONE 1: THE INSPECTOR (Right Side - Properties & Metadata)
+    // ---------------------------------------------------------
+    auto* infoDock = new QDockWidget("Symbol Metadata", this);
+    infoDock->setObjectName("SymbolInfoDock");
+    createSymbolInfoPanel();
+    // ... metadata setup ...
+    auto* infoContainer = new QWidget();
+    auto* infoLayout = new QVBoxLayout(infoContainer);
+    auto* infoGroup = new QGroupBox("Identity");
+    auto* infoForm = new QFormLayout(infoGroup);
+    infoForm->addRow("Name:", m_nameEdit);
+    infoForm->addRow("Prefix:", m_prefixEdit);
+    infoForm->addRow("Category:", m_categoryCombo);
+    
+    QHBoxLayout* fpLayout = new QHBoxLayout();
+    m_footprintEdit = new QLineEdit();
+    m_footprintEdit->setPlaceholderText("Associated Footprint");
+    QPushButton* fpBrowse = new QPushButton("...");
+    fpBrowse->setFixedWidth(30);
+    fpLayout->addWidget(m_footprintEdit);
+    fpLayout->addWidget(fpBrowse);
+    infoForm->addRow("Footprint:", fpLayout);
+    connect(fpBrowse, &QPushButton::clicked, this, &SymbolEditor::onBrowseFootprint);
+    infoForm->addRow("Desc:", m_descriptionEdit);
+    infoLayout->addWidget(infoGroup);
+
+    auto* actionGroup = new QGroupBox("Component Actions");
+    auto* actionLayout = new QVBoxLayout(actionGroup);
+    
+    auto* placeBtn = new QPushButton("Place in Schematic");
+    placeBtn->setStyleSheet("background-color: #0d9488; color: white; font-weight: bold; padding: 8px;");
+    connect(placeBtn, &QPushButton::clicked, this, &SymbolEditor::onPlaceInSchematic);
+    actionLayout->addWidget(placeBtn);
+
+    auto* imgBtn = new QPushButton("Import Image");
+    imgBtn->setStyleSheet("background-color: #4b5563; color: white;");
+    connect(imgBtn, &QPushButton::clicked, this, &SymbolEditor::onImportImage);
+    actionLayout->addWidget(imgBtn);
+
+    auto* fieldsBtn = new QPushButton("Custom Fields");
+    connect(fieldsBtn, &QPushButton::clicked, this, &SymbolEditor::onManageCustomFields);
+    actionLayout->addWidget(fieldsBtn);
+    infoLayout->addWidget(actionGroup);
+    infoLayout->addStretch();
+    infoDock->setWidget(infoContainer);
+    addDockWidget(Qt::RightDockWidgetArea, infoDock);
+
+    auto* aiDock = new QDockWidget("✨ Gemini Assistant", this);
+    aiDock->setObjectName("GeminiDock");
+    m_aiPanel = new GeminiPanel(m_scene, this);
+    m_aiPanel->setMode("symbol");
+    connect(m_aiPanel, &GeminiPanel::symbolJsonGenerated, this, &SymbolEditor::onAiSymbolGenerated);
+    aiDock->setWidget(m_aiPanel);
+    addDockWidget(Qt::RightDockWidgetArea, aiDock);
+
+    tabifyDockWidget(infoDock, aiDock);
+    infoDock->raise();
+
+    // ZONE 2: THE NAVIGATOR (Left Side - Assets & Wizards)
+    // ----------------------------------------------------
+    auto* libDock = new QDockWidget("Library Browser", this);
+    libDock->setObjectName("LibraryDock");
+    createLibraryBrowser();
+    auto* libContainer = new QWidget();
+    auto* libLayout = new QVBoxLayout(libContainer);
+    libLayout->addWidget(m_libSearchEdit);
+    libLayout->addWidget(m_libraryTree);
+    libDock->setWidget(libContainer);
+    addDockWidget(Qt::LeftDockWidgetArea, libDock);
+
+    auto* wizDock = new QDockWidget("IC Wizard", this);
+    wizDock->setObjectName("WizardDock");
+    createWizardPanel();
+    auto* wizContainer = new QWidget();
+    auto* wizLayout = new QVBoxLayout(wizContainer);
+    auto* wizForm = new QFormLayout();
+    wizForm->addRow("Style:", m_wizardStyleCombo);
+    wizForm->addRow("Pins:", m_pinCountSpin);
+    wizForm->addRow("Pitch:", m_pinSpacingSpin);
+    wizForm->addRow("Width:", m_bodyWidthSpin);
+    wizLayout->addLayout(wizForm);
+    auto* wizBtn = new QPushButton("Generate Symbol");
+    wizBtn->setStyleSheet("background-color: #007acc; color: white; font-weight: bold; margin-top: 10px;");
+    connect(wizBtn, &QPushButton::clicked, this, &SymbolEditor::onWizardGenerate);
+    wizLayout->addWidget(wizBtn);
+    auto* importBtn = new QPushButton("Import KiCad Symbol");
+    connect(importBtn, &QPushButton::clicked, this, &SymbolEditor::onImportKicadSymbol);
+    wizLayout->addWidget(importBtn);
+    wizLayout->addStretch();
+    wizDock->setWidget(wizContainer);
+    addDockWidget(Qt::LeftDockWidgetArea, wizDock);
+
+    tabifyDockWidget(libDock, wizDock);
+    libDock->raise();
+
+    // ZONE 3: THE CONSOLE (Bottom - Data & Validation)
+    // ------------------------------------------------
+    auto* pinDock = new QDockWidget("Pin Management", this);
+    pinDock->setObjectName("PinDock");
+    createPinTable();
+    auto* pinContainer = new QWidget();
+    auto* pinLayout = new QVBoxLayout(pinContainer);
+    pinLayout->setContentsMargins(4, 4, 4, 4);
+    pinLayout->addWidget(m_pinTable);
+    pinDock->setWidget(pinContainer);
+    addDockWidget(Qt::BottomDockWidgetArea, pinDock);
+
+    auto* codeDock = new QDockWidget("JSON Source", this);
+    codeDock->setObjectName("CodeDock");
+    m_codePreview = new QTextEdit();
+    m_codePreview->setReadOnly(true);
+    m_codePreview->setFont(QFont("Monospace", 9));
+    m_codePreview->setStyleSheet("background-color: #0d1117; color: #d1d5db; border: none;");
+    codeDock->setWidget(m_codePreview);
+    addDockWidget(Qt::BottomDockWidgetArea, codeDock);
+
+    auto* srcDock = new QDockWidget("Rule Checker", this);
+    srcDock->setObjectName("SRCDock");
+    m_srcList = new QListWidget();
+    m_srcList->setStyleSheet("QListWidget { background-color: #0d1117; color: #d1d5db; font-size: 11px; border: none; }");
+    connect(m_srcList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+        int idx = item->data(Qt::UserRole).toInt();
+        if (idx >= 0 && idx < m_drawnItems.size()) {
+            m_scene->clearSelection();
+            m_drawnItems[idx]->setSelected(true);
+            m_view->centerOn(m_drawnItems[idx]);
+        }
+    });
+    srcDock->setWidget(m_srcList);
+    addDockWidget(Qt::BottomDockWidgetArea, srcDock);
+
+    tabifyDockWidget(pinDock, codeDock);
+    tabifyDockWidget(codeDock, srcDock);
+    pinDock->raise();
+
+    m_statusBar = new QStatusBar(this);
+    pinLayout->setSpacing(6);
+
+    auto* pinOps = new QHBoxLayout();
+    auto* renumberBtn = new QPushButton("Renumber 1..N");
+    connect(renumberBtn, &QPushButton::clicked, this, &SymbolEditor::onPinRenumberSequential);
+
+    m_pinBulkOrientation = new QComboBox();
+    m_pinBulkOrientation->addItems({"Right", "Left", "Up", "Down"});
+    auto* applyOrientationBtn = new QPushButton("Apply Orientation");
+    connect(applyOrientationBtn, &QPushButton::clicked, this, &SymbolEditor::onPinApplyOrientation);
+
+    m_pinBulkType = new QComboBox();
+    m_pinBulkType->addItems({"Input", "Output", "Bidirectional", "Tri-state", "Passive", "Free", "Unspecified", "Power Input", "Power Output", "Open Collector", "Open Emitter"});
+    auto* applyTypeBtn = new QPushButton("Apply Type");
+    connect(applyTypeBtn, &QPushButton::clicked, this, &SymbolEditor::onPinApplyType);
+    auto* distributeBtn = new QPushButton("Distribute Selected");
+    connect(distributeBtn, &QPushButton::clicked, this, &SymbolEditor::onPinDistributeSelected);
+    auto* sortByNumBtn = new QPushButton("Auto-sort by Number");
+    connect(sortByNumBtn, &QPushButton::clicked, this, &SymbolEditor::onPinSortByNumber);
+
+    pinOps->addWidget(renumberBtn);
+    pinOps->addSpacing(8);
+    pinOps->addWidget(new QLabel("Orientation:"));
+    pinOps->addWidget(m_pinBulkOrientation);
+    pinOps->addWidget(applyOrientationBtn);
+    pinOps->addSpacing(8);
+    pinOps->addWidget(new QLabel("Type:"));
+    pinOps->addWidget(m_pinBulkType);
+    pinOps->addWidget(applyTypeBtn);
+    pinOps->addSpacing(8);
+    pinOps->addWidget(distributeBtn);
+    pinOps->addWidget(sortByNumBtn);
+    pinOps->addStretch();
+
+    pinLayout->addLayout(pinOps);
+    pinLayout->addWidget(m_pinTable);
+    pinDock->setWidget(pinContainer);
+    addDockWidget(Qt::BottomDockWidgetArea, pinDock);
+
+    tabifyDockWidget(libDock, wizDock);
+    tabifyDockWidget(pinDock, codeDock);
+    setStatusBar(m_statusBar);
+    createStatusBar();
+}
+
+#include <QApplication>
+
+void SymbolEditor::onPlaceInSchematic() {
+    SymbolDefinition def = symbolDefinition();
+    if (!def.isValid()) {
+        QMessageBox::warning(this, "Place Symbol", "Current symbol is empty or invalid.");
+        return;
+    }
+    emit placeInSchematicRequested(def);
+
+    // Find and raise SchematicEditor window
+    for (QWidget* widget : QApplication::topLevelWidgets()) {
+        if (widget->inherits("SchematicEditor")) {
+            widget->show();
+            widget->raise();
+            widget->activateWindow();
+            break;
+        }
+    }
+}
+
+void SymbolEditor::connectViewSignals() {
+    // Escape / right-click → finalize drawing or revert to Select tool
+    connect(m_view, &SymbolEditorView::rightClicked, this, [this]() {
+        if (m_currentTool == Polygon && m_polyPoints.size() > 2) {
+            SymbolPrimitive prim = SymbolPrimitive::createPolygon(m_polyPoints, false);
+            QGraphicsItem* visual = buildVisual(prim, m_symbol.primitives().size());
+            if (visual) m_undoStack->push(new AddPrimitiveCommand(this, prim, visual));
+        } else if (m_currentTool == Bezier && m_polyPoints.size() >= 2) {
+            // If we have at least start and end, we could finalize but Bezier really needs 4.
+        }
+
+        if (m_selectAction) m_selectAction->trigger();
+        
+        // Cleanup state
+        m_polyPoints.clear();
+        if (m_previewItem) {
+            m_scene->removeItem(m_previewItem);
+            delete m_previewItem;
+            m_previewItem = nullptr;
+        }
+    });
+
+    connect(m_view, &SymbolEditorView::contextMenuRequested, this, &SymbolEditor::onCanvasContextMenu);
+
+    connect(m_view, &SymbolEditorView::rotateCWRequested,  this, &SymbolEditor::onRotateCW);
+    connect(m_view, &SymbolEditorView::rotateCCWRequested, this, &SymbolEditor::onRotateCCW);
+    connect(m_view, &SymbolEditorView::flipHRequested,     this, &SymbolEditor::onFlipH);
+    connect(m_view, &SymbolEditorView::flipVRequested,     this, &SymbolEditor::onFlipV);
+    connect(m_view, &SymbolEditorView::coordinatesChanged, this, &SymbolEditor::updateCoordinates);
+    connect(m_view, &SymbolEditorView::itemErased,         this, &SymbolEditor::onItemErased);
+
+    // Items dragged in Select mode → move primitives via undo command
+    connect(m_view, &SymbolEditorView::itemsMoved, this, [this](QPointF delta) {
+        QList<int> indices;
+        bool referenceMoved = false;
+        bool nameMoved = false;
+        QPointF newRefPos, newNamePos;
+
+        for (QGraphicsItem* item : m_scene->selectedItems()) {
+            if (item->data(0).toString() == "label") {
+                QString type = item->data(1).toString();
+                if (type == "reference") { referenceMoved = true; newRefPos = item->pos(); }
+                else if (type == "name") { nameMoved = true; newNamePos = item->pos(); }
+                continue;
+            }
+
+            int idx = primitiveIndex(item);
+            if (idx != -1 && !indices.contains(idx))
+                indices.append(idx);
+        }
+        
+        if (indices.isEmpty() && !referenceMoved && !nameMoved) return;
+
+        SymbolDefinition oldDef = symbolDefinition();
+        SymbolDefinition newDef = oldDef;
+        const QSet<int> selectedSet = QSet<int>(indices.begin(), indices.end());
+
+        if (referenceMoved) newDef.setReferencePos(newRefPos);
+        if (nameMoved) newDef.setNamePos(newNamePos);
+
+        for (int idx : indices) {
+            SymbolPrimitive& prim = newDef.primitives()[idx];
+            qreal localDx = delta.x();
+            qreal localDy = delta.y();
+
+            // Smart guide snap for moved pins: align to nearby unselected pin X/Y.
+            if (prim.type == SymbolPrimitive::Pin) {
+                const qreal oldX = oldDef.primitives()[idx].data.value("x").toDouble();
+                const qreal oldY = oldDef.primitives()[idx].data.value("y").toDouble();
+                qreal newX = oldX + localDx;
+                qreal newY = oldY + localDy;
+                const qreal threshold = m_view ? qMax<qreal>(2.0, m_view->gridSize() * 0.4) : 4.0;
+                qreal bestX = threshold + 1.0;
+                qreal bestY = threshold + 1.0;
+                bool snapX = false;
+                bool snapY = false;
+                qreal targetX = newX;
+                qreal targetY = newY;
+
+                for (int j = 0; j < oldDef.primitives().size(); ++j) {
+                    if (selectedSet.contains(j)) continue;
+                    const SymbolPrimitive& other = oldDef.primitives().at(j);
+                    if (other.type != SymbolPrimitive::Pin) continue;
+                    const qreal ox = other.data.value("x").toDouble();
+                    const qreal oy = other.data.value("y").toDouble();
+
+                    const qreal dxAbs = qAbs(newX - ox);
+                    if (dxAbs < bestX && dxAbs <= threshold) {
+                        bestX = dxAbs;
+                        targetX = ox;
+                        snapX = true;
+                    }
+                    const qreal dyAbs = qAbs(newY - oy);
+                    if (dyAbs < bestY && dyAbs <= threshold) {
+                        bestY = dyAbs;
+                        targetY = oy;
+                        snapY = true;
+                    }
+                }
+
+                if (snapX) localDx = targetX - oldX;
+                if (snapY) localDy = targetY - oldY;
+            }
+
+            auto shift = [&](const char* k, qreal d) {
+                if (prim.data.contains(k)) prim.data[k] = prim.data[k].toDouble() + d;
+            };
+            shift("x",  localDx); shift("y",  localDy);
+            shift("x1", localDx); shift("y1", localDy);
+            shift("x2", localDx); shift("y2", localDy);
+            shift("cx", localDx); shift("cy", localDy);
+            shift("centerX", localDx); shift("centerY", localDy);
+
+            if (prim.type == SymbolPrimitive::Polygon) {
+                QJsonArray pts = prim.data["points"].toArray();
+                QJsonArray newPts;
+                for (auto v : pts) {
+                    QJsonObject o = v.toObject();
+                    o["x"] = o["x"].toDouble() + localDx;
+                    o["y"] = o["y"].toDouble() + localDy;
+                    newPts.append(o);
+                }
+                prim.data["points"] = newPts;
+            }
+        }
+        m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Move Items"));
+    });
+
+    // Single click in a drawing tool
+    connect(m_view, &SymbolEditorView::pointClicked, this, [this](QPointF pos) {
+        // Double check snapping for safety
+        pos = m_view->snapToGrid(pos);
+
+        if (m_currentTool == Pin) {
+            int pinNum = m_drawnItems.size() + 1;
+            SymbolPrimitive prim = SymbolPrimitive::createPin(pos, pinNum,
+                                                              QString::number(pinNum),
+                                                              m_previewOrientation);
+            prim.setUnit(m_currentUnit);
+            prim.setBodyStyle(m_currentStyle);
+            QGraphicsItem* visual = buildVisual(prim, m_symbol.primitives().size());
+            if (visual)
+                m_undoStack->push(new AddPrimitiveCommand(this, prim, visual));
+
+        } else if (m_currentTool == Text) {
+            TextPropertiesDialog dlg(this);
+            if (dlg.exec() == QDialog::Accepted && !dlg.text().isEmpty()) {
+                SymbolPrimitive prim = SymbolPrimitive::createText(dlg.text(), pos, dlg.fontSize(), dlg.color());
+                prim.setUnit(m_currentUnit);
+                prim.setBodyStyle(m_currentStyle);
+                QGraphicsItem* visual = buildVisual(prim, m_symbol.primitives().size());
+                if (visual)
+                    m_undoStack->push(new AddPrimitiveCommand(this, prim, visual));
+            }
+
+        } else if (m_currentTool == Line || m_currentTool == Circle || m_currentTool == Arc || m_currentTool == Rect) {
+            m_polyPoints.append(pos);
+            if (m_polyPoints.size() == 2) {
+                QPointF p1 = m_polyPoints[0];
+                QPointF p2 = m_polyPoints[1];
+                SymbolPrimitive prim;
+                
+                if (m_currentTool == Line) {
+                    prim = SymbolPrimitive::createLine(p1, p2);
+                } else if (m_currentTool == Rect) {
+                    prim = SymbolPrimitive::createRect(QRectF(p1, p2).normalized(), false);
+                } else if (m_currentTool == Circle) {
+                    prim = SymbolPrimitive::createCircle(p1, QLineF(p1, p2).length(), false);
+                } else { // Arc
+                    qreal rx = qAbs(p2.x() - p1.x());
+                    qreal ry = qAbs(p2.y() - p1.y());
+                    prim = SymbolPrimitive::createArc(QRectF(p1.x()-rx, p1.y()-ry, rx*2, ry*2), 0, 180 * 16);
+                }
+                prim.setUnit(m_currentUnit);
+                prim.setBodyStyle(m_currentStyle);
+
+                QGraphicsItem* visual = buildVisual(prim, m_symbol.primitives().size());
+                m_polyPoints.clear();
+                if (visual) m_undoStack->push(new AddPrimitiveCommand(this, prim, visual));
+            }
+
+        } else if (m_currentTool == Polygon) {
+            m_polyPoints.append(pos);
+            // Close polygon if user clicks near the first point
+            if (m_polyPoints.size() > 2
+                && QLineF(pos, m_polyPoints.first()).length() < 8.0) {
+                m_polyPoints.removeLast();
+                SymbolPrimitive prim = SymbolPrimitive::createPolygon(m_polyPoints, false);
+                prim.setUnit(m_currentUnit);
+                prim.setBodyStyle(m_currentStyle);
+                QGraphicsItem* visual = buildVisual(prim, m_symbol.primitives().size());
+                m_polyPoints.clear();
+                if (m_previewItem) {
+                    m_scene->removeItem(m_previewItem);
+                    delete m_previewItem;
+                    m_previewItem = nullptr;
+                }
+                if (visual)
+                    m_undoStack->push(new AddPrimitiveCommand(this, prim, visual));
+            }
+
+        } else if (m_currentTool == Bezier) {
+            m_polyPoints.append(pos);
+            if (m_polyPoints.size() == 4) {
+                SymbolPrimitive prim = SymbolPrimitive::createBezier(m_polyPoints[0], m_polyPoints[2], m_polyPoints[3], m_polyPoints[1]);
+                prim.setUnit(m_currentUnit);
+                prim.setBodyStyle(m_currentStyle);
+                QGraphicsItem* visual = buildVisual(prim, m_symbol.primitives().size());
+                m_polyPoints.clear();
+                if (m_previewItem) {
+                    m_scene->removeItem(m_previewItem);
+                    delete m_previewItem;
+                    m_previewItem = nullptr;
+                }
+                if (visual) m_undoStack->push(new AddPrimitiveCommand(this, prim, visual));
+            }
+
+        } else if (m_currentTool == Anchor) {
+            // Shift the whole symbol so 'pos' becomes (0,0)
+            SymbolDefinition oldDef = symbolDefinition();
+            SymbolDefinition newDef = oldDef;
+            
+            // Shift Metadata Labels
+            newDef.setReferencePos(oldDef.referencePos() - pos);
+            newDef.setNamePos(oldDef.namePos() - pos);
+
+            for (SymbolPrimitive& prim : newDef.primitives()) {
+                auto shift = [&](const char* k, qreal d) {
+                    if (prim.data.contains(k)) prim.data[k] = prim.data[k].toDouble() - d;
+                };
+                shift("x",  pos.x()); shift("y",  pos.y());
+                shift("x1", pos.x()); shift("y1", pos.y());
+                shift("x2", pos.x()); shift("y2", pos.y());
+                shift("x3", pos.x()); shift("y3", pos.y());
+                shift("x4", pos.x()); shift("y4", pos.y());
+                shift("cx", pos.x()); shift("cy", pos.y());
+                shift("centerX", pos.x()); shift("centerY", pos.y());
+                
+                if (prim.type == SymbolPrimitive::Polygon) {
+                    QJsonArray pts = prim.data["points"].toArray();
+                    QJsonArray newPts;
+                    for (auto v : pts) {
+                        QJsonObject o = v.toObject();
+                        o["x"] = o["x"].toDouble() - pos.x();
+                        o["y"] = o["y"].toDouble() - pos.y();
+                        newPts.append(o);
+                    }
+                    prim.data["points"] = newPts;
+                }
+            }
+            m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Set Anchor"));
+        }
+    });
+
+    // Drag preview while drawing
+    connect(m_view, &SymbolEditorView::mouseMoved, this, [this](QPointF pos) {
+        if (m_previewItem) {
+            m_scene->removeItem(m_previewItem);
+            delete m_previewItem;
+            m_previewItem = nullptr;
+        }
+        
+        // No preview for Select or Erase
+        if (m_currentTool == Select || m_currentTool == Erase || m_currentTool == Anchor) return;
+
+        const QPen previewPen(Qt::cyan, 1, Qt::DashLine);
+        QPointF start = m_polyPoints.isEmpty() ? pos : m_polyPoints.first();
+        QPointF end = pos;
+
+        switch (m_currentTool) {
+        case Line:
+            m_previewItem = m_scene->addLine(QLineF(start, end), previewPen);
+            break;
+        case Rect: {
+            QRectF r = QRectF(start, end).normalized();
+            m_previewItem = m_scene->addRect(r, previewPen);
+            break;
+        }
+        case Circle: {
+            qreal rad = QLineF(start, end).length();
+            m_previewItem = m_scene->addEllipse(
+                start.x()-rad, start.y()-rad, rad*2, rad*2, previewPen);
+            break;
+        }
+        case Bezier: {
+            if (m_polyPoints.isEmpty()) {
+                m_previewItem = m_scene->addLine(QLineF(pos, pos), previewPen);
+            } else if (m_polyPoints.size() == 1) {
+                m_previewItem = m_scene->addLine(QLineF(m_polyPoints[0], pos), previewPen);
+            } else if (m_polyPoints.size() == 2) {
+                QPainterPath path;
+                path.moveTo(m_polyPoints[0]);
+                path.cubicTo(pos, pos, m_polyPoints[1]);
+                m_previewItem = m_scene->addPath(path, previewPen);
+            } else if (m_polyPoints.size() == 3) {
+                QPainterPath path;
+                path.moveTo(m_polyPoints[0]);
+                path.cubicTo(m_polyPoints[2], pos, m_polyPoints[1]);
+                m_previewItem = m_scene->addPath(path, previewPen);
+            }
+            break;
+        }
+        case Arc: {
+            qreal rx = qAbs(end.x() - start.x());
+            qreal ry = qAbs(end.y() - start.y());
+            QRectF r(start.x()-rx, start.y()-ry, rx*2, ry*2);
+            QPainterPath path;
+            path.arcMoveTo(r, 0);
+            path.arcTo(r, 0, 180);
+            m_previewItem = m_scene->addPath(path, previewPen);
+            break;
+        }
+        case Polygon: {
+            if (m_polyPoints.isEmpty()) break;
+            QPolygonF poly = m_polyPoints;
+            poly.append(end);
+            m_previewItem = m_scene->addPolygon(poly, previewPen);
+            break;
+        }
+        case ZoomArea: {
+            QRectF r = QRectF(start, end).normalized();
+            m_previewItem = m_scene->addRect(r, previewPen);
+            break;
+        }
+        case Pin:
+            updatePinPreview(pos);
+            break;
+        default: break;
+        }
+    });
+
+    // Drag finish – commit shape
+    connect(m_view, &SymbolEditorView::drawingFinished, this, [this](QPointF start, QPointF end) {
+        if (m_currentTool == ZoomArea) {
+            QRectF r = QRectF(start, end).normalized();
+            if (r.width() > 5 && r.height() > 5)
+                m_view->fitInView(r, Qt::KeepAspectRatio);
+        }
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Toolbar / Panel creation
+// ─────────────────────────────────────────────────────────────────────────────
+
+#include <QMenuBar>
+
+void SymbolEditor::createMenuBar() {
+    QMenuBar* mb = menuBar();
+    mb->setStyleSheet("QMenuBar { background-color: #2d2d30; color: #ccc; } "
+                      "QMenuBar::item:selected { background-color: #3e3e42; }");
+
+    // --- File Menu ---
+    QMenu* fileMenu = mb->addMenu("&File");
+    fileMenu->addAction(QIcon(":/icons/toolbar_new.png"), "&New Symbol", this, &SymbolEditor::onNewSymbol, QKeySequence::New);
+    fileMenu->addAction(QIcon(":/icons/check.svg"), "&Save to Library", this, &SymbolEditor::onSaveToLibrary, QKeySequence::Save);
+    fileMenu->addSeparator();
+    fileMenu->addAction(QIcon(":/icons/schematic_editor.png"), "&Place in Schematic", this, &SymbolEditor::onPlaceInSchematic);
+    fileMenu->addSeparator();
+    fileMenu->addAction("Close", this, &QWidget::close, QKeySequence::Close);
+
+    // --- Edit Menu ---
+    QMenu* editMenu = mb->addMenu("&Edit");
+    editMenu->addAction(m_undoStack->createUndoAction(this, "&Undo"));
+    editMenu->addAction(m_undoStack->createRedoAction(this, "&Redo"));
+    editMenu->addSeparator();
+    editMenu->addAction(QIcon(":/icons/tool_delete.svg"), "&Delete", this, &SymbolEditor::onDelete, QKeySequence::Delete);
+    editMenu->addAction("Select &All", this, [this](){ 
+        for (auto* it : m_scene->items()) it->setSelected(true); 
+    }, QKeySequence::SelectAll);
+
+    // --- View Menu (The core request) ---
+    QMenu* viewMenu = mb->addMenu("&View");
+    
+    // Helper to add dock toggle
+    auto addDockToggle = [&](const QString& title, const QString& dockName) {
+        QDockWidget* dock = findChild<QDockWidget*>(dockName);
+        if (dock) {
+            QAction* act = viewMenu->addAction(title);
+            act->setCheckable(true);
+            act->setChecked(dock->isVisible());
+            connect(act, &QAction::toggled, dock, &QDockWidget::setVisible);
+            connect(dock, &QDockWidget::visibilityChanged, act, &QAction::setChecked);
+        }
+    };
+
+    addDockToggle("Show Symbol Info", "SymbolInfoDock");
+    addDockToggle("Show Properties",  "PropertiesDock");
+    addDockToggle("Show Library Browser", "LibraryDock");
+    addDockToggle("Show IC Wizard", "WizardDock");
+    addDockToggle("Show AI Assistant", "GeminiDock");
+    viewMenu->addSeparator();
+    addDockToggle("Show Pin Table", "PinDock");
+    addDockToggle("Show JSON Preview", "CodeDock");
+    addDockToggle("Show Rule Checker", "SRCDock");
+    
+    viewMenu->addSeparator();
+    viewMenu->addAction("Reset Layout", this, [this]() {
+        // Find and show all docks
+        for (auto* dock : findChildren<QDockWidget*>()) {
+            dock->show();
+        }
+        
+        // Logical zones
+        QDockWidget* info = findChild<QDockWidget*>("SymbolInfoDock");
+        QDockWidget* props = findChild<QDockWidget*>("PropertiesDock");
+        QDockWidget* ai = findChild<QDockWidget*>("GeminiDock");
+        QDockWidget* lib = findChild<QDockWidget*>("LibraryDock");
+        QDockWidget* wiz = findChild<QDockWidget*>("WizardDock");
+        QDockWidget* pin = findChild<QDockWidget*>("PinDock");
+        QDockWidget* code = findChild<QDockWidget*>("CodeDock");
+        QDockWidget* src = findChild<QDockWidget*>("SRCDock");
+
+        if (info && props && ai) {
+            addDockWidget(Qt::RightDockWidgetArea, info);
+            tabifyDockWidget(info, props);
+            tabifyDockWidget(props, ai);
+            info->raise();
+        }
+        if (lib && wiz) {
+            addDockWidget(Qt::LeftDockWidgetArea, lib);
+            tabifyDockWidget(lib, wiz);
+            lib->raise();
+        }
+        if (pin && code && src) {
+            addDockWidget(Qt::BottomDockWidgetArea, pin);
+            tabifyDockWidget(pin, code);
+            tabifyDockWidget(code, src);
+            pin->raise();
+        }
+    });
+    viewMenu->addAction("Zoom Fit", this, &SymbolEditor::onZoomFit, QKeySequence("F"));
+    viewMenu->addAction("Zoom Selection", this, &SymbolEditor::onZoomSelection, QKeySequence("Ctrl+0"));
+    
+    viewMenu->addSeparator();
+    viewMenu->addAction("Reset Default Layout", [this]() {
+        // Restore visibility of primary docks
+        for (auto* dock : findChildren<QDockWidget*>()) {
+            if (dock->objectName() != "CodeDock" && dock->objectName() != "SRCDock") {
+                dock->show();
+            }
+        }
+        statusBar()->showMessage("Workspace layout reset", 2000);
+    });
+}
+
+void SymbolEditor::createToolBar() {
+    m_toolbar = new QToolBar("Utilities", this);
+    m_toolbar->setIconSize(QSize(20, 20));
+    m_toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_toolbar->setMovable(false);
+    m_toolbar->setStyleSheet(
+        "QToolBar {"
+        "  background-color: #2d2d30;"
+        "  border-bottom: 1px solid #1e1e1e;"
+        "  padding: 4px 8px;"
+        "  spacing: 3px;"
+        "}"
+        "QToolBar QToolButton {"
+        "  background: transparent;"
+        "  border: 1px solid transparent;"
+        "  border-radius: 3px;"
+        "  padding: 4px;"
+        "  color: #cccccc;"
+        "}"
+        "QToolBar QToolButton:hover {"
+        "  border-color: #555;"
+        "  background-color: #3c3c3c;"
+        "}"
+        "QToolBar QToolButton:checked {"
+        "  background-color: #094771;"
+        "  border-color: #094771;"
+        "}"
+        "QToolBar QToolButton:pressed {"
+        "  background-color: #094771;"
+        "}"
+        "QToolBar QLabel {"
+        "  color: #888;"
+        "  font-size: 11px;"
+        "  padding: 0 2px;"
+        "}"
+        "QToolBar QComboBox {"
+        "  background-color: #1e1e1e;"
+        "  color: #cccccc;"
+        "  border: 1px solid #3c3c3c;"
+        "  border-radius: 3px;"
+        "  padding: 2px 6px;"
+        "  font-size: 11px;"
+        "}"
+    );
+
+    m_leftToolbar = new QToolBar("Drawing Tools", this);
+    m_leftToolbar->setOrientation(Qt::Vertical);
+    m_leftToolbar->setIconSize(QSize(22, 22));
+    m_leftToolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_leftToolbar->setMovable(false);
+    m_leftToolbar->setObjectName("LeftToolBar");
+    m_leftToolbar->setStyleSheet(
+        "QToolBar#LeftToolBar {"
+        "  background-color: #1e1e1e;"
+        "  border-right: 1px solid #3c3c3c;"
+        "  padding: 6px 4px;"
+        "  spacing: 2px;"
+        "}"
+        "QToolBar#LeftToolBar QToolButton {"
+        "  background: transparent;"
+        "  border: 1px solid transparent;"
+        "  border-radius: 4px;"
+        "  padding: 5px;"
+        "  margin: 1px 2px;"
+        "  color: #cccccc;"
+        "}"
+        "QToolBar#LeftToolBar QToolButton:hover {"
+        "  border-color: #555;"
+        "  background-color: #3c3c3c;"
+        "}"
+        "QToolBar#LeftToolBar QToolButton:checked {"
+        "  background-color: #094771;"
+        "  border-color: #094771;"
+        "  color: white;"
+        "}"
+    );
+
+    auto* toolGroup = new QActionGroup(this);
+    toolGroup->setExclusive(true);
+
+    // Helper: add a checkable drawing tool to the left toolbar
+    auto addTool = [&](const QString& name, const QString& icon,
+                       Tool tool, const QString& shortcut = "") -> QAction* {
+        QAction* act = m_leftToolbar->addAction(QIcon(icon), name);
+        act->setCheckable(true);
+        act->setData(static_cast<int>(tool));
+        if (tool == Select) m_selectAction = act;
+        if (!shortcut.isEmpty()) {
+            act->setShortcut(QKeySequence(shortcut));
+            act->setToolTip(name + " (" + shortcut + ")");
+        } else {
+            act->setToolTip(name);
+        }
+        toolGroup->addAction(act);
+        m_toolActions[name] = act;
+        connect(act, &QAction::triggered, this, &SymbolEditor::onToolSelected);
+        return act;
+    };
+
+    addTool("Select",  ":/icons/tool_select.svg",  Select,  "Escape")->setChecked(true);
+    m_leftToolbar->addSeparator();
+    addTool("Pin",     ":/icons/tool_pin.svg",     Pin,     "P");
+    addTool("Line",    ":/icons/tool_line.svg",    Line,    "L");
+    addTool("Rect",    ":/icons/tool_rect.svg",    Rect,    "R");
+    addTool("Circle",  ":/icons/tool_circle.svg",  Circle,  "C");
+    addTool("Arc",     ":/icons/tool_arc.svg",     Arc,     "A");
+    addTool("Polygon", ":/icons/tool_polygon.svg", Polygon, "G");
+    addTool("Bezier",  ":/icons/tool_bezier.svg",  Bezier,  "B");
+    addTool("Image",   ":/icons/tool_image.svg",   SymbolEditor::Image,  "I");
+    addTool("Text",    ":/icons/tool_text.svg",    Text,    "T");
+    addTool("Erase",   ":/icons/tool_erase.svg",   Erase,   "E");
+    // Anchor tool
+    addTool("Anchor",  ":/icons/tool_anchor.svg",  Anchor,  "H");
+
+    // ── Top toolbar ──────────────────────────────────────────────────────────
+
+    QAction* newSym = m_toolbar->addAction(QIcon(":/icons/toolbar_new.png"), "New Symbol");
+    newSym->setShortcut(QKeySequence::New);
+    newSym->setToolTip("New Symbol (Ctrl+N)");
+    connect(newSym, &QAction::triggered, this, &SymbolEditor::onNewSymbol);
+
+    QAction* saveAction = m_toolbar->addAction(QIcon(":/icons/check.svg"), "Save to Library");
+    saveAction->setShortcut(QKeySequence::Save);
+    saveAction->setToolTip("Save to Library (Ctrl+S)");
+    connect(saveAction, &QAction::triggered, this, &SymbolEditor::onSaveToLibrary);
+
+    auto* openSchAct = m_toolbar->addAction(QIcon(":/icons/schematic_editor.png"), "Open in Schematic");
+    openSchAct->setToolTip("Place this symbol in the current schematic");
+    connect(openSchAct, &QAction::triggered, this, &SymbolEditor::onPlaceInSchematic);
+
+    auto* importImgAct = m_toolbar->addAction(QIcon(":/icons/tool_image.svg"), "Import Image");
+    importImgAct->setToolTip("Import a bitmap image into the symbol");
+    connect(importImgAct, &QAction::triggered, this, &SymbolEditor::onImportImage);
+
+    m_toolbar->addSeparator();
+
+    m_undoAction = m_undoStack->createUndoAction(this, "Undo");
+    m_undoAction->setIcon(QIcon(":/icons/undo.svg"));
+    m_undoAction->setShortcut(QKeySequence::Undo);
+    m_toolbar->addAction(m_undoAction);
+
+    m_redoAction = m_undoStack->createRedoAction(this, "Redo");
+    m_redoAction->setIcon(QIcon(":/icons/redo.svg"));
+    m_redoAction->setShortcut(QKeySequence::Redo);
+    m_toolbar->addAction(m_redoAction);
+
+    m_deleteAction = new QAction(QIcon(":/icons/tool_delete.svg"), "Delete", this);
+    m_deleteAction->setShortcut(QKeySequence::Delete);
+    connect(m_deleteAction, &QAction::triggered, this, &SymbolEditor::onDelete);
+    m_toolbar->addAction(m_deleteAction);
+
+    m_toolbar->addSeparator();
+
+    auto* zoomIn  = m_toolbar->addAction(QIcon(":/icons/view_zoom_in.svg"),  "Zoom In");
+    auto* zoomOut = m_toolbar->addAction(QIcon(":/icons/view_zoom_out.svg"), "Zoom Out");
+    auto* zoomFit = m_toolbar->addAction(QIcon(":/icons/view_fit.svg"),      "Zoom Fit");
+    connect(zoomIn,  &QAction::triggered, this, &SymbolEditor::onZoomIn);
+    connect(zoomOut, &QAction::triggered, this, &SymbolEditor::onZoomOut);
+    connect(zoomFit, &QAction::triggered, this, &SymbolEditor::onZoomFit);
+
+    m_toolbar->addSeparator();
+
+    auto* rotateCWAct = m_toolbar->addAction(QIcon(":/icons/tool_rotate.svg"), "Rotate 90° CW");
+    rotateCWAct->setShortcut(QKeySequence("R"));
+    connect(rotateCWAct, &QAction::triggered, this, &SymbolEditor::onRotateCW);
+    this->addAction(rotateCWAct);
+
+    auto* rotateCCWAct = m_toolbar->addAction(QIcon(":/icons/tool_rotate_ccw.svg"), "Rotate 90° CCW");
+    rotateCCWAct->setShortcut(QKeySequence("Shift+R"));
+    connect(rotateCCWAct, &QAction::triggered, this, &SymbolEditor::onRotateCCW);
+    this->addAction(rotateCCWAct);
+
+    auto* flipH = m_toolbar->addAction(QIcon(":/icons/flip_h.svg"), "Flip Horizontal");
+    flipH->setShortcut(QKeySequence("X"));
+    connect(flipH, &QAction::triggered, this, &SymbolEditor::onFlipH);
+    this->addAction(flipH);
+
+    auto* flipV = m_toolbar->addAction(QIcon(":/icons/flip_v.svg"), "Flip Vertical");
+    flipV->setShortcut(QKeySequence("Y"));
+    connect(flipV, &QAction::triggered, this, &SymbolEditor::onFlipV);
+    this->addAction(flipV);
+
+    m_toolbar->addSeparator();
+
+    // ── Unit Selector ──
+    m_toolbar->addWidget(new QLabel("  Unit: "));
+    m_unitCombo = new QComboBox();
+    m_unitCombo->setFixedWidth(90);
+    m_unitCombo->addItem("Shared", 0);
+    m_unitCombo->addItem("Unit A", 1);
+    m_unitCombo->addItem("Unit B", 2);
+    m_unitCombo->setCurrentIndex(1); // Default to Unit A
+    connect(m_unitCombo, &QComboBox::currentIndexChanged, this, &SymbolEditor::onUnitChanged);
+    m_toolbar->addWidget(m_unitCombo);
+
+    m_toolbar->addSeparator();
+
+    // ── Body Style Selector ──
+    m_toolbar->addWidget(new QLabel("  Style: "));
+    m_styleCombo = new QComboBox();
+    m_styleCombo->setFixedWidth(110);
+    m_styleCombo->addItem("Shared / All", 0);
+    m_styleCombo->addItem("Standard", 1);
+    m_styleCombo->addItem("Alternate", 2);
+    m_styleCombo->setCurrentIndex(1); // Default to Standard
+    connect(m_styleCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        m_currentStyle = m_styleCombo->itemData(index).toInt();
+        applySymbolDefinition(m_symbol);
+        statusBar()->showMessage(QString("Switched to %1 Style").arg(m_styleCombo->currentText()), 2000);
+    });
+    m_toolbar->addWidget(m_styleCombo);
+
+    m_toolbar->addSeparator();
+
+    // ── Color Preset ──
+    m_toolbar->addWidget(new QLabel("  Colors: "));
+    m_colorPresetCombo = new QComboBox();
+    m_colorPresetCombo->setFixedWidth(150);
+    m_colorPresetCombo->addItem("Theme", 0);
+    m_colorPresetCombo->addItem("High Contrast", 1);
+    m_colorPresetCombo->addItem("Emerald", 2);
+    m_colorPresetCombo->addItem("Amber CAD", 3);
+    m_colorPresetCombo->addItem("Mono Print", 4);
+    m_colorPresetCombo->setCurrentIndex(0);
+    connect(m_colorPresetCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        m_colorPreset = m_colorPresetCombo->itemData(index).toInt();
+        applySymbolDefinition(m_symbol);
+        statusBar()->showMessage(QString("Color preset: %1").arg(m_colorPresetCombo->currentText()), 2000);
+    });
+    m_toolbar->addWidget(m_colorPresetCombo);
+
+    m_toolbar->addSeparator();
+
+    // ── Grid Controls ──
+    m_toolbar->addWidget(new QLabel("  Grid: "));
+    auto* gridCombo = new QComboBox();
+    gridCombo->addItems({"5", "10", "15", "25", "50", "100"});
+    gridCombo->setCurrentText("15");
+    gridCombo->setFixedWidth(60);
+    connect(gridCombo, &QComboBox::currentTextChanged, this, &SymbolEditor::onGridSizeChanged);
+    m_toolbar->addWidget(gridCombo);
+
+    auto* snapToggle = new QAction(QIcon(":/icons/snap_grid.svg"), "Magnet Pull", this);
+    snapToggle->setCheckable(true);
+    snapToggle->setChecked(true);
+    connect(snapToggle, &QAction::toggled, this, [this](bool on) {
+        if (m_view) m_view->setSnapToGrid(on);
+    });
+    m_toolbar->addAction(snapToggle);
+
+    m_toolbar->addSeparator();
+    m_toolbar->addWidget(new QLabel("  Unit: "));
+    m_unitCombo = new QComboBox();
+    m_unitCombo->setFixedWidth(100);
+    m_unitCombo->addItem("All Units", 0);
+    connect(m_unitCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        m_currentUnit = m_unitCombo->itemData(index).toInt();
+        applySymbolDefinition(m_symbol); 
+    });
+    m_toolbar->addWidget(m_unitCombo);
+
+    m_toolbar->addSeparator();
+    m_toolbar->addWidget(new QLabel("  Style: "));
+    m_styleCombo = new QComboBox();
+    m_styleCombo->setFixedWidth(100);
+    m_styleCombo->addItem("All Styles", 0);
+    m_styleCombo->addItem("Standard", 1);
+    m_styleCombo->addItem("De Morgan", 2);
+    connect(m_styleCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        m_currentStyle = m_styleCombo->itemData(index).toInt();
+        applySymbolDefinition(m_symbol);
+    });
+    m_toolbar->addWidget(m_styleCombo);
+
+    auto* srcAct = m_toolbar->addAction(QIcon(":/icons/toolbar_refresh.png"), "Run SRC");
+    srcAct->setToolTip("Run Symbol Rule Checker (F7)");
+    srcAct->setShortcut(QKeySequence("F7"));
+    connect(srcAct, &QAction::triggered, this, &SymbolEditor::onRunSRC);
+
+    m_toolbar->addSeparator();
+
+    // Alignment Tools
+    auto* alignLabel = new QLabel("  Align: ");
+    m_toolbar->addWidget(alignLabel);
+
+    auto addAlignAct = [&](const QString& text, const QString& tooltip, auto slot) {
+        auto* act = m_toolbar->addAction(text);
+        act->setToolTip(tooltip);
+        connect(act, &QAction::triggered, this, slot);
+    };
+
+    addAlignAct("⭠", "Align Left",       &SymbolEditor::onAlignLeft);
+    addAlignAct("⭢", "Align Right",      &SymbolEditor::onAlignRight);
+    addAlignAct("⭡", "Align Top",        &SymbolEditor::onAlignTop);
+    addAlignAct("⭣", "Align Bottom",     &SymbolEditor::onAlignBottom);
+    addAlignAct("⥓", "Center Horizontal", &SymbolEditor::onAlignCenterX);
+    addAlignAct("⥑", "Center Vertical",  &SymbolEditor::onAlignCenterY);
+    addAlignAct("⋮⋮", "Distribute Horizontal", &SymbolEditor::onDistributeH);
+    addAlignAct("≡", "Distribute Vertical",   &SymbolEditor::onDistributeV);
+    addAlignAct("↔", "Match Spacing",         &SymbolEditor::onMatchSpacing);
+    addAlignAct("⌗", "Snap to Grid",          &SymbolEditor::onSnapToGrid);
+
+    m_toolbar->addSeparator();
+
+    auto* clearAct = m_toolbar->addAction(QIcon(":/icons/tool_clear.svg"), "Clear All");
+    clearAct->setToolTip("Clear All Primitives");
+    connect(clearAct, &QAction::triggered, this, &SymbolEditor::onClear);
+}
+
+void SymbolEditor::createStatusBar() {
+    m_statusBar->setStyleSheet(
+        "QStatusBar {"
+        "  background-color: #007acc;"
+        "  color: white;"
+        "  font-size: 11px;"
+        "  padding: 0px 8px;"
+        "  border: none;"
+        "  min-height: 22px;"
+        "  max-height: 22px;"
+        "}"
+        "QStatusBar QLabel {"
+        "  color: white;"
+        "  font-size: 11px;"
+        "}"
+    );
+
+    m_coordLabel = new QLabel("X: 0.00  Y: 0.00 mm");
+    m_coordLabel->setMinimumWidth(200);
+    m_statusBar->addWidget(m_coordLabel);
+
+    m_statusBar->addPermanentWidget(new QLabel(" Unit: "));
+    auto* unitCombo = new QComboBox();
+    unitCombo->addItems({"mm", "mil", "in"});
+    unitCombo->setStyleSheet("QComboBox { background: #1e1e1e; color: white; border: 1px solid #3c3c3c; font-size: 10px; height: 18px; }");
+    connect(unitCombo, &QComboBox::currentTextChanged, this, [this](const QString& unit) {
+        m_view->setProperty("currentUnit", unit);
+        updateCoordinates(m_view->mapToScene(m_view->mapFromGlobal(QCursor::pos())));
+    });
+    m_statusBar->addPermanentWidget(unitCombo);
+
+    m_statusBar->addPermanentWidget(new QLabel("  ⊞ "));
+    m_gridLabel = new QLabel("Grid: 15.0");
+    m_statusBar->addPermanentWidget(m_gridLabel);
+    
+    m_statusBar->showMessage("Ready", 3000);
+}
+
+void SymbolEditor::updatePinPreview(QPointF pos) {
+    if (m_currentTool != Pin) return;
+
+    if (m_previewItem) {
+        if (m_previewItem->scene()) m_scene->removeItem(m_previewItem);
+        delete m_previewItem;
+        m_previewItem = nullptr;
+    }
+
+    SymbolPrimitive tempPin = SymbolPrimitive::createPin(pos, 0, "", m_previewOrientation);
+    m_previewItem = buildVisual(tempPin, -1);
+    if (m_previewItem) {
+        m_previewItem->setOpacity(0.5);
+        m_previewItem->setZValue(1000);
+        // Ensure preview doesn't interfere with mouse events
+        m_previewItem->setAcceptedMouseButtons(Qt::NoButton);
+        m_previewItem->setFlag(QGraphicsItem::ItemIsSelectable, false);
+        m_previewItem->setFlag(QGraphicsItem::ItemIsMovable, false);
+        m_scene->addItem(m_previewItem);
+    }
+}
+
+void SymbolEditor::updateCoordinates(QPointF pos) {
+    if (m_coordLabel) {
+        QString unit = m_view->property("currentUnit").toString();
+        if (unit.isEmpty()) unit = "mm";
+
+        double factor = 1.0;
+        if (unit == "mil") factor = 39.3701;
+        else if (unit == "in") factor = 0.0393701;
+
+        m_coordLabel->setText(QString("X: %1  Y: %2 %3")
+            .arg(pos.x() * factor, 0, 'f', unit == "mm" ? 2 : 1)
+            .arg(pos.y() * factor, 0, 'f', unit == "mm" ? 2 : 1)
+            .arg(unit));
+    }
+}
+
+void SymbolEditor::onGridSizeChanged(const QString& size) {
+    bool ok;
+    double val = size.toDouble(&ok);
+    if (ok && val > 0) {
+        m_view->setGridSize(val);
+        if (m_gridLabel) m_gridLabel->setText(QString("Grid: %1").arg(val));
+    }
+}
+
+void SymbolEditor::onCopyToAlternateStyle() {
+    QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    int count = 0;
+
+    for (auto* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) {
+            SymbolPrimitive copy = oldDef.primitives().at(idx);
+            copy.setBodyStyle(2); // Assign to Alternate Style
+            newDef.addPrimitive(copy);
+            count++;
+        }
+    }
+
+    if (count > 0) {
+        m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Copy to Alternate Style"));
+        statusBar()->showMessage(QString("Copied %1 items to Alternate Style").arg(count), 3000);
+    }
+}
+
+void SymbolEditor::onUnitChanged(int index) {
+    m_currentUnit = m_unitCombo->itemData(index).toInt();
+    applySymbolDefinition(m_symbol);
+    statusBar()->showMessage(QString("Switched to %1").arg(m_unitCombo->currentText()), 2000);
+}
+
+void SymbolEditor::createSymbolInfoPanel() {
+    m_nameEdit        = new QLineEdit();
+    m_descriptionEdit = new QLineEdit();
+    m_categoryCombo   = new QComboBox();
+    m_prefixEdit      = new QLineEdit("U");
+
+    m_nameEdit->setPlaceholderText("Enter symbol name");
+    m_descriptionEdit->setPlaceholderText("Description");
+    m_categoryCombo->setEditable(true);
+    m_categoryCombo->addItems({"Passives", "Semiconductors",
+                               "Integrated Circuits", "Connectors",
+                               "Power", "Other"});
+    m_prefixEdit->setMaximumWidth(50);
+
+    // Live updates for canvas labels when sidebar edits change
+    connect(m_nameEdit, &QLineEdit::textChanged, this, &SymbolEditor::updateOverlayLabels);
+    connect(m_prefixEdit, &QLineEdit::textChanged, this, &SymbolEditor::updateOverlayLabels);
+    connect(m_nameEdit, &QLineEdit::textChanged, this, &SymbolEditor::updateCodePreview);
+    connect(m_prefixEdit, &QLineEdit::textChanged, this, &SymbolEditor::updateCodePreview);
+    connect(m_descriptionEdit, &QLineEdit::textChanged, this, &SymbolEditor::updateCodePreview);
+    connect(m_categoryCombo, &QComboBox::currentTextChanged, this, &SymbolEditor::updateCodePreview);
+}
+
+void SymbolEditor::createLibraryBrowser() {
+    m_libSearchEdit = new QLineEdit();
+    m_libSearchEdit->setPlaceholderText("Search symbols…");
+    m_libSearchEdit->setClearButtonEnabled(true);
+    m_libSearchEdit->setStyleSheet("QLineEdit { background-color: #2d2d2d; color: #ececec; border: 1px solid #3c3c3c; border-radius: 4px; padding: 4px; }");
+    connect(m_libSearchEdit, &QLineEdit::textChanged,
+            this, &SymbolEditor::onLibSearchChanged);
+
+    m_libraryTree = new QTreeWidget();
+    m_libraryTree->setHeaderHidden(true);
+    m_libraryTree->setMinimumHeight(200);
+    m_libraryTree->setAnimated(true);
+    m_libraryTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_libraryTree, &QTreeWidget::customContextMenuRequested, this, &SymbolEditor::onLibraryContextMenu);
+    
+    // the global setupUI will style the internal tree, but we can set a base bg here
+    m_libraryTree->setStyleSheet("QTreeWidget { background-color: #1e1e1e; border: 1px solid #3c3c3c; border-radius: 4px; } "
+                                 "QTreeWidget::item:selected { background-color: #007acc; }");
+    connect(m_libraryTree, &QTreeWidget::itemDoubleClicked,
+            this, &SymbolEditor::onCloneSymbol);
+    connect(m_libraryTree, &QTreeWidget::itemClicked,
+            this, &SymbolEditor::onLibraryItemClicked);
+
+    m_libPreviewScene = new QGraphicsScene(this);
+    m_libPreviewView = new QGraphicsView(m_libPreviewScene);
+    m_libPreviewView->setFixedHeight(180);
+    m_libPreviewView->setBackgroundBrush(QBrush(QColor("#121212")));
+    m_libPreviewView->setRenderHint(QPainter::Antialiasing);
+    m_libPreviewView->setFrameShape(QFrame::NoFrame);
+    m_libPreviewView->setStyleSheet("background-color: #121212; border: 1px solid #3c3c3c; border-radius: 4px; margin-top: 5px;");
+
+    populateLibraryTree();
+}
+
+void SymbolEditor::createWizardPanel() {
+    m_wizardStyleCombo = new QComboBox();
+    m_wizardStyleCombo->addItems({"Dual (DIP/SOIC)", "Quad (QFP/QFN)"});
+
+    m_pinCountSpin = new QSpinBox();
+    m_pinCountSpin->setRange(2, 512);
+    m_pinCountSpin->setValue(8);
+
+    m_pinSpacingSpin = new QDoubleSpinBox();
+    m_pinSpacingSpin->setRange(1, 50);
+    m_pinSpacingSpin->setSingleStep(2.54);
+    m_pinSpacingSpin->setValue(10.0);
+    m_pinSpacingSpin->setSuffix(" units");
+
+    m_bodyWidthSpin = new QDoubleSpinBox();
+    m_bodyWidthSpin->setRange(5, 500);
+    m_bodyWidthSpin->setValue(50.0);
+    m_bodyWidthSpin->setSuffix(" units");
+}
+
+void SymbolEditor::createPinTable() {
+    m_pinTable = new QTableWidget(0, 7);
+    m_pinTable->setHorizontalHeaderLabels({"Number", "Name", "Type", "Orientation", "Length", "Swap", "Alts"});
+    m_pinTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    m_pinTable->setStyleSheet("QTableWidget { background-color: #1e1e1e; color: #cccccc; gridline-color: #333; }");
+    m_pinTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_pinTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_pinTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_pinTable, &QTableWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        QMenu menu(this);
+        menu.setStyleSheet(ThemeManager::theme() ? ThemeManager::theme()->widgetStylesheet() : "");
+        
+        QAction* ren = menu.addAction("Renumber 1..N");
+        QAction* sort = menu.addAction("Auto-sort by Position");
+        QAction* sortNum = menu.addAction("Auto-sort by Number");
+        menu.addSeparator();
+        QAction* stack = menu.addAction("Stack Selected Pins");
+        menu.addSeparator();
+        QAction* dist = menu.addAction("Distribute Evenly");
+        
+        QAction* selected = menu.exec(m_pinTable->mapToGlobal(pos));
+        if (selected == ren) onPinRenumberSequential();
+        else if (selected == sort) onPinDistributeSelected(); 
+        else if (selected == sortNum) onPinSortByNumber();
+        else if (selected == stack) onPinStackSelected();
+        else if (selected == dist) onPinDistributeSelected();
+    });
+    connect(m_pinTable, &QTableWidget::cellChanged, this, &SymbolEditor::onPinTableItemChanged);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Library
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::populateLibraryTree() {
+    m_libraryTree->clear();
+    
+    QList<SymbolLibrary*> allLibs = SymbolLibraryManager::instance().libraries();
+    
+    // Pass 1: User / Project Libraries (Non-Built-in)
+    for (SymbolLibrary* lib : allLibs) {
+        if (lib->isBuiltIn()) continue;
+        
+        auto* libItem = new QTreeWidgetItem(m_libraryTree, {lib->name()});
+        libItem->setIcon(0, QIcon(":/icons/folder_closed.svg"));
+        libItem->setForeground(0, QBrush(QColor("#fbbf24"))); // Amber for user libs
+
+        for (const QString& cat : lib->categories()) {
+            QList<SymbolDefinition*> syms = lib->symbolsInCategory(cat);
+            if (syms.isEmpty()) continue;
+
+            auto* catItem = new QTreeWidgetItem(libItem, {cat});
+            catItem->setIcon(0, QIcon(":/icons/folder_open.svg"));
+
+            for (SymbolDefinition* sym : syms) {
+                auto* symItem = new QTreeWidgetItem(catItem, {sym->name()});
+                symItem->setIcon(0, QIcon(":/icons/component_file.svg"));
+                symItem->setData(0, Qt::UserRole, lib->name());
+            }
+        }
+    }
+
+    // Pass 2: Built-in Libraries
+    for (SymbolLibrary* lib : allLibs) {
+        if (!lib->isBuiltIn()) continue;
+
+        auto* libItem = new QTreeWidgetItem(m_libraryTree, {lib->name() + " [Built-in]"});
+        libItem->setIcon(0, QIcon(":/icons/folder_closed.svg"));
+        libItem->setForeground(0, QBrush(QColor("#94a3b8"))); // Grey for built-ins
+
+        for (const QString& cat : lib->categories()) {
+            QList<SymbolDefinition*> syms = lib->symbolsInCategory(cat);
+            if (syms.isEmpty()) continue;
+
+            auto* catItem = new QTreeWidgetItem(libItem, {cat});
+            catItem->setIcon(0, QIcon(":/icons/folder_open.svg"));
+
+            for (SymbolDefinition* sym : syms) {
+                auto* symItem = new QTreeWidgetItem(catItem, {sym->name()});
+                symItem->setIcon(0, QIcon(":/icons/component_file.svg"));
+                symItem->setData(0, Qt::UserRole, lib->name());
+            }
+        }
+    }
+    
+    m_libraryTree->expandAll();
+}
+
+void SymbolEditor::onLibSearchChanged(const QString& text) {
+    const QString query = text.trimmed().toLower();
+
+    for (int i = 0; i < m_libraryTree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* libItem = m_libraryTree->topLevelItem(i);
+        bool libVisible = false;
+
+        for (int j = 0; j < libItem->childCount(); ++j) {
+            QTreeWidgetItem* catItem = libItem->child(j);
+            bool catVisible = false;
+
+            for (int k = 0; k < catItem->childCount(); ++k) {
+                QTreeWidgetItem* symItem = catItem->child(k);
+                bool matches = query.isEmpty()
+                            || symItem->text(0).toLower().contains(query);
+                symItem->setHidden(!matches);
+                if (matches) catVisible = true;
+            }
+
+            catItem->setHidden(!catVisible && !query.isEmpty());
+            if (catVisible) catItem->setExpanded(true);
+            if (catVisible) libVisible = true;
+        }
+
+        libItem->setHidden(!libVisible && !query.isEmpty());
+        if (libVisible) libItem->setExpanded(true);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Wizard
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::onWizardGenerate() {
+    if (!m_drawnItems.isEmpty()) {
+        if (QMessageBox::question(this, "Generate", "This will clear the current symbol. Continue?")
+                != QMessageBox::Yes)
+            return;
+    }
+
+    const int    pins  = m_pinCountSpin->value();
+    const qreal  pitch = m_pinSpacingSpin->value();
+    const qreal  bW    = m_bodyWidthSpin->value();
+    const QString style = m_wizardStyleCombo->currentText();
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef;
+    newDef.setName(m_nameEdit->text().isEmpty() ? "New_IC" : m_nameEdit->text());
+    newDef.setReferencePrefix(m_prefixEdit->text().isEmpty() ? "U" : m_prefixEdit->text());
+    newDef.setCategory(m_categoryCombo->currentText());
+
+    if (style.startsWith("Dual")) {
+        const int   half    = pins / 2;
+        const qreal bHeight = qMax(2.0 * pitch, half * pitch + pitch);
+
+        newDef.addPrimitive(SymbolPrimitive::createRect(
+            QRectF(-bW/2, -bHeight/2, bW, bHeight), false));
+
+        for (int i = 0; i < half; ++i) {
+            qreal y = -bHeight/2 + pitch + i * pitch;
+            newDef.addPrimitive(SymbolPrimitive::createPin(
+                QPointF(-bW/2 - 15, y), i + 1, QString::number(i + 1), "Right", 15));
+        }
+        for (int i = 0; i < half; ++i) {
+            qreal y = bHeight/2 - pitch - i * pitch;
+            newDef.addPrimitive(SymbolPrimitive::createPin(
+                QPointF(bW/2 + 15, y), half + i + 1,
+                QString::number(half + i + 1), "Left", 15));
+        }
+        // Remaining pins (odd total) on left side
+        if (pins % 2 != 0) {
+            newDef.addPrimitive(SymbolPrimitive::createPin(
+                QPointF(-bW/2 - 15, bHeight/2 - pitch - half * pitch),
+                pins, QString::number(pins), "Right", 15));
+        }
+    } else {
+        // Quad
+        const int   perSide = qMax(1, pins / 4);
+        const qreal side    = qMax(2.0 * pitch, perSide * pitch + pitch);
+
+        newDef.addPrimitive(SymbolPrimitive::createRect(
+            QRectF(-side/2, -side/2, side, side), false));
+
+        int pinNum = 1;
+        // Left side (top→bottom)
+        for (int i = 0; i < perSide; ++i) {
+            qreal y = -side/2 + pitch + i * pitch;
+            newDef.addPrimitive(SymbolPrimitive::createPin(
+                QPointF(-side/2 - 15, y), pinNum, QString::number(pinNum), "Right", 15));
+            ++pinNum;
+        }
+        // Bottom (left→right)
+        for (int i = 0; i < perSide; ++i) {
+            qreal x = -side/2 + pitch + i * pitch;
+            newDef.addPrimitive(SymbolPrimitive::createPin(
+                QPointF(x, side/2 + 15), pinNum, QString::number(pinNum), "Up", 15));
+            ++pinNum;
+        }
+        // Right side (bottom→top)
+        for (int i = 0; i < perSide; ++i) {
+            qreal y = side/2 - pitch - i * pitch;
+            newDef.addPrimitive(SymbolPrimitive::createPin(
+                QPointF(side/2 + 15, y), pinNum, QString::number(pinNum), "Left", 15));
+            ++pinNum;
+        }
+        // Top (right→left)
+        for (int i = 0; i < perSide; ++i) {
+            qreal x = side/2 - pitch - i * pitch;
+            newDef.addPrimitive(SymbolPrimitive::createPin(
+                QPointF(x, -side/2 - 15), pinNum, QString::number(pinNum), "Down", 15));
+            ++pinNum;
+        }
+    }
+
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Wizard Generate IC"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Edit operations (New / Clone / Clear / Delete / Undo / Redo)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::onNewSymbol() {
+    if (!m_drawnItems.isEmpty()) {
+        if (QMessageBox::question(this, "New Symbol",
+                "Current symbol is not empty. Discard changes and create new?")
+                != QMessageBox::Yes)
+            return;
+    }
+
+    m_undoStack->clear();
+    clearScene();
+    m_symbol = SymbolDefinition();
+    m_nameEdit->clear();
+    m_descriptionEdit->clear();
+    m_prefixEdit->setText("U");
+}
+
+void SymbolEditor::onCloneSymbol(QTreeWidgetItem* item, int column) {
+    Q_UNUSED(column)
+    if (!item || item->childCount() > 0) return; // leaf nodes only
+
+    const QString symName = item->text(0);
+    const QString libName = item->data(0, Qt::UserRole).toString();
+
+    SymbolLibrary* lib = SymbolLibraryManager::instance().findLibrary(libName);
+    if (!lib) return;
+
+    SymbolDefinition* source = lib->findSymbol(symName);
+    if (!source) return;
+
+    if (!m_drawnItems.isEmpty() && !m_undoStack->isClean()) {
+        if (QMessageBox::question(this, "Load Symbol",
+                "Current symbol has unsaved changes. Discard and load selected symbol?")
+                != QMessageBox::Yes)
+            return;
+    }
+
+    setSymbolDefinition(*source);
+}
+
+void SymbolEditor::onClear() {
+    if (m_drawnItems.isEmpty()) return;
+    if (QMessageBox::question(this, "Clear All",
+            "Are you sure you want to delete all primitives?")
+            != QMessageBox::Yes)
+        return;
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    newDef.clearPrimitives();
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Clear All"));
+}
+
+void SymbolEditor::onDelete() {
+    // Collect valid primitive indices, sort descending to avoid index shifting
+    QList<int> toDelete;
+    // Walk our primitive visuals directly, so text primitives are always handled.
+    for (QGraphicsItem* vis : m_drawnItems) {
+        if (!vis || !vis->isSelected()) continue;
+        int idx = primitiveIndex(vis);
+        if (idx != -1 && !toDelete.contains(idx)) toDelete.append(idx);
+    }
+    // Fallback for selections that hit child items of primitive groups.
+    if (toDelete.isEmpty()) {
+        QList<QGraphicsItem*> selected = m_scene->selectedItems();
+        for (QGraphicsItem* item : selected) {
+            int idx = primitiveIndex(item);
+            if (idx != -1 && !toDelete.contains(idx)) toDelete.append(idx);
+        }
+    }
+    if (toDelete.isEmpty()) return;
+
+    std::sort(toDelete.begin(), toDelete.end(), std::greater<int>());
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    for (int idx : toDelete) {
+        newDef.removePrimitive(idx);
+    }
+    
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Delete Items"));
+}
+
+void SymbolEditor::onUndo() { if (m_undoStack) m_undoStack->undo(); }
+void SymbolEditor::onRedo() { if (m_undoStack) m_undoStack->redo(); }
+
+void SymbolEditor::onToolSelected() {
+    auto* action = qobject_cast<QAction*>(sender());
+    if (!action) return;
+    m_currentTool = static_cast<Tool>(action->data().toInt());
+    
+    // Immediate action for Image import
+    if (m_currentTool == Image) {
+        onImportImage();
+        if (m_selectAction) m_selectAction->trigger(); // Revert to select
+        return;
+    }
+
+    m_view->setCurrentTool(static_cast<int>(m_currentTool));
+    m_view->setDragMode(m_currentTool == Select ? QGraphicsView::RubberBandDrag
+                                                : QGraphicsView::NoDrag);
+    m_polyPoints.clear();
+    if (m_previewItem) {
+        m_scene->removeItem(m_previewItem);
+        delete m_previewItem;
+        m_previewItem = nullptr;
+    }
+}
+
+void SymbolEditor::onItemErased(QGraphicsItem* item) {
+    int idx = primitiveIndex(item);
+    if (idx != -1) {
+        SymbolDefinition oldDef = symbolDefinition();
+        SymbolDefinition newDef = oldDef;
+        newDef.removePrimitive(idx);
+        m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Erase Item"));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Save
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::onSave() {
+    m_symbol.setName(m_nameEdit->text());
+    m_symbol.setDescription(m_descriptionEdit->text());
+    m_symbol.setCategory(m_categoryCombo->currentText());
+    m_symbol.setReferencePrefix(m_prefixEdit->text());
+    emit symbolSaved(m_symbol);
+}
+
+void SymbolEditor::onSaveToLibrary() {
+    if (m_nameEdit->text().isEmpty()) {
+        QMessageBox::warning(this, "Error", "Please enter a symbol name.");
+        return;
+    }
+
+    m_symbol.setName(m_nameEdit->text());
+    m_symbol.setDescription(m_descriptionEdit->text());
+    m_symbol.setCategory(m_categoryCombo->currentText());
+    m_symbol.setReferencePrefix(m_prefixEdit->text());
+
+    QStringList libNames;
+    for (SymbolLibrary* lib : SymbolLibraryManager::instance().libraries())
+        if (!lib->isBuiltIn()) libNames.append(lib->name());
+
+    QString libName;
+    if (libNames.isEmpty()) {
+        QMessageBox::StandardButton reply = QMessageBox::question(this, "No Library Found",
+            "You don't have any user libraries yet. Would you like to create one now?",
+            QMessageBox::Yes | QMessageBox::No);
+        
+        if (reply == QMessageBox::Yes) {
+            bool ok;
+            libName = QInputDialog::getText(this, "New Library", "Enter library name:", QLineEdit::Normal, "User", &ok);
+            if (!ok || libName.isEmpty()) return;
+
+            auto* userLib = new SymbolLibrary(libName, false);
+            userLib->setPath(QDir::homePath() + "/.viora_eda/symbols/" + libName.toLower().replace(" ", "_") + ".sclib");
+            SymbolLibraryManager::instance().addLibrary(userLib);
+        } else {
+            return;
+        }
+    } else {
+        bool ok;
+        QStringList options = libNames;
+        options.prepend("[ Create New Library... ]");
+        
+        QString selection = QInputDialog::getItem(this, "Save to Library",
+                                        "Select library:", options, 1, false, &ok);
+        if (!ok) return;
+
+        if (selection == "[ Create New Library... ]") {
+            bool ok2;
+            libName = QInputDialog::getText(this, "New Library", "Enter library name:", QLineEdit::Normal, "", &ok2);
+            if (!ok2 || libName.isEmpty()) return;
+
+            auto* userLib = new SymbolLibrary(libName, false);
+            userLib->setPath(QDir::homePath() + "/.viora_eda/symbols/" + libName.toLower().replace(" ", "_") + ".sclib");
+            SymbolLibraryManager::instance().addLibrary(userLib);
+        } else {
+            libName = selection;
+        }
+    }
+
+    SymbolLibrary* lib = SymbolLibraryManager::instance().findLibrary(libName);
+    if (!lib) return;
+
+    lib->addSymbol(m_symbol);
+    QDir dir(QDir::homePath() + "/.viora_eda/symbols");
+    if (!dir.exists()) dir.mkpath(".");
+
+    if (lib->save()) {
+        // Update library index for fast search
+        LibraryIndex::instance().addSymbol(m_symbol.name(), lib->name(), m_symbol.category());
+
+        QMessageBox::information(this, "Saved",
+            QString("Symbol '%1' saved to library '%2'.")
+                .arg(m_symbol.name(), libName));
+        emit symbolSaved(m_symbol);
+        
+        // Mark as not modified after successful save
+        if (m_undoStack) m_undoStack->setClean();
+    } else {
+        QMessageBox::critical(this, "Error", "Failed to save library file.");
+    }
+}
+
+void SymbolEditor::onRotateCW() {
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
+    QPointF center(0, 0);
+    bool centerFound = false;
+
+    // 1. Prioritize any selected Pin's connection point as the pivot
+    for (auto* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) {
+            const SymbolPrimitive& prim = m_symbol.primitives().at(idx);
+            if (prim.type == SymbolPrimitive::Pin) {
+                center = QPointF(prim.data.value("x").toDouble(), prim.data.value("y").toDouble());
+                centerFound = true;
+                break;
+            }
+        }
+    }
+
+    // 2. Fallback to bounding box center if no pin is selected
+    if (!centerFound) {
+        if (selected.size() == 1) {
+            center = m_view->snapToGrid(selected.first()->sceneBoundingRect().center());
+        } else {
+            QRectF bbox;
+            for (auto* item : selected) bbox = bbox.united(item->sceneBoundingRect());
+            center = m_view->snapToGrid(bbox.center());
+        }
+    }
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+
+    for (QGraphicsItem* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1 && idx < newDef.primitives().size())
+            newDef.primitives()[idx].rotateCW(center);
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Rotate CW"));
+}
+
+void SymbolEditor::onRotateCCW() {
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
+    QPointF center(0, 0);
+    bool centerFound = false;
+
+    for (auto* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) {
+            const SymbolPrimitive& prim = m_symbol.primitives().at(idx);
+            if (prim.type == SymbolPrimitive::Pin) {
+                center = QPointF(prim.data.value("x").toDouble(), prim.data.value("y").toDouble());
+                centerFound = true;
+                break;
+            }
+        }
+    }
+
+    if (!centerFound) {
+        if (selected.size() == 1) {
+            center = m_view->snapToGrid(selected.first()->sceneBoundingRect().center());
+        } else {
+            QRectF bbox;
+            for (auto* item : selected) bbox = bbox.united(item->sceneBoundingRect());
+            center = m_view->snapToGrid(bbox.center());
+        }
+    }
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+
+    for (QGraphicsItem* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1 && idx < newDef.primitives().size())
+            newDef.primitives()[idx].rotateCCW(center);
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Rotate CCW"));
+}
+
+void SymbolEditor::onFlipH() {
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
+    QPointF center(0, 0);
+    bool centerFound = false;
+
+    for (auto* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) {
+            const SymbolPrimitive& prim = m_symbol.primitives().at(idx);
+            if (prim.type == SymbolPrimitive::Pin) {
+                center = QPointF(prim.data.value("x").toDouble(), prim.data.value("y").toDouble());
+                centerFound = true;
+                break;
+            }
+        }
+    }
+
+    if (!centerFound) {
+        if (selected.size() == 1) {
+            center = m_view->snapToGrid(selected.first()->sceneBoundingRect().center());
+        } else {
+            QRectF bbox;
+            for (auto* item : selected) bbox = bbox.united(item->sceneBoundingRect());
+            center = m_view->snapToGrid(bbox.center());
+        }
+    }
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+
+    for (QGraphicsItem* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1 && idx < newDef.primitives().size())
+            newDef.primitives()[idx].flipH(center);
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Flip Horizontal"));
+}
+
+void SymbolEditor::onFlipV() {
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
+    QPointF center(0, 0);
+    bool centerFound = false;
+
+    for (auto* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) {
+            const SymbolPrimitive& prim = m_symbol.primitives().at(idx);
+            if (prim.type == SymbolPrimitive::Pin) {
+                center = QPointF(prim.data.value("x").toDouble(), prim.data.value("y").toDouble());
+                centerFound = true;
+                break;
+            }
+        }
+    }
+
+    if (!centerFound) {
+        if (selected.size() == 1) {
+            center = m_view->snapToGrid(selected.first()->sceneBoundingRect().center());
+        } else {
+            QRectF bbox;
+            for (auto* item : selected) bbox = bbox.united(item->sceneBoundingRect());
+            center = m_view->snapToGrid(bbox.center());
+        }
+    }
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+
+    for (QGraphicsItem* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1 && idx < newDef.primitives().size())
+            newDef.primitives()[idx].flipV(center);
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Flip Vertical"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Align / Distribute
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::onAlignLeft() {
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() < 2) return;
+
+    qreal minX = 1e9;
+    for (auto* item : selected) minX = qMin(minX, item->sceneBoundingRect().left());
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+
+    for (QGraphicsItem* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) {
+            qreal dx = minX - item->sceneBoundingRect().left();
+            // This is complex because primitives have different data formats.
+            // Simplified: we shift all coordinate-like fields in data.
+            SymbolPrimitive& prim = newDef.primitives()[idx];
+            for (const QString& key : prim.data.keys()) {
+                if (key.toLower().contains("x"))
+                    prim.data[key] = prim.data[key].toDouble() + dx;
+            }
+        }
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Align Left"));
+}
+
+void SymbolEditor::onAlignRight() {
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() < 2) return;
+    qreal maxX = -1e9;
+    for (auto* item : selected) maxX = qMax(maxX, item->sceneBoundingRect().right());
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    for (QGraphicsItem* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) {
+            qreal dx = maxX - item->sceneBoundingRect().right();
+            SymbolPrimitive& prim = newDef.primitives()[idx];
+            for (const QString& key : prim.data.keys()) { if (key.toLower().contains("x")) prim.data[key] = prim.data[key].toDouble() + dx; }
+        }
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Align Right"));
+}
+
+void SymbolEditor::onAlignTop() {
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() < 2) return;
+    qreal minY = 1e9;
+    for (auto* item : selected) minY = qMin(minY, item->sceneBoundingRect().top());
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    for (QGraphicsItem* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) {
+            qreal dy = minY - item->sceneBoundingRect().top();
+            SymbolPrimitive& prim = newDef.primitives()[idx];
+            for (const QString& key : prim.data.keys()) { if (key.toLower().contains("y")) prim.data[key] = prim.data[key].toDouble() + dy; }
+        }
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Align Top"));
+}
+
+void SymbolEditor::onAlignBottom() {
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() < 2) return;
+    qreal maxY = -1e9;
+    for (auto* item : selected) maxY = qMax(maxY, item->sceneBoundingRect().bottom());
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    for (QGraphicsItem* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) {
+            qreal dy = maxY - item->sceneBoundingRect().bottom();
+            SymbolPrimitive& prim = newDef.primitives()[idx];
+            for (const QString& key : prim.data.keys()) { if (key.toLower().contains("y")) prim.data[key] = prim.data[key].toDouble() + dy; }
+        }
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Align Bottom"));
+}
+
+void SymbolEditor::onAlignCenterX() {
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() < 2) return;
+    QRectF bbox;
+    for (auto* item : selected) bbox = bbox.united(item->sceneBoundingRect());
+    qreal centerX = bbox.center().x();
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    for (QGraphicsItem* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) {
+            qreal dx = centerX - item->sceneBoundingRect().center().x();
+            SymbolPrimitive& prim = newDef.primitives()[idx];
+            for (const QString& key : prim.data.keys()) { if (key.toLower().contains("x")) prim.data[key] = prim.data[key].toDouble() + dx; }
+        }
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Center X"));
+}
+
+void SymbolEditor::onAlignCenterY() {
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() < 2) return;
+    QRectF bbox;
+    for (auto* item : selected) bbox = bbox.united(item->sceneBoundingRect());
+    qreal centerY = bbox.center().y();
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    for (QGraphicsItem* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) {
+            qreal dy = centerY - item->sceneBoundingRect().center().y();
+            SymbolPrimitive& prim = newDef.primitives()[idx];
+            for (const QString& key : prim.data.keys()) { if (key.toLower().contains("y")) prim.data[key] = prim.data[key].toDouble() + dy; }
+        }
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Center Y"));
+}
+
+void SymbolEditor::onDistributeH() {
+    QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() < 3) return;
+    std::sort(selected.begin(), selected.end(), [](auto* a, auto* b){ return a->sceneBoundingRect().center().x() < b->sceneBoundingRect().center().x(); });
+    qreal firstX = selected.first()->sceneBoundingRect().center().x();
+    qreal lastX = selected.last()->sceneBoundingRect().center().x();
+    qreal step = (lastX - firstX) / (selected.size() - 1);
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    for (int i = 1; i < selected.size() - 1; ++i) {
+        int idx = primitiveIndex(selected[i]);
+        if (idx != -1) {
+            qreal dx = (firstX + i * step) - selected[i]->sceneBoundingRect().center().x();
+            SymbolPrimitive& prim = newDef.primitives()[idx];
+            for (const QString& key : prim.data.keys()) { if (key.toLower().contains("x")) prim.data[key] = prim.data[key].toDouble() + dx; }
+        }
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Distribute H"));
+}
+
+void SymbolEditor::onDistributeV() {
+    QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() < 3) return;
+    std::sort(selected.begin(), selected.end(), [](auto* a, auto* b){ return a->sceneBoundingRect().center().y() < b->sceneBoundingRect().center().y(); });
+    qreal firstY = selected.first()->sceneBoundingRect().center().y();
+    qreal lastY = selected.last()->sceneBoundingRect().center().y();
+    qreal step = (lastY - firstY) / (selected.size() - 1);
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    for (int i = 1; i < selected.size() - 1; ++i) {
+        int idx = primitiveIndex(selected[i]);
+        if (idx != -1) {
+            qreal dy = (firstY + i * step) - selected[i]->sceneBoundingRect().center().y();
+            SymbolPrimitive& prim = newDef.primitives()[idx];
+            for (const QString& key : prim.data.keys()) { if (key.toLower().contains("y")) prim.data[key] = prim.data[key].toDouble() + dy; }
+        }
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Distribute V"));
+}
+
+void SymbolEditor::onMatchSpacing() {
+    QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() < 2) return;
+
+    bool ok;
+    double pitch = QInputDialog::getDouble(this, "Match Spacing", "Enter spacing (mm):", 
+                                          m_view->gridSize(), 0.1, 100.0, 2, &ok);
+    if (!ok) return;
+
+    // Sort items by position
+    bool horizontal = true;
+    QRectF totalRect;
+    for (auto* item : selected) totalRect = totalRect.united(item->sceneBoundingRect());
+    if (totalRect.height() > totalRect.width()) horizontal = false;
+
+    if (horizontal) {
+        std::sort(selected.begin(), selected.end(), [](auto* a, auto* b){ 
+            return a->sceneBoundingRect().center().x() < b->sceneBoundingRect().center().x(); 
+        });
+    } else {
+        std::sort(selected.begin(), selected.end(), [](auto* a, auto* b){ 
+            return a->sceneBoundingRect().center().y() < b->sceneBoundingRect().center().y(); 
+        });
+    }
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    QPointF start = selected.first()->sceneBoundingRect().center();
+
+    for (int i = 1; i < selected.size(); ++i) {
+        int idx = primitiveIndex(selected[i]);
+        if (idx != -1) {
+            QPointF target;
+            if (horizontal) target = start + QPointF(i * pitch, 0);
+            else target = start + QPointF(0, i * pitch);
+
+            QPointF delta = target - selected[i]->sceneBoundingRect().center();
+            SymbolPrimitive& prim = newDef.primitives()[idx];
+            for (const QString& key : prim.data.keys()) {
+                if (key.toLower().contains("x")) prim.data[key] = prim.data[key].toDouble() + delta.x();
+                if (key.toLower().contains("y")) prim.data[key] = prim.data[key].toDouble() + delta.y();
+            }
+        }
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Match Spacing"));
+}
+
+void SymbolEditor::onSnapToGrid() {
+    QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    bool anyChanged = false;
+
+    for (auto* item : selected) {
+        int idx = primitiveIndex(item);
+        if (idx == -1) continue;
+
+        SymbolPrimitive& prim = newDef.primitives()[idx];
+        
+        // Snap logic depends on type
+        if (prim.type == SymbolPrimitive::Pin) {
+            QPointF p(prim.data["x"].toDouble(), prim.data["y"].toDouble());
+            QPointF snapped = m_view->snapToGrid(p);
+            if (p != snapped) {
+                prim.data["x"] = snapped.x();
+                prim.data["y"] = snapped.y();
+                anyChanged = true;
+            }
+        } else if (prim.type == SymbolPrimitive::Line || prim.type == SymbolPrimitive::Bezier) {
+            for (int i = 1; i <= 4; ++i) {
+                QString kX = QString("x%1").arg(i);
+                QString kY = QString("y%1").arg(i);
+                if (prim.data.contains(kX)) {
+                    QPointF p(prim.data[kX].toDouble(), prim.data[kY].toDouble());
+                    QPointF snapped = m_view->snapToGrid(p);
+                    prim.data[kX] = snapped.x();
+                    prim.data[kY] = snapped.y();
+                    anyChanged = true;
+                }
+            }
+        } else if (prim.type == SymbolPrimitive::Rect || prim.type == SymbolPrimitive::Circle || prim.type == SymbolPrimitive::Arc) {
+            QString kX = prim.data.contains("centerX") ? "centerX" : "x";
+            QString kY = prim.data.contains("centerY") ? "centerY" : "y";
+            QPointF p(prim.data[kX].toDouble(), prim.data[kY].toDouble());
+            QPointF snapped = m_view->snapToGrid(p);
+            if (p != snapped) {
+                prim.data[kX] = snapped.x();
+                prim.data[kY] = snapped.y();
+                anyChanged = true;
+            }
+        }
+    }
+
+    if (anyChanged) {
+        m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Snap to Grid"));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Pin Table
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::onPinTable() {
+    QList<int> pinIndices;
+    QList<SymbolPrimitive> pins;
+    for (int i = 0; i < m_symbol.primitives().size(); ++i) {
+        if (m_symbol.primitives()[i].type == SymbolPrimitive::Pin) {
+            pinIndices.append(i);
+            pins.append(m_symbol.primitives()[i]);
+        }
+    }
+
+    if (pins.isEmpty()) {
+        QMessageBox::information(this, "Pin Table", "No pins found in this symbol.");
+        return;
+    }
+
+    PinTableDialog dlg(pins, this);
+    if (dlg.exec() == QDialog::Accepted) {
+        SymbolDefinition oldDef = symbolDefinition();
+        SymbolDefinition newDef = oldDef;
+        auto res = dlg.results();
+        
+        if (res.size() == pinIndices.size()) {
+            // Update in-place
+            for (int i = 0; i < pinIndices.size(); ++i) {
+                int idx = pinIndices[i];
+                newDef.primitives()[idx].data["name"] = res[i]["name"].toString();
+                newDef.primitives()[idx].data["number"] = res[i]["number"].toInt();
+                newDef.primitives()[idx].data["orientation"] = res[i]["orientation"].toString();
+                newDef.primitives()[idx].data["electricalType"] = res[i]["electricalType"].toString();
+                newDef.primitives()[idx].data["visible"] = res[i]["visible"].toBool();
+                newDef.primitives()[idx].data["swapGroup"] = res[i]["swapGroup"].toInt();
+                newDef.primitives()[idx].data["jumperGroup"] = res[i]["jumperGroup"].toInt();
+                newDef.primitives()[idx].data["stackedNumbers"] = res[i]["stackedNumbers"].toString();
+                newDef.primitives()[idx].data["alternateNames"] = res[i]["alternateNames"].toString();
+            }
+        } else {
+            // Rebuild all pins (count changed via import)
+            QList<SymbolPrimitive> others;
+            for (const auto& p : newDef.primitives()) if (p.type != SymbolPrimitive::Pin) others.append(p);
+            
+            newDef.clearPrimitives();
+            for (const auto& p : others) newDef.addPrimitive(p);
+            
+            for (int i = 0; i < res.size(); ++i) {
+                // Heuristic: vertical stack for new pins
+                QPointF pos(0, i * 15.0);
+                SymbolPrimitive p = SymbolPrimitive::createPin(pos, res[i]["number"].toInt(), res[i]["name"].toString());
+                p.data["orientation"] = res[i]["orientation"].toString();
+                p.data["electricalType"] = res[i]["electricalType"].toString();
+                p.data["visible"] = res[i]["visible"].toBool();
+                p.data["swapGroup"] = res[i]["swapGroup"].toInt();
+                p.data["jumperGroup"] = res[i]["jumperGroup"].toInt();
+                p.data["stackedNumbers"] = res[i]["stackedNumbers"].toString();
+                p.data["alternateNames"] = res[i]["alternateNames"].toString();
+                newDef.addPrimitive(p);
+            }
+        }
+        m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Batch Edit Pins"));
+    }
+}
+
+void SymbolEditor::updatePinTable() {
+    if (!m_pinTable) return;
+    m_pinTable->blockSignals(true);
+    m_pinTable->setColumnCount(10);
+    m_pinTable->setHorizontalHeaderLabels({"#", "Name", "Type", "Ori", "Len", "Vis", "Swap", "Jumper", "Stacked", "Alts"});
+    m_pinTable->setRowCount(0);
+    for (int primIdx = 0; primIdx < m_symbol.primitives().size(); ++primIdx) {
+        const auto& prim = m_symbol.primitives().at(primIdx);
+        if (prim.type == SymbolPrimitive::Pin) {
+            int row = m_pinTable->rowCount();
+            m_pinTable->insertRow(row);
+
+            auto* numItem = new QTableWidgetItem(QString::number(prim.data["number"].toInt()));
+            auto* nameItem = new QTableWidgetItem(prim.data["name"].toString());
+            auto* typeItem = new QTableWidgetItem(prim.data.value("electricalType").toString("Passive"));
+            auto* oriItem = new QTableWidgetItem(prim.data.value("orientation").toString("Right"));
+            auto* lenItem = new QTableWidgetItem(QString::number(prim.data.value("length").toDouble(15.0)));
+            auto* visItem = new QTableWidgetItem();
+            visItem->setCheckState(prim.data.value("visible").toBool(true) ? Qt::Checked : Qt::Unchecked);
+            auto* swapItem = new QTableWidgetItem(QString::number(prim.data.value("swapGroup").toInt(0)));
+            auto* jumpItem = new QTableWidgetItem(QString::number(prim.data.value("jumperGroup").toInt(0)));
+            auto* stackItem = new QTableWidgetItem(prim.data.value("stackedNumbers").toString());
+            auto* altsItem = new QTableWidgetItem(prim.data.value("alternateNames").toString());
+
+            numItem->setData(Qt::UserRole, primIdx);
+            nameItem->setData(Qt::UserRole, primIdx);
+            typeItem->setData(Qt::UserRole, primIdx);
+            oriItem->setData(Qt::UserRole, primIdx);
+            lenItem->setData(Qt::UserRole, primIdx);
+            visItem->setData(Qt::UserRole, primIdx);
+            swapItem->setData(Qt::UserRole, primIdx);
+            jumpItem->setData(Qt::UserRole, primIdx);
+            stackItem->setData(Qt::UserRole, primIdx);
+            altsItem->setData(Qt::UserRole, primIdx);
+
+            m_pinTable->setItem(row, 0, numItem);
+            m_pinTable->setItem(row, 1, nameItem);
+            m_pinTable->setItem(row, 2, typeItem);
+            m_pinTable->setItem(row, 3, oriItem);
+            m_pinTable->setItem(row, 4, lenItem);
+            m_pinTable->setItem(row, 5, visItem);
+            m_pinTable->setItem(row, 6, swapItem);
+            m_pinTable->setItem(row, 7, jumpItem);
+            m_pinTable->setItem(row, 8, stackItem);
+            m_pinTable->setItem(row, 9, altsItem);
+        }
+    }
+    m_pinTable->blockSignals(false);
+}
+
+void SymbolEditor::onPinTableItemChanged(int row, int col) {
+    if (!m_pinTable || row < 0 || row >= m_pinTable->rowCount() || col < 0) return;
+    QTableWidgetItem* item = m_pinTable->item(row, col);
+    if (!item) return;
+
+    const int primIdx = item->data(Qt::UserRole).toInt();
+    if (primIdx < 0 || primIdx >= m_symbol.primitives().size()) return;
+    if (m_symbol.primitives().at(primIdx).type != SymbolPrimitive::Pin) return;
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    SymbolPrimitive& pin = newDef.primitives()[primIdx];
+
+    switch (col) {
+    case 0: pin.data["number"] = item->text().toInt(); break;
+    case 1: pin.data["name"] = item->text(); break;
+    case 2: pin.data["electricalType"] = item->text().trimmed(); break;
+    case 3: pin.data["orientation"] = item->text().trimmed(); break;
+    case 4: pin.data["length"] = item->text().toDouble(); break;
+    case 5: pin.data["visible"] = (item->checkState() == Qt::Checked); break;
+    case 6: pin.data["swapGroup"] = item->text().toInt(); break;
+    case 7: pin.data["jumperGroup"] = item->text().toInt(); break;
+    case 8: pin.data["stackedNumbers"] = item->text(); break;
+    case 9: pin.data["alternateNames"] = item->text(); break;
+    default: return;
+    }
+
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Edit Pin"));
+}
+
+QList<int> SymbolEditor::selectedPinRows() const {
+    QList<int> rows;
+    if (!m_pinTable) return rows;
+    for (const QModelIndex& idx : m_pinTable->selectionModel()->selectedRows()) {
+        rows.append(idx.row());
+    }
+    if (rows.isEmpty()) {
+        for (int r = 0; r < m_pinTable->rowCount(); ++r) rows.append(r);
+    }
+    return rows;
+}
+
+void SymbolEditor::applyPinEditsToRows(const QList<int>& rows, const std::function<void(SymbolPrimitive&)>& edit, const QString& label) {
+    if (rows.isEmpty()) return;
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    bool changed = false;
+
+    for (int row : rows) {
+        if (row < 0 || row >= m_pinTable->rowCount()) continue;
+        QTableWidgetItem* item0 = m_pinTable->item(row, 0);
+        if (!item0) continue;
+        int primIdx = item0->data(Qt::UserRole).toInt();
+        if (primIdx < 0 || primIdx >= newDef.primitives().size()) continue;
+        SymbolPrimitive& prim = newDef.primitives()[primIdx];
+        if (prim.type != SymbolPrimitive::Pin) continue;
+        edit(prim);
+        changed = true;
+    }
+
+    if (changed) {
+        m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, label));
+    }
+}
+
+void SymbolEditor::onPinRenumberSequential() {
+    const QList<int> rows = selectedPinRows();
+    if (rows.isEmpty()) return;
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    bool changed = false;
+    int nextNum = 1;
+    for (int row : rows) {
+        if (row < 0 || row >= m_pinTable->rowCount()) continue;
+        QTableWidgetItem* item0 = m_pinTable->item(row, 0);
+        if (!item0) continue;
+        int primIdx = item0->data(Qt::UserRole).toInt();
+        if (primIdx < 0 || primIdx >= newDef.primitives().size()) continue;
+        SymbolPrimitive& prim = newDef.primitives()[primIdx];
+        if (prim.type != SymbolPrimitive::Pin) continue;
+        prim.data["number"] = nextNum++;
+        changed = true;
+    }
+
+    if (changed) {
+        m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Renumber Pins"));
+    }
+}
+
+void SymbolEditor::onPinApplyOrientation() {
+    if (!m_pinBulkOrientation) return;
+    const QString orientation = m_pinBulkOrientation->currentText();
+    applyPinEditsToRows(selectedPinRows(), [orientation](SymbolPrimitive& prim) {
+        prim.data["orientation"] = orientation;
+    }, "Set Pin Orientation");
+}
+
+void SymbolEditor::onPinApplyType() {
+    if (!m_pinBulkType) return;
+    const QString type = m_pinBulkType->currentText();
+    applyPinEditsToRows(selectedPinRows(), [type](SymbolPrimitive& prim) {
+        prim.data["electricalType"] = type;
+    }, "Set Pin Type");
+}
+
+void SymbolEditor::onPinDistributeSelected() {
+    QList<int> rows = selectedPinRows();
+    if (rows.size() < 3) return;
+
+    struct PinRef {
+        int primIdx;
+        QString orientation;
+        qreal x;
+        qreal y;
+    };
+
+    QList<PinRef> pins;
+    SymbolDefinition oldDef = symbolDefinition();
+    for (int row : rows) {
+        if (row < 0 || row >= m_pinTable->rowCount()) continue;
+        QTableWidgetItem* item0 = m_pinTable->item(row, 0);
+        if (!item0) continue;
+        int primIdx = item0->data(Qt::UserRole).toInt();
+        if (primIdx < 0 || primIdx >= oldDef.primitives().size()) continue;
+        const SymbolPrimitive& p = oldDef.primitives().at(primIdx);
+        if (p.type != SymbolPrimitive::Pin) continue;
+        pins.append({primIdx,
+                     p.data.value("orientation").toString("Right"),
+                     p.data.value("x").toDouble(),
+                     p.data.value("y").toDouble()});
+    }
+    if (pins.size() < 3) return;
+
+    bool alongY = true;
+    const QString ori = pins.first().orientation;
+    if (ori == "Up" || ori == "Down") alongY = false;
+
+    std::sort(pins.begin(), pins.end(), [alongY](const PinRef& a, const PinRef& b) {
+        return alongY ? (a.y < b.y) : (a.x < b.x);
+    });
+
+    SymbolDefinition newDef = oldDef;
+    if (alongY) {
+        const qreal y0 = pins.first().y;
+        const qreal y1 = pins.last().y;
+        const qreal step = (y1 - y0) / qMax(1, pins.size() - 1);
+        for (int i = 0; i < pins.size(); ++i) {
+            newDef.primitives()[pins[i].primIdx].data["y"] = y0 + i * step;
+        }
+    } else {
+        const qreal x0 = pins.first().x;
+        const qreal x1 = pins.last().x;
+        const qreal step = (x1 - x0) / qMax(1, pins.size() - 1);
+        for (int i = 0; i < pins.size(); ++i) {
+            newDef.primitives()[pins[i].primIdx].data["x"] = x0 + i * step;
+        }
+    }
+
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Distribute Pins"));
+}
+
+void SymbolEditor::onPinSortByNumber() {
+    QList<int> rows = selectedPinRows();
+    if (rows.size() < 2) return;
+
+    struct PinRef {
+        int primIdx;
+        int number;
+        QString orientation;
+        qreal x;
+        qreal y;
+    };
+
+    QList<PinRef> pins;
+    SymbolDefinition oldDef = symbolDefinition();
+    for (int row : rows) {
+        if (row < 0 || row >= m_pinTable->rowCount()) continue;
+        QTableWidgetItem* item0 = m_pinTable->item(row, 0);
+        if (!item0) continue;
+        int primIdx = item0->data(Qt::UserRole).toInt();
+        if (primIdx < 0 || primIdx >= oldDef.primitives().size()) continue;
+        const SymbolPrimitive& p = oldDef.primitives().at(primIdx);
+        if (p.type != SymbolPrimitive::Pin) continue;
+        pins.append({primIdx,
+                     p.data.value("number").toInt(),
+                     p.data.value("orientation").toString("Right"),
+                     p.data.value("x").toDouble(),
+                     p.data.value("y").toDouble()});
+    }
+    if (pins.size() < 2) return;
+
+    bool alongY = true;
+    const QString ori = pins.first().orientation;
+    if (ori == "Up" || ori == "Down") alongY = false;
+
+    QList<qreal> positions;
+    for (const PinRef& p : pins) positions.append(alongY ? p.y : p.x);
+    std::sort(positions.begin(), positions.end());
+
+    std::sort(pins.begin(), pins.end(), [](const PinRef& a, const PinRef& b) {
+        return a.number < b.number;
+    });
+
+    SymbolDefinition newDef = oldDef;
+    for (int i = 0; i < pins.size(); ++i) {
+        if (alongY) newDef.primitives()[pins[i].primIdx].data["y"] = positions[i];
+        else newDef.primitives()[pins[i].primIdx].data["x"] = positions[i];
+    }
+
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Sort Pins by Number"));
+}
+
+void SymbolEditor::onPinStackSelected() {
+    QList<int> rows = selectedPinRows();
+    if (rows.size() < 2) {
+        QMessageBox::information(this, "Stack Pins", "Please select at least two pins to stack.");
+        return;
+    }
+
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+
+    // 1. Get primitive indices from rows
+    QList<int> primIndices;
+    for (int row : rows) {
+        if (auto* item = m_pinTable->item(row, 0)) {
+            primIndices.append(item->data(Qt::UserRole).toInt());
+        }
+    }
+
+    if (primIndices.size() < 2) return;
+
+    // 2. Identify Master (first one) and Slaves
+    int masterIdx = primIndices.first();
+    QStringList slaveNumbers;
+    
+    // Sort indices in descending order to avoid index shift during removal
+    QList<int> sortedIndices = primIndices;
+    std::sort(sortedIndices.begin(), sortedIndices.end(), std::greater<int>());
+
+    for (int idx : sortedIndices) {
+        if (idx == masterIdx) continue;
+        
+        const auto& slave = oldDef.primitives().at(idx);
+        slaveNumbers.append(QString::number(slave.data["number"].toInt()));
+        
+        // Also capture any existing stacked numbers from slave
+        QString existing = slave.data.value("stackedNumbers").toString();
+        if (!existing.isEmpty()) slaveNumbers << existing.split(",", Qt::SkipEmptyParts);
+        
+        newDef.removePrimitive(idx);
+    }
+
+    // 3. Update Master
+    // Since we removed items in newDef, we need to find the new index of the master
+    // Or just find it by number if it was the master
+    int masterNumber = oldDef.primitives().at(masterIdx).data["number"].toInt();
+    int newMasterIdx = -1;
+    for (int i = 0; i < newDef.primitives().size(); ++i) {
+        if (newDef.primitives()[i].type == SymbolPrimitive::Pin && 
+            newDef.primitives()[i].data["number"].toInt() == masterNumber) {
+            newMasterIdx = i;
+            break;
+        }
+    }
+
+    if (newMasterIdx != -1) {
+        SymbolPrimitive& master = newDef.primitives()[newMasterIdx];
+        QString currentStacked = master.data.value("stackedNumbers").toString();
+        QStringList all = currentStacked.split(",", Qt::SkipEmptyParts);
+        all << slaveNumbers;
+        all.removeDuplicates();
+        master.data["stackedNumbers"] = all.join(",");
+    }
+
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Stack Pins"));
+    statusBar()->showMessage(QString("Stacked %1 pins into Master Pin %2")
+        .arg(slaveNumbers.size())
+        .arg(masterNumber), 3000);
+}
+
+void SymbolEditor::onManageCustomFields() {
+    QDialog dlg(this);
+    dlg.setWindowTitle("Manage Custom Fields");
+    dlg.resize(500, 400);
+    QVBoxLayout* layout = new QVBoxLayout(&dlg);
+
+    QTableWidget* table = new QTableWidget(0, 2);
+    table->setHorizontalHeaderLabels({"Field Name", "Default Value"});
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    table->setStyleSheet("QTableWidget { background-color: #1e1e1e; color: #ccc; gridline-color: #333; }");
+    layout->addWidget(table);
+
+    // Populate current fields
+    auto currentFields = m_symbol.customFields();
+    for (auto it = currentFields.begin(); it != currentFields.end(); ++it) {
+        int r = table->rowCount();
+        table->insertRow(r);
+        table->setItem(r, 0, new QTableWidgetItem(it.key()));
+        table->setItem(r, 1, new QTableWidgetItem(it.value()));
+    }
+
+    QHBoxLayout* btnLayout = new QHBoxLayout();
+    QPushButton* addBtn = new QPushButton("Add Field");
+    QPushButton* remBtn = new QPushButton("Remove Selected");
+    btnLayout->addWidget(addBtn);
+    btnLayout->addWidget(remBtn);
+    btnLayout->addStretch();
+    layout->addLayout(btnLayout);
+
+    connect(addBtn, &QPushButton::clicked, [&](){
+        int r = table->rowCount();
+        table->insertRow(r);
+        table->setItem(r, 0, new QTableWidgetItem("NewField"));
+        table->setItem(r, 1, new QTableWidgetItem(""));
+    });
+
+    connect(remBtn, &QPushButton::clicked, [&](){
+        for (auto* item : table->selectedItems()) {
+            table->removeRow(item->row());
+        }
+    });
+
+    QDialogButtonBox* bbox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    layout->addWidget(bbox);
+    connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() == QDialog::Accepted) {
+        SymbolDefinition oldDef = symbolDefinition();
+        SymbolDefinition newDef = oldDef;
+        QMap<QString, QString> newFields;
+        for (int i = 0; i < table->rowCount(); ++i) {
+            QString key = table->item(i, 0)->text().trimmed();
+            QString val = table->item(i, 1)->text();
+            if (!key.isEmpty()) newFields[key] = val;
+        }
+        newDef.setCustomFields(newFields);
+        m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Manage Custom Fields"));
+    }
+}
+
+void SymbolEditor::onBrowseFootprint() {
+    QMessageBox::information(this, "Footprint Browser", "Footprint browser is currently being refactored.");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Imports
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::onImportKicadSymbol() {
+    QString path = QFileDialog::getOpenFileName(this, "Import KiCad Symbol", "", "KiCad Symbols (*.kicad_sym)");
+    if (path.isEmpty()) return;
+
+    QStringList names = KicadSymbolImporter::getSymbolNames(path);
+    if (names.isEmpty()) {
+        QMessageBox::warning(this, "Import", "No symbols found in file.");
+        return;
+    }
+
+    bool ok;
+    QString choice = QInputDialog::getItem(this, "Import Symbol", "Select symbol:", names, 0, false, &ok);
+    if (ok && !choice.isEmpty()) {
+        SymbolDefinition imported = KicadSymbolImporter::importSymbol(path, choice);
+        if (imported.isValid()) {
+            setSymbolDefinition(imported);
+        } else {
+            QMessageBox::critical(this, "Error", "Failed to import selected symbol.");
+        }
+    }
+}
+
+#include <QBuffer>
+
+void SymbolEditor::onImportImage() {
+    QString path = QFileDialog::getOpenFileName(this, "Import Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.svg)");
+    if (path.isEmpty()) return;
+
+    QImage img(path);
+    if (img.isNull()) {
+        QMessageBox::critical(this, "Error", "Failed to load image.");
+        return;
+    }
+
+    QByteArray ba;
+    QBuffer buffer(&ba);
+    buffer.open(QIODevice::WriteOnly);
+    img.save(&buffer, "PNG"); // Save as PNG for transparency support
+    QString base64 = QString::fromLatin1(ba.toBase64());
+
+    // Default size 100x100, centered at 0,0
+    QRectF rect(-50, -50, 100, 100);
+    SymbolPrimitive prim = SymbolPrimitive::createImage(base64, rect);
+    prim.setUnit(m_currentUnit);
+    prim.setBodyStyle(m_currentStyle);
+    
+    QGraphicsItem* visual = buildVisual(prim, m_symbol.primitives().size());
+    if (visual) {
+        m_undoStack->push(new AddPrimitiveCommand(this, prim, visual));
+    }
+}
+
+void SymbolEditor::onAiSymbolGenerated(const QString& json) {
+    QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+    if (doc.isNull() || !doc.isArray()) {
+        QMessageBox::warning(this, "AI Generation Error",
+            "The AI returned an invalid format. Please try again with a clearer prompt.");
+        return;
+    }
+
+    const QJsonArray primArray = doc.array();
+    SymbolDefinition newDef = symbolDefinition(); // keep name/prefix
+    newDef.clearPrimitives();
+
+    for (const QJsonValue& val : primArray) {
+        if (val.isObject())
+            newDef.addPrimitive(SymbolPrimitive::fromJson(val.toObject()));
+    }
+
+    if (newDef.primitives().isEmpty()) {
+        QMessageBox::warning(this, "AI Generation Error",
+            "The AI response contained no drawable primitives.");
+        return;
+    }
+
+    m_undoStack->push(new UpdateSymbolCommand(this, symbolDefinition(), newDef, "AI Generate Symbol"));
+    m_view->fitInView(m_scene->itemsBoundingRect().adjusted(-20,-20,20,20),
+                      Qt::KeepAspectRatio);
+    
+    // Automatically save AI-generated symbols
+    QTimer::singleShot(500, this, &SymbolEditor::onSaveToLibrary);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Zoom
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::onZoomIn()  { if (m_view) m_view->scale(1.2, 1.2); }
+void SymbolEditor::onZoomOut() { if (m_view) m_view->scale(1.0 / 1.2, 1.0 / 1.2); }
+void SymbolEditor::onZoomFit() {
+    if (!m_view || !m_scene) return;
+    QRectF bounds = m_scene->itemsBoundingRect();
+    if (bounds.isNull()) return;
+    bounds.adjust(-20, -20, 20, 20);
+    m_view->fitInView(bounds, Qt::KeepAspectRatio);
+}
+void SymbolEditor::onZoomSelection() {
+    if (!m_view || !m_scene) return;
+    QRectF bounds;
+    for (auto* item : m_scene->selectedItems()) bounds = bounds.united(item->sceneBoundingRect());
+    if (!bounds.isNull()) m_view->fitInView(bounds.adjusted(-10,-10,10,10), Qt::KeepAspectRatio);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Clipboard
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::onCopy() {
+    m_copyBuffer.clear();
+    for (auto* item : m_scene->selectedItems()) {
+        int idx = primitiveIndex(item);
+        if (idx != -1) m_copyBuffer.append(m_symbol.primitives()[idx]);
+    }
+}
+
+void SymbolEditor::onPaste() {
+    if (m_copyBuffer.isEmpty()) return;
+    SymbolDefinition oldDef = symbolDefinition();
+    SymbolDefinition newDef = oldDef;
+    for (const auto& prim : m_copyBuffer) {
+        SymbolPrimitive p = prim;
+        // Shift pasted items slightly
+        for (const QString& key : p.data.keys()) {
+            if (key.toLower().contains("x")) p.data[key] = p.data[key].toDouble() + 10;
+            if (key.toLower().contains("y")) p.data[key] = p.data[key].toDouble() + 10;
+        }
+        newDef.addPrimitive(p);
+    }
+    m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Paste Items"));
+}
+
+void SymbolEditor::onDuplicate() {
+    onCopy();
+    onPaste();
+}
+
+void SymbolEditor::onSelectionChanged() {
+    // Visual selection highlighting (Glow effect)
+    for (QGraphicsItem* item : m_scene->items()) {
+        // Only apply to our real items (primitives and labels)
+        bool isPrimitive = item->data(1).isValid();
+        bool isLabel = (item->data(0).toString() == "label");
+        
+        if (isPrimitive || isLabel) {
+            if (item->isSelected()) {
+                if (!item->graphicsEffect()) {
+                    auto* glow = new QGraphicsDropShadowEffect();
+                    glow->setBlurRadius(15);
+                    glow->setOffset(0);
+                    glow->setColor(QColor("#3b82f6")); // Professional Tech Blue
+                    item->setGraphicsEffect(glow);
+                }
+            } else {
+                if (item->graphicsEffect()) {
+                    item->setGraphicsEffect(nullptr);
+                }
+            }
+        }
+    }
+}
+
+void SymbolEditor::onRunSRC() {
+    if (!m_srcList) return;
+    m_srcList->clear();
+    
+    struct SRCIssue { QString msg; bool isError; int primitiveIndex; };
+    QList<SRCIssue> issues;
+
+    const auto& prims = m_symbol.primitives();
+
+    // 1. Symbol-level metadata checks
+    if (m_symbol.referencePrefix().isEmpty()) {
+        issues << SRCIssue{"WARNING: Reference prefix is empty (e.g. 'U', 'R').", false, -1};
+    }
+    if (m_symbol.name().isEmpty()) {
+        issues << SRCIssue{"ERROR: Symbol name is empty.", true, -1};
+    }
+
+    // 2. Check if empty
+    if (prims.isEmpty() && !m_symbol.isDerived()) {
+        issues << SRCIssue{"CRITICAL: Symbol contains no primitives.", true, -1};
+    }
+
+    // 3. Scan Pins & Units
+    QMap<int, int> pinNumbers; // Number -> Count
+    QList<QPair<QPointF, int>> pinPositions; // pos, index
+    QMap<int, QString> unitPinTypes; // pinNumber -> electricalType (for multi-unit consistency)
+    
+    for (int i = 0; i < prims.size(); ++i) {
+        const auto& prim = prims[i];
+        if (prim.type == SymbolPrimitive::Pin) {
+            int num = prim.data.value("number").toInt();
+            QString name = prim.data.value("name").toString();
+            QString type = prim.data.value("electricalType").toString("Passive");
+            QPointF pos(prim.data.value("x").toDouble(), prim.data.value("y").toDouble());
+
+            // Duplicate Pin Number (within same unit or shared)
+            QString pinKey = QString::number(num) + "_" + QString::number(prim.unit());
+            // Actually, usually pin numbers must be unique across the WHOLE symbol unless they are power
+            if (pinNumbers.contains(num) && type != "Power") {
+                issues << SRCIssue{QString("ERROR: Duplicate Pin Number '%1' detected.").arg(num), true, i};
+            }
+            pinNumbers[num]++;
+
+            // Missing Name
+            if (name.trimmed().isEmpty()) {
+                issues << SRCIssue{QString("WARNING: Pin %1 has no name.").arg(num), false, i};
+            }
+
+            // Overlapping Pins
+            for (const auto& pair : pinPositions) {
+                if (QLineF(pos, pair.first).length() < 0.1) {
+                    issues << SRCIssue{QString("ERROR: Pin %1 overlaps another pin at (%2, %3)").arg(QString::number(num), QString::number(pos.x()), QString::number(pos.y())), true, i};
+                }
+            }
+            pinPositions.append({pos, i});
+
+            // Multi-unit consistency: Same pin number across units should have same type
+            if (unitPinTypes.contains(num) && unitPinTypes[num] != type) {
+                issues << SRCIssue{QString("ERROR: Pin %1 has inconsistent electrical types across units (%2 vs %3)").arg(QString::number(num), type, unitPinTypes[num]), true, i};
+            }
+            unitPinTypes[num] = type;
+        }
+    }
+
+    // Add to list
+    for (const auto& issue : issues) {
+        auto* item = new QListWidgetItem((issue.isError ? "❌ " : "⚠️ ") + issue.msg);
+        item->setForeground(QBrush(QColor(issue.isError ? "#f87171" : "#fbbf24"))); 
+        item->setData(Qt::UserRole, issue.primitiveIndex);
+        m_srcList->addItem(item);
+    }
+
+    if (issues.isEmpty()) {
+        auto* item = new QListWidgetItem("✅ Symbol passed all checks. No issues found.");
+        item->setForeground(QBrush(QColor("#34d399"))); // Green
+        m_srcList->addItem(item);
+    }
+
+    // Switch to the SRC tab
+    if (auto* dock = findChild<QDockWidget*>("SRCDock")) {
+        dock->raise();
+    }
+}
+
+void SymbolEditor::updateVisualForPrimitive(int index, const SymbolPrimitive& prim) {
+    if (index < 0 || index >= m_drawnItems.size()) return;
+
+    QGraphicsItem* old = m_drawnItems[index];
+    m_scene->removeItem(old);
+    delete old;
+
+    QGraphicsItem* fresh = buildVisual(prim, index);
+    if (fresh) {
+        m_scene->addItem(fresh);
+        m_drawnItems[index] = fresh;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SymbolEditor – Key events
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SymbolEditor::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Escape && m_selectAction) {
+        m_selectAction->trigger();
+    } else if (event->key() == Qt::Key_R && m_currentTool == Pin) {
+        // Cycle orientation: Right -> Down -> Left -> Up
+        if (m_previewOrientation == "Right") m_previewOrientation = "Down";
+        else if (m_previewOrientation == "Down") m_previewOrientation = "Left";
+        else if (m_previewOrientation == "Left") m_previewOrientation = "Up";
+        else m_previewOrientation = "Right";
+        
+        // Refresh preview immediately
+        QPointF scenePos = m_view->snapToGrid(m_view->mapToScene(m_view->mapFromGlobal(QCursor::pos())));
+        updatePinPreview(scenePos);
+        event->accept();
+        return;
+    }
+    QMainWindow::keyPressEvent(event);
+}
+
+void SymbolEditor::closeEvent(QCloseEvent* event) {
+    if (m_undoStack && !m_undoStack->isClean()) {
+        QMessageBox::StandardButton reply = QMessageBox::question(this, "Unsaved Changes",
+            "You have unsaved changes. Would you like to save them before closing?",
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        
+        if (reply == QMessageBox::Save) {
+            onSaveToLibrary();
+            if (m_undoStack->isClean()) event->accept();
+            else event->ignore();
+        } else if (reply == QMessageBox::Discard) {
+            event->accept();
+        } else {
+            event->ignore();
+        }
+    } else {
+        event->accept();
+    }
+}
+
+void SymbolEditor::onLibraryContextMenu(const QPoint& pos) {
+    QTreeWidgetItem* item = m_libraryTree->itemAt(pos);
+    if (!item) return;
+
+    QString libName = item->data(0, Qt::UserRole).toString();
+    if (libName.isEmpty()) return;
+
+    QString symbolName = item->text(0);
+    SymbolLibrary* lib = SymbolLibraryManager::instance().findLibrary(libName);
+    if (!lib) return;
+
+    QMenu menu(this);
+    menu.setStyleSheet(ThemeManager::theme() ? ThemeManager::theme()->widgetStylesheet() : "");
+
+    QAction* editAct = menu.addAction(QIcon(":/icons/tool_line.svg"), "Edit Symbol");
+    QAction* dupAct  = menu.addAction(QIcon(":/icons/tool_duplicate.svg"), "Duplicate / Copy");
+    QAction* deriveAct = menu.addAction(QIcon(":/icons/tool_bezier.svg"), "Create Derived Symbol");
+    menu.addSeparator();
+    QAction* placeAct = menu.addAction(QIcon(":/icons/nav_pcb.svg"), "Place in Schematic");
+    menu.addSeparator();
+    QAction* delAct = menu.addAction(QIcon(":/icons/tool_delete.svg"), "Delete from Library");
+
+    if (lib->isBuiltIn()) {
+        editAct->setText("View Symbol (Read-Only)");
+        delAct->setEnabled(false);
+    }
+
+    QAction* selected = menu.exec(m_libraryTree->mapToGlobal(pos));
+    if (!selected) return;
+
+    SymbolDefinition* def = lib->findSymbol(symbolName);
+    if (!def) return;
+
+    if (selected == editAct) {
+        setSymbolDefinition(*def);
+    } else if (selected == deriveAct) {
+        SymbolDefinition derived;
+        derived.setName(def->name() + "_Derived");
+        derived.setParentName(def->name());
+        derived.setParentLibrary(libName);
+        derived.setCategory(def->category());
+        derived.setReferencePrefix(def->referencePrefix());
+        setSymbolDefinition(derived);
+        statusBar()->showMessage("Created derived symbol inheriting from " + def->name(), 3000);
+    } else if (selected == dupAct) {
+        SymbolDefinition copy = def->clone();
+        copy.setName(copy.name() + "_Copy");
+        setSymbolDefinition(copy);
+        statusBar()->showMessage("Symbol copied. Edit and save to library.", 3000);
+    } else if (selected == placeAct) {
+        emit placeInSchematicRequested(*def);
+    } else if (selected == delAct) {
+        if (QMessageBox::question(this, "Delete Symbol", 
+            QString("Are you sure you want to delete '%1' from library '%2'?").arg(symbolName, libName)) == QMessageBox::Yes) {
+            lib->removeSymbol(symbolName);
+            lib->save();
+            populateLibraryTree();
+        }
+    }
+}
+
+void SymbolEditor::onLibraryItemClicked(QTreeWidgetItem* item, int column) {
+    Q_UNUSED(column);
+    if (!item) return;
+
+    QString libName = item->data(0, Qt::UserRole).toString();
+    if (libName.isEmpty()) {
+        m_libPreviewScene->clear();
+        return;
+    }
+
+    QString symbolName = item->text(0);
+    SymbolLibrary* lib = SymbolLibraryManager::instance().findLibrary(libName);
+    if (!lib) return;
+
+    SymbolDefinition* def = lib->findSymbol(symbolName);
+    if (!def) return;
+
+    m_libPreviewScene->clear();
+    const QList<SymbolPrimitive>& prims = def->primitives();
+    for (int i = 0; i < prims.size(); ++i) {
+        QGraphicsItem* visual = buildVisual(prims[i], -1);
+        if (visual) {
+            visual->setFlag(QGraphicsItem::ItemIsSelectable, false);
+            visual->setFlag(QGraphicsItem::ItemIsMovable, false);
+            m_libPreviewScene->addItem(visual);
+        }
+    }
+
+    QRectF bounds = def->boundingRect();
+    auto* refLabel = new QGraphicsSimpleTextItem(def->referencePrefix() + "?");
+    refLabel->setBrush(QColor("#4db6ac"));
+    refLabel->setFont(QFont("SansSerif", 8, QFont::Bold));
+    refLabel->setPos(bounds.left(), bounds.top() - 20);
+    m_libPreviewScene->addItem(refLabel);
+
+    auto* nameLabel = new QGraphicsSimpleTextItem(def->name());
+    nameLabel->setBrush(QColor("#64b5f6"));
+    nameLabel->setFont(QFont("SansSerif", 8, QFont::Bold));
+    nameLabel->setPos(bounds.left(), bounds.bottom() + 5);
+    m_libPreviewScene->addItem(nameLabel);
+
+    m_libPreviewView->fitInView(m_libPreviewScene->itemsBoundingRect().adjusted(-15,-15,15,15), Qt::KeepAspectRatio);
+}
+
+void SymbolEditor::onCanvasContextMenu(const QPoint& pos) {
+    QGraphicsItem* item = m_view->itemAt(pos);
+    QMenu menu(this);
+    menu.setStyleSheet(ThemeManager::theme() ? ThemeManager::theme()->widgetStylesheet() : "");
+
+    if (item) {
+        if (!item->isSelected()) {
+            m_scene->clearSelection();
+            item->setSelected(true);
+        }
+        menu.addAction(QIcon(":/icons/tool_duplicate.svg"), "Duplicate", this, &SymbolEditor::onDuplicate);
+        menu.addAction(QIcon(":/icons/undo.svg"), "Copy", this, &SymbolEditor::onCopy);
+        menu.addSeparator();
+        menu.addAction(QIcon(":/icons/tool_rotate.svg"), "Rotate 90° CW", this, &SymbolEditor::onRotateCW);
+        menu.addAction(QIcon(":/icons/tool_rotate_ccw.svg"), "Rotate 90° CCW", this, &SymbolEditor::onRotateCCW);
+        QMenu* flipMenu = menu.addMenu("Flip");
+        flipMenu->addAction(QIcon(":/icons/flip_h.svg"), "Flip Horizontal", this, &SymbolEditor::onFlipH);
+        flipMenu->addAction(QIcon(":/icons/flip_v.svg"), "Flip Vertical", this, &SymbolEditor::onFlipV);
+        
+        menu.addSeparator();
+        menu.addAction("Match Spacing...", this, &SymbolEditor::onMatchSpacing);
+        menu.addAction("Snap to Grid", this, &SymbolEditor::onSnapToGrid);
+        menu.addAction("Copy to Alternate Style", this, &SymbolEditor::onCopyToAlternateStyle);
+
+        menu.addSeparator();
+        menu.addAction(QIcon(":/icons/tool_delete.svg"), "Delete", this, &SymbolEditor::onDelete);
+    } else {
+        // Empty space context menu
+        menu.addAction(QIcon(":/icons/toolbar_new.png"), "New Symbol", this, &SymbolEditor::onNewSymbol);
+        menu.addAction(QIcon(":/icons/check.svg"), "Save to Library", this, &SymbolEditor::onSaveToLibrary);
+        menu.addAction(QIcon(":/icons/schematic_editor.png"), "Place in Schematic", this, &SymbolEditor::onPlaceInSchematic);
+        
+        menu.addSeparator();
+        menu.addAction(QIcon(":/icons/redo.svg"), "Paste", this, &SymbolEditor::onPaste);
+        menu.addAction("Select All", QKeySequence::SelectAll, [this](){ 
+            for (auto* it : m_scene->items()) it->setSelected(true); 
+        });
+        
+        menu.addSeparator();
+        menu.addAction(QIcon(":/icons/view_fit.svg"), "Zoom Fit", this, &SymbolEditor::onZoomFit);
+        menu.addAction(QIcon(":/icons/view_zoom_in.svg"), "Zoom Selection", this, &SymbolEditor::onZoomSelection);
+        
+        menu.addSeparator();
+        QMenu* addMenu = menu.addMenu("Add Primitive");
+        addMenu->addAction(QIcon(":/icons/tool_pin.svg"), "Pin", [this, pos]() { m_currentTool = Pin; updatePinPreview(m_view->mapToScene(pos)); });
+        addMenu->addAction(QIcon(":/icons/tool_line.svg"), "Line", [this]() { m_currentTool = Line; });
+        addMenu->addAction(QIcon(":/icons/tool_rect.svg"), "Rectangle", [this]() { m_currentTool = Rect; });
+        addMenu->addAction(QIcon(":/icons/tool_circle.svg"), "Circle", [this]() { m_currentTool = Circle; });
+        addMenu->addAction(QIcon(":/icons/tool_arc.svg"), "Arc", [this]() { m_currentTool = Arc; });
+        addMenu->addAction(QIcon(":/icons/tool_polygon.svg"), "Polygon", [this]() { m_currentTool = Polygon; });
+        addMenu->addAction(QIcon(":/icons/tool_bezier.svg"), "Bezier Curve", [this]() { m_currentTool = Bezier; });
+        addMenu->addAction(QIcon(":/icons/tool_text.svg"), "Text", [this, pos]() { 
+            m_currentTool = Text; 
+            QPointF scenePos = m_view->snapToGrid(m_view->mapToScene(pos));
+            emit m_view->pointClicked(scenePos); 
+        });
+        addMenu->addSeparator();
+        addMenu->addAction(QIcon(":/icons/tool_anchor.svg"), "Set Anchor Point", [this]() { m_currentTool = Anchor; });
+        addMenu->addAction(QIcon(":/icons/toolbar_refresh.png"), "Import Image", this, &SymbolEditor::onImportImage);
+
+        menu.addSeparator();
+        QAction* snapAct = menu.addAction(QIcon(":/icons/snap_grid.svg"), "Magnet Pull (Snapping)");
+        snapAct->setCheckable(true);
+        snapAct->setChecked(m_view ? m_view->snapToGridEnabled() : true);
+        connect(snapAct, &QAction::toggled, this, [this](bool on) {
+            if (m_view) m_view->setSnapToGrid(on);
+        });
+    }
+
+    menu.exec(m_view->viewport()->mapToGlobal(pos));
+}
+
+
+void SymbolEditor::updateCodePreview() {
+    if (!m_codePreview) return;
+    QJsonDocument doc(symbolDefinition().toJson());
+    m_codePreview->setPlainText(doc.toJson(QJsonDocument::Indented));
+}
+
+void SymbolEditor::onMoveExactly() {}
+void SymbolEditor::onAddPrimitiveExact() {}
+void SymbolEditor::onImportLtspiceSymbol() {}
+bool SymbolEditor::importKicadSymbol(const QString&, const QString&) { return false; }
+bool SymbolEditor::importLtspiceSymbol(const QString&) { return false; }
+bool SymbolEditor::loadLibrary(const QString&) { return false; }

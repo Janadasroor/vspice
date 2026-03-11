@@ -1,0 +1,274 @@
+#ifndef SCHEMATICEDITOR_H
+#define SCHEMATICEDITOR_H
+
+#include <QMainWindow>
+#include <QGraphicsScene>
+#include <QToolBar>
+#include <QDockWidget>
+#include <QListWidget>
+#include <QTableWidget>
+#include <QLabel>
+#include <QStatusBar>
+#include <QMap>
+#include <QStringList>
+#include <QSet>
+#include <QUndoStack>
+#include <QAction>
+#include "schematic_view.h"
+#include "../ui/simulation_setup_dialog.h"
+#include "../ui/schematic_components_widget.h"
+#include "../ui/project_explorer_widget.h"
+#include "../ui/flux_script_panel.h"
+#include "flux/core/net_manager.h"
+#include "schematic_layout_optimizer.h"
+#include "../analysis/schematic_erc_rules.h"
+#include "../items/schematic_page_item.h"
+class SchematicView;
+class SchematicPageItem;
+class NetlistEditor;
+class SymbolEditor;
+class SpiceModelArchitect;
+
+class SchematicEditor : public QMainWindow {
+    Q_OBJECT
+    friend class SchematicMenuRegistry;
+
+public:
+    SchematicEditor(QWidget* parent = nullptr);
+    ~SchematicEditor();
+
+    bool openFile(const QString& filePath);
+    void setProjectContext(const QString& projectName, const QString& projectDir);
+
+    void showSimulationResults(const class SimResults& results);
+    class NetManager* netManager() const { return m_netManager; }
+
+    // Workspace Tab Management
+    void addSchematicTab(const QString& name = "Untitled.sch");
+    void openSymbolEditorWindow(const QString& name = "New Symbol");
+    void addSimulationTab(const QString& name = "Simulation Results");
+    void addModelArchitectTab();
+    void closeTab(int index);
+
+private slots:
+    void onZoomFit();
+    void onZoomAllComponents();
+    void onZoomSelection();
+    void onZoomArea();
+    void updatePropertyBar();
+    void onPlaceSymbolInSchematic(const class SymbolDefinition& symbol);
+
+    void onTabChanged(int index);
+    void onTabCloseRequested(int index);
+    void onToolSelected();
+    void onNewSchematic();
+    void onOpenSchematic();
+    void onSaveSchematic();
+    void onSaveSchematicAs();
+    void onZoomIn();
+    void onZoomOut();
+    void onPageSizeChanged(const QString& size);
+    void onUndo();
+    void onRedo();
+    void onDuplicate();
+    void onDelete();
+    void onCut();
+    void onCopy();
+    void onPaste();
+    void onSelectAll();
+
+private slots:
+    // Layout optimization slots
+    void onOptimizeLayout();
+    void onApplyOrthogonalRouting();
+    void onMinimizeCrossings();
+    void onSwitchToEngineeringTheme();
+    void updateCoordinates(QPointF pos);
+    void onSelectionChanged();
+    void onItemDoubleClicked(SchematicItem* item);
+    void onSelectionDoubleClicked(const QList<SchematicItem*>& items);
+    void openItemProperties(SchematicItem* item);
+    void onPropertyChanged(const QString& name, const QVariant& value);
+    void onAssignModel(const QString& modelName);
+    void onRunERC();
+    void onAnnotate();
+    void onResetAnnotations();
+    void onGenerateNetlist();
+    void onOpenBOM();
+    void onOpenSymbolEditor();
+    void onOpenSymbolFieldEditor();
+    void onExportPDF();
+    void onExportSVG();
+    void onExportImage();
+    void onSettings();
+    void onAbout();
+    void onRunSimulation();
+    void onOpenSimulationSetup();
+    void onPauseSimulation();
+    void onOpenNetlistEditor();
+    void onOpenFluxScript();
+    void onOpenGeminiAI();
+    void onShowHelp();
+    void onShowDeveloperHelp();
+    void onProjectAudit();
+    void onOpenCommandPalette();
+    void onOpenComponentBrowser();
+    void onOpenFindReplace();
+    void onOpenModelArchitect();
+    void onOpenPowerNetsManager();
+    void onOpenBusAliasesManager();
+    void onOpenERCRulesConfig();
+    void onIgnoreSelectedErc();
+    void onClearErcExclusions();
+    void onLeaveSheet();
+    void refreshHierarchyPanel();
+    void onEditTitleBlock();
+    void onSimulationResultsReady(const class SimResults& results);
+    void onTimeTravelSnapshot(double t, const QMap<QString, double>& nodeVoltages, const QMap<QString, double>& currents);
+    void onOverlayVisibilityChanged(bool showVoltage, bool showCurrent);
+    void onClearSimulationOverlays();
+    
+    // Manipulation slots
+    void onRotateCW();
+    void onRotateCCW();
+    void onFlipHorizontal();
+    void onFlipVertical();
+    void onBringToFront();
+    void onSendToBack();
+    void onAlignLeft();
+    void onAlignRight();
+    void onAlignTop();
+    void onAlignBottom();
+    void onAlignCenterX();
+    void onAlignCenterY();
+    void onDistributeH();
+    void onDistributeV();
+    void onCrossProbeReceived(const QString& refDes, const QString& netName);
+    void handleIncomingECO();
+    bool findAndSelectInScene(QGraphicsScene* scene, const QString& refDes);
+    void navigateAndSelectHierarchical(const QString& refDes);
+    
+    // Panel toggling slots
+    void onToggleLeftSidebar();
+    void onToggleBottomPanel();
+    void onToggleRightSidebar();
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
+private:
+    bool m_updatingProperties;
+
+    void setupCanvas();
+    void createMenuBar();
+    void createToolBar();
+    void createDrawingToolbar();
+    void createDockWidgets();
+    void ensureProbeToolConnected();
+    void createStatusBar();
+    QIcon getThemeIcon(const QString& path);
+    QIcon createComponentIcon(const QString& name);
+    QIcon createItemPreviewIcon(class SchematicItem* item);
+    void applyTheme();
+    void updateGrid();
+    void updatePageFrame();
+    void buildHierarchyTree(QTreeWidgetItem* parent, const QString& filePath, int depth);
+    void clearSimulationOverlays();
+    void connectSimulationSignals();
+    void updateSimulationUiState(bool running, const QString& statusMessage = QString());
+    void updateSimulationOverlays(const QMap<QString, double>& nodeVoltages, const QMap<QString, double>& currents);
+    void runLiveERC(const QList<class SchematicItem*>& items);
+    QStringList resolveConnectedInstrumentNets(class SchematicItem* instrument) const;
+    void appendSimulationIssue(const QString& message);
+    void navigateToSimulationTarget(const QString& targetType, const QString& targetId);
+    void onIssueItemDoubleClicked(QListWidgetItem* item);
+    void updateGeminiProjectEffect();
+    void onItemsHighlighted(const QStringList& references);
+    void onSnippetGenerated(const QString& jsonSnippet);
+    QList<ERCViolation> getErcViolations() const;
+
+    // UI Components
+    QTabWidget *m_workspaceTabs;
+    QGraphicsScene *m_scene;
+    SchematicView *m_view;
+    NetManager *m_netManager;
+    SchematicLayoutOptimizer *m_layoutOptimizer;
+
+    class SchematicPageItem* m_pageFrame;
+    QString m_currentPageSize;
+
+    // Dock widgets
+    QDockWidget *m_componentDock;
+    QDockWidget *m_projectExplorerDock;
+    QDockWidget *m_libraryDock;
+    QDockWidget *m_hierarchyDock;
+
+    // Panels
+    class SchematicComponentsWidget *m_componentsPanel;
+    class ProjectExplorerWidget *m_projectExplorer;
+    QListWidget *m_libraryList;
+    class SchematicHierarchyPanel *m_hierarchyPanel;
+    class QTreeWidget *m_hierarchyTree;
+    
+    QDockWidget *m_ercDock;
+    class ERCDiagnosticsPanel *m_ercPanel;
+    class QListWidget *m_ercList;
+
+    class SimulationPanel* m_simulationPanel;
+    SimulationSetupDialog::Config m_simConfig;
+    QMap<QString, class InstrumentWindow*> m_instrumentWindows;
+    QMap<QString, class LogicAnalyzerWindow*> m_laWindows;
+
+    QDockWidget *m_geminiDock;
+    class GeminiPanel* m_geminiPanel;
+
+    QDockWidget *m_scriptDock;
+    Flux::ScriptPanel *m_scriptPanel;
+    class LogicEditorPanel *m_logicEditorPanel;
+
+    QDockWidget *m_oscilloscopeDock;
+
+    // Title block metadata
+    TitleBlockData m_titleBlock;
+    QMap<QString, QList<QString>> m_busAliases;
+    QSet<QString> m_ercExclusions;
+    SchematicERCRules m_ercRules;
+
+    // Toolbars
+    QToolBar *m_propertyBar;
+
+    // Toolbar actions
+    QMap<QString, QAction*> m_toolActions;
+    QMap<QString, QAction*> m_editActions;
+    QAction* m_runSimMenuAction;
+    QAction* m_stopSimMenuAction;
+    QAction* m_runSimToolbarAction;
+    QAction* m_stopSimToolbarAction;
+
+    // Status bar
+    QLabel *m_coordLabel;
+    QLabel *m_gridLabel;
+    QLabel *m_layerLabel;
+
+    // File state
+    QString m_currentFilePath;
+    bool m_isModified;
+    bool m_simulationRunning;
+    bool m_showVoltageOverlays;
+    bool m_showCurrentOverlays;
+
+    // Project context
+    QString m_projectName;
+    QString m_projectDir;
+
+    // Undo/Redo
+    QUndoStack *m_undoStack;
+    class SchematicAPI *m_api;
+    
+    // Navigation stack for hierarchy
+    QStringList m_navigationStack;
+    QWidget* m_breadcrumbWidget;
+    void updateBreadcrumbs();
+};
+
+#endif // SCHEMATICEDITOR_H

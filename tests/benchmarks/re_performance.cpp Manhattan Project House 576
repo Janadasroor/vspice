@@ -1,0 +1,73 @@
+#include <QtTest>
+#include <QElapsedTimer>
+#include "../../reverse_engineering/net_graph_reconstructor.h"
+#include "../../reverse_engineering/candidate_extractor.h"
+#include "../../reverse_engineering/normalized_parser.h"
+#include "../../reverse_engineering/drill_parser.h"
+#include "../../reverse_engineering/component_clustering_engine.h"
+#include "../../reverse_engineering/footprint_matcher.h"
+#include "../../footprints/footprint_library.h"
+
+using namespace VioraEDA::ReverseEngineering;
+
+class BenchmarkRE : public QObject {
+    Q_OBJECT
+private slots:
+    void benchmarkFullPipeline() {
+        // Ensure library is ready
+        FootprintLibraryManager::instance().initialize();
+
+        QElapsedTimer timer;
+        timer.start();
+
+        // 1. Parsing
+        Session::FileEntry fcu; fcu.path = "test-files/mm-F_Cu.gbr"; fcu.detectedFormat = "Gerber"; fcu.layerRole = "TopCopper";
+        Session::FileEntry bcu; bcu.path = "test-files/mm-B_Cu.gbr"; bcu.detectedFormat = "Gerber"; bcu.layerRole = "BottomCopper";
+        
+        QList<NormalizedLayer*> layers;
+        layers << NormalizedParser::parseFile(fcu);
+        layers << NormalizedParser::parseFile(bcu);
+        QList<DrillHole> drills = DrillParser::parse("test-files/mm-PTH.drl");
+
+        qint64 parseTime = timer.elapsed();
+
+        // 2. Extraction
+        QList<PadCandidate> pads;
+        QList<ViaCandidate> vias;
+        CandidateExtractor::extract(layers, drills, pads, vias);
+
+        qint64 extractTime = timer.elapsed() - parseTime;
+
+        // 3. Connectivity
+        QList<NetCandidate> nets;
+        NetGraphReconstructor::reconstruct(layers, pads, vias, nets);
+
+        qint64 connectTime = timer.elapsed() - extractTime - parseTime;
+
+        // 4. Clustering & Matching
+        QList<PlacementData> placements; // Empty for now
+        QList<ComponentMetadata> bom;     // Empty for now
+        QList<ComponentCluster> clusters;
+        ComponentClusteringEngine::cluster(pads, placements, bom, clusters);
+        FootprintMatcher::scoreClusters(clusters, pads);
+
+        qint64 clusterTime = timer.elapsed() - connectTime - extractTime - parseTime;
+
+        qDebug() << "RE Performance Metrics (mm-fixture):";
+        qDebug() << "  Parsing:        " << parseTime << "ms";
+        qDebug() << "  Extraction:     " << extractTime << "ms";
+        qDebug() << "  Connectivity:   " << connectTime << "ms";
+        qDebug() << "  Match/Cluster:  " << clusterTime << "ms";
+        qDebug() << "  Total:          " << timer.elapsed() << "ms";
+
+        qDebug() << "RE Matching Results:";
+        for (const auto& c : clusters) {
+            qDebug() << "  Cluster at" << c.position << "Matched:" << c.footprint << "Conf:" << c.confidence;
+        }
+
+        qDeleteAll(layers);
+    }
+};
+
+QTEST_MAIN(BenchmarkRE)
+#include "re_performance.moc"

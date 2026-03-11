@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "generated_for": "simulator roadmap step 0.2",
+  "deck_count": 30,
+  "categories": {
+    "linear": 10,
+    "nonlinear": 10,
+    "dynamic": 10
+  },
+  "decks": [
+    {"id":"op_voltage_divider_equal","category":"linear","deck":"linear/op_voltage_divider_equal.cir","analysis":"op","checks":[{"kind":"node_voltage","node":"N2","target":5.0,"abs_tol":0.05}]},
+    {"id":"op_voltage_divider_ratio","category":"linear","deck":"linear/op_voltage_divider_ratio.cir","analysis":"op","checks":[{"kind":"node_voltage","node":"N2","target":4.0,"abs_tol":0.1}]},
+    {"id":"op_series_resistors","category":"linear","deck":"linear/op_series_resistors.cir","analysis":"op","checks":[{"kind":"node_voltage","node":"N3","target":3.0,"abs_tol":0.1}]},
+    {"id":"op_parallel_load","category":"linear","deck":"linear/op_parallel_load.cir","analysis":"op","checks":[{"kind":"node_voltage","node":"N2","target":2.5,"abs_tol":0.1}]},
+    {"id":"op_bridge_resistor","category":"linear","deck":"linear/op_bridge_resistor.cir","analysis":"op","checks":[{"kind":"node_voltage","node":"N2","target":5.0,"abs_tol":0.2}]},
+    {"id":"ac_rc_lowpass_1k_100n","category":"linear","deck":"linear/ac_rc_lowpass_1k_100n.cir","analysis":"ac","checks":[{"kind":"ac_mag_at_hz","node":"N2","hz":1591.5,"target":0.707,"abs_tol":0.15}]},
+    {"id":"ac_rc_highpass_1k_100n","category":"linear","deck":"linear/ac_rc_highpass_1k_100n.cir","analysis":"ac","checks":[{"kind":"ac_mag_at_hz","node":"N2","hz":1591.5,"target":0.707,"abs_tol":0.15}]},
+    {"id":"ac_rl_lowpass_100_10m","category":"linear","deck":"linear/ac_rl_lowpass_100_10m.cir","analysis":"ac","checks":[{"kind":"ac_monotonic_hint","node":"N2"}]},
+    {"id":"op_controlled_vcvs_gain2","category":"linear","deck":"linear/op_controlled_vcvs_gain2.cir","analysis":"op","checks":[{"kind":"node_voltage","node":"OUT","target":2.0,"abs_tol":0.1}]},
+    {"id":"op_controlled_vccs_basic","category":"linear","deck":"linear/op_controlled_vccs_basic.cir","analysis":"op","checks":[{"kind":"node_voltage","node":"OUT","target":1.0,"abs_tol":0.1}]},
+
+    {"id":"op_diode_clamp_5v","category":"nonlinear","deck":"nonlinear/op_diode_clamp_5v.cir","analysis":"op","checks":[{"kind":"node_voltage_range","node":"N2","min":0.5,"max":0.9}]},
+    {"id":"op_dual_diode_stack","category":"nonlinear","deck":"nonlinear/op_dual_diode_stack.cir","analysis":"op","checks":[{"kind":"node_voltage_range","node":"N3","min":0.9,"max":1.6}]},
+    {"id":"op_rectifier_halfwave","category":"nonlinear","deck":"nonlinear/op_rectifier_halfwave.cir","analysis":"op","checks":[{"kind":"node_voltage_range","node":"N2","min":2.0,"max":3.2}]},
+    {"id":"op_bjt_common_emitter_bias","category":"nonlinear","deck":"nonlinear/op_bjt_common_emitter_bias.cir","analysis":"op","checks":[{"kind":"node_exists","node":"C"},{"kind":"node_exists","node":"B"}]},
+    {"id":"op_bjt_emitter_follower","category":"nonlinear","deck":"nonlinear/op_bjt_emitter_follower.cir","analysis":"op","checks":[{"kind":"node_exists","node":"E"}]},
+    {"id":"op_mosfet_nmos_load","category":"nonlinear","deck":"nonlinear/op_mosfet_nmos_load.cir","analysis":"op","checks":[{"kind":"node_exists","node":"D"}]},
+    {"id":"op_mosfet_pmos_source","category":"nonlinear","deck":"nonlinear/op_mosfet_pmos_source.cir","analysis":"op","checks":[{"kind":"node_exists","node":"S"}]},
+    {"id":"op_behavioral_vsource_gain","category":"nonlinear","deck":"nonlinear/op_behavioral_vsource_gain.cir","analysis":"op","checks":[{"kind":"node_voltage","node":"N2","target":5.0,"abs_tol":0.2}]},
+    {"id":"op_behavioral_isource","category":"nonlinear","deck":"nonlinear/op_behavioral_isource.cir","analysis":"op","checks":[{"kind":"node_voltage","node":"N2","target":1.0,"abs_tol":0.2}]},
+    {"id":"op_convergence_stress","category":"nonlinear","deck":"nonlinear/op_convergence_stress.cir","analysis":"op","checks":[{"kind":"converged"}]},
+
+    {"id":"tran_rc_charge_fast","category":"dynamic","deck":"dynamic/tran_rc_charge_fast.cir","analysis":"tran","checks":[{"kind":"wave_final_gt","node":"N2","value":9.0}]},
+    {"id":"tran_rc_charge_slow","category":"dynamic","deck":"dynamic/tran_rc_charge_slow.cir","analysis":"tran","checks":[{"kind":"wave_final_gt","node":"N2","value":6.0}]},
+    {"id":"tran_rc_discharge","category":"dynamic","deck":"dynamic/tran_rc_discharge.cir","analysis":"tran","checks":[{"kind":"wave_has_transition","node":"N2"}]},
+    {"id":"tran_rl_step","category":"dynamic","deck":"dynamic/tran_rl_step.cir","analysis":"tran","checks":[{"kind":"wave_has_transition","node":"N2"}]},
+    {"id":"tran_rlc_damped","category":"dynamic","deck":"dynamic/tran_rlc_damped.cir","analysis":"tran","checks":[{"kind":"wave_has_transition","node":"N3"}]},
+    {"id":"tran_sine_source_1khz","category":"dynamic","deck":"dynamic/tran_sine_source_1khz.cir","analysis":"tran","checks":[{"kind":"wave_periodic_hint","node":"N1"}]},
+    {"id":"tran_pulse_source_5v","category":"dynamic","deck":"dynamic/tran_pulse_source_5v.cir","analysis":"tran","checks":[{"kind":"wave_has_transition","node":"N1"}]},
+    {"id":"tran_exp_source_profile","category":"dynamic","deck":"dynamic/tran_exp_source_profile.cir","analysis":"tran","checks":[{"kind":"wave_has_transition","node":"N1"}]},
+    {"id":"tran_two_stage_rc","category":"dynamic","deck":"dynamic/tran_two_stage_rc.cir","analysis":"tran","checks":[{"kind":"wave_final_gt","node":"N3","value":8.0}]},
+    {"id":"tran_diode_clipper","category":"dynamic","deck":"dynamic/tran_diode_clipper.cir","analysis":"tran","checks":[{"kind":"wave_clipped_hint","node":"N2"}]}
+  ]
+}

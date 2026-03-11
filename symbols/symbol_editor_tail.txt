@@ -1,0 +1,24 @@
+        QAction* snapAct = menu.addAction(QIcon(":/icons/snap_grid.svg"), "Magnet Pull (Snapping)");
+        snapAct->setCheckable(true);
+        snapAct->setChecked(m_view->snapToGridEnabled());
+        connect(snapAct, &QAction::triggered, this, [this](bool on) {
+            m_view->setSnapToGrid(on);
+        });
+
+        menu.addSeparator();
+        menu.addAction(QIcon(":/icons/tool_clear.svg"), "Clear All Primitives", this, &SymbolEditor::onClear);
+    }
+    menu.exec(m_view->mapToGlobal(pos));
+}
+
+void SymbolEditor::updateCodePreview() {
+    if (!m_codePreview) return;
+    
+    QJsonArray primArray;
+    for (const auto& prim : m_symbol.primitives()) {
+        primArray.append(prim.toJson());
+    }
+    
+    QJsonDocument doc(primArray);
+    m_codePreview->setPlainText(doc.toJson(QJsonDocument::Indented));
+}

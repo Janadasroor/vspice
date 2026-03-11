@@ -1,0 +1,381 @@
+#include "schematic_menu_registry.h"
+#include "schematic_view.h"
+#include "schematic_commands.h"
+#include "schematic_editor.h"
+#include "../items/wire_item.h"
+#include "../items/resistor_item.h"
+#include "../items/capacitor_item.h"
+#include "../items/inductor_item.h"
+#include "../items/oscilloscope_item.h"
+#include "../items/voltage_source_item.h"
+#include "../items/generic_component_item.h"
+#include "../items/schematic_sheet_item.h"
+#include <algorithm>
+#include <set>
+#include <QApplication>
+#include <QDesktopServices>
+#include <QInputDialog>
+#include <QUrl>
+
+SchematicMenuRegistry& SchematicMenuRegistry::instance() {
+    static SchematicMenuRegistry reg;
+    return reg;
+}
+
+void SchematicMenuRegistry::registerAction(SchematicItem::ItemType type, const ContextAction& action) {
+    m_typeActions.insert({type, action});
+}
+
+void SchematicMenuRegistry::registerGlobalAction(const ContextAction& action) {
+    m_globalActions.push_back(action);
+}
+
+std::vector<ContextAction> SchematicMenuRegistry::getActions(const QList<SchematicItem*>& items) const {
+    std::vector<ContextAction> result;
+    
+    // 1. Collect global actions applicable to selection
+    for (const auto& action : m_globalActions) {
+        if (action.isVisible(items)) {
+            result.push_back(action);
+        }
+    }
+    
+    // 2. Identify unique types in selection
+    std::set<SchematicItem::ItemType> types;
+    for (auto* item : items) {
+        types.insert(item->itemType());
+    }
+    
+    // 3. Collect type-specific actions
+    for (auto type : types) {
+        auto range = m_typeActions.equal_range(type);
+        for (auto it = range.first; it != range.second; ++it) {
+            if (it->second.isVisible(items)) {
+                result.push_back(it->second);
+            }
+        }
+    }
+    
+    // 4. Sort by priority
+    std::sort(result.begin(), result.end(), [](const ContextAction& a, const ContextAction& b) {
+        if (a.priority != b.priority)
+            return a.priority > b.priority; 
+        return a.label < b.label;
+    });
+    
+    return result;
+}
+
+void SchematicMenuRegistry::initializeDefaultActions() {
+    m_globalActions.clear();
+    m_typeActions.clear();
+
+    // --- Standard Edit Actions ---
+    
+    ContextAction cut;
+    cut.label = "Cut";
+    cut.shortcut = QKeySequence::Cut;
+    cut.priority = 50;
+    cut.isVisible = [](const auto& items) { return !items.isEmpty(); };
+    cut.handler = [](SchematicView* view, const auto&) {
+        if (auto* editor = qobject_cast<SchematicEditor*>(view->window())) editor->onCut();
+    };
+    registerGlobalAction(cut);
+
+    ContextAction copy;
+    copy.label = "Copy";
+    copy.shortcut = QKeySequence::Copy;
+    copy.priority = 49;
+    copy.isVisible = [](const auto& items) { return !items.isEmpty(); };
+    copy.handler = [](SchematicView* view, const auto&) {
+        if (auto* editor = qobject_cast<SchematicEditor*>(view->window())) editor->onCopy();
+    };
+    registerGlobalAction(copy);
+
+    ContextAction paste;
+    paste.label = "Paste";
+    paste.shortcut = QKeySequence::Paste;
+    paste.priority = 48;
+    paste.handler = [](SchematicView* view, const auto&) {
+        if (auto* editor = qobject_cast<SchematicEditor*>(view->window())) editor->onPaste();
+    };
+    registerGlobalAction(paste);
+
+    ContextAction del;
+    del.label = "Delete";
+    del.shortcut = QKeySequence::Delete;
+    del.priority = 47;
+    del.isVisible = [](const auto& items) { return !items.isEmpty(); };
+    del.handler = [](SchematicView* view, const auto&) {
+        if (auto* editor = qobject_cast<SchematicEditor*>(view->window())) editor->onDelete();
+    };
+    registerGlobalAction(del);
+
+    registerGlobalAction(ContextAction::separator(40));
+
+    // --- View Actions ---
+
+    ContextAction zoomFit;
+    zoomFit.label = "Zoom Fit";
+    zoomFit.shortcut = QKeySequence("F");
+    zoomFit.priority = 30;
+    zoomFit.handler = [](SchematicView* view, const auto&) {
+        if (auto* editor = qobject_cast<SchematicEditor*>(view->window())) editor->onZoomFit();
+    };
+    registerGlobalAction(zoomFit);
+
+    ContextAction zoomSel;
+    zoomSel.label = "Zoom to Selection";
+    zoomSel.shortcut = QKeySequence("Ctrl+0");
+    zoomSel.priority = 29;
+    zoomSel.isVisible = [](const auto& items) { return !items.isEmpty(); };
+    zoomSel.handler = [](SchematicView* view, const auto&) {
+        if (auto* editor = qobject_cast<SchematicEditor*>(view->window())) editor->onZoomSelection();
+    };
+    registerGlobalAction(zoomSel);
+
+    registerGlobalAction(ContextAction::separator(20));
+
+    ContextAction selectAll;
+    selectAll.label = "Select All";
+    selectAll.shortcut = QKeySequence::SelectAll;
+    selectAll.priority = 10;
+    selectAll.handler = [](SchematicView* view, const auto&) {
+        if (auto* editor = qobject_cast<SchematicEditor*>(view->window())) editor->onSelectAll();
+    };
+    registerGlobalAction(selectAll);
+
+    // --- Wire Actions ---
+    
+    ContextAction editNetLabel;
+    editNetLabel.label = "Edit Net Label...";
+    editNetLabel.priority = 100;
+    editNetLabel.isVisible = [](const QList<SchematicItem*>& items) {
+        return items.size() == 1 && items.first()->itemType() == SchematicItem::WireType;
+    };
+    editNetLabel.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
+        emit view->itemDoubleClicked(items.first());
+    };
+    registerAction(SchematicItem::WireType, editNetLabel);
+
+    // --- Bus Actions ---
+    
+    ContextAction editBusLabel;
+    editBusLabel.label = "Edit Bus Label...";
+    editBusLabel.priority = 100;
+    editBusLabel.isVisible = [](const QList<SchematicItem*>& items) {
+        return items.size() == 1 && items.first()->itemType() == SchematicItem::BusType;
+    };
+    editBusLabel.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
+        emit view->itemDoubleClicked(items.first());
+    };
+    registerAction(SchematicItem::BusType, editBusLabel);
+
+    // --- Net Label Actions ---
+    
+    ContextAction editNetLabelItem;
+    editNetLabelItem.label = "Edit Label...";
+    editNetLabelItem.priority = 100;
+    editNetLabelItem.isVisible = [](const QList<SchematicItem*>& items) {
+        return items.size() == 1 && items.first()->itemType() == SchematicItem::NetLabelType;
+    };
+    editNetLabelItem.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
+        emit view->itemDoubleClicked(items.first());
+    };
+    registerAction(SchematicItem::NetLabelType, editNetLabelItem);
+
+    ContextAction rotateNetLabel;
+    rotateNetLabel.label = "Rotate (90° CCW)";
+    rotateNetLabel.shortcut = QKeySequence("Space");
+    rotateNetLabel.priority = 90;
+    rotateNetLabel.isVisible = [](const QList<SchematicItem*>& items) {
+        return !items.isEmpty() && items.first()->itemType() == SchematicItem::NetLabelType;
+    };
+    rotateNetLabel.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
+        if (view->undoStack()) {
+            view->undoStack()->push(new RotateItemCommand(view->scene(), items, 90));
+        }
+    };
+    registerAction(SchematicItem::NetLabelType, rotateNetLabel);
+
+    // --- Symbol Actions ---
+
+    auto registerSymbolActions = [&](SchematicItem::ItemType type) {
+        ContextAction rotate;
+        rotate.label = "Rotate (90° CCW)";
+        rotate.shortcut = QKeySequence("Space");
+        rotate.priority = 90;
+        rotate.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
+            if (view->undoStack()) {
+                view->undoStack()->push(new RotateItemCommand(view->scene(), items, 90));
+            }
+        };
+        registerAction(type, rotate);
+
+        ContextAction flip;
+        flip.label = "Flip Horizontal";
+        flip.shortcut = QKeySequence("F");
+        flip.priority = 80;
+        flip.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
+            if (view->undoStack()) {
+                view->undoStack()->push(new FlipItemCommand(view->scene(), items));
+            }
+        };
+        registerAction(type, flip);
+
+        ContextAction datasheet;
+        datasheet.label = "View Datasheet";
+        datasheet.priority = 70;
+        datasheet.isVisible = [](const QList<SchematicItem*>& items) {
+            if (items.size() != 1) return false;
+            auto* generic = dynamic_cast<GenericComponentItem*>(items.first());
+            return generic && !generic->symbol().datasheet().isEmpty();
+        };
+        datasheet.handler = [](SchematicView*, const QList<SchematicItem*>& items) {
+            auto* generic = dynamic_cast<GenericComponentItem*>(items.first());
+            QDesktopServices::openUrl(QUrl::fromLocalFile(generic->symbol().datasheet()));
+        };
+        registerAction(type, datasheet);
+    };
+
+    registerSymbolActions(SchematicItem::ResistorType);
+    registerSymbolActions(SchematicItem::CapacitorType);
+    registerSymbolActions(SchematicItem::InductorType);
+    registerSymbolActions(SchematicItem::ComponentType);
+    registerSymbolActions(SchematicItem::DiodeType);
+    registerSymbolActions(SchematicItem::TransistorType);
+    registerSymbolActions(SchematicItem::ICType);
+    registerSymbolActions(SchematicItem::VoltageSourceType);
+
+    // --- Voltage Source Specialized Actions ---
+    
+    ContextAction editWaveform;
+    editWaveform.label = "Configure Waveform...";
+    editWaveform.priority = 110;
+    editWaveform.isVisible = [](const auto& items) {
+        return items.size() == 1 && items.first()->itemType() == SchematicItem::VoltageSourceType;
+    };
+    editWaveform.handler = [](SchematicView* view, const auto& items) {
+        emit view->itemDoubleClicked(items.first());
+    };
+    registerAction(SchematicItem::VoltageSourceType, editWaveform);
+
+    ContextAction setDC;
+    setDC.label = "Quick Set DC Value...";
+    setDC.priority = 109;
+    setDC.isVisible = [](const auto& items) {
+        if (items.size() != 1) return false;
+        auto* vsrc = dynamic_cast<VoltageSourceItem*>(items.first());
+        return vsrc && vsrc->sourceType() == VoltageSourceItem::DC;
+    };
+    setDC.handler = [](SchematicView* view, const auto& items) {
+        auto* vsrc = dynamic_cast<VoltageSourceItem*>(items.first());
+        bool ok;
+        double val = QInputDialog::getDouble(view, "Quick Edit", "DC Voltage (V):", vsrc->dcVoltage(), -1000, 1000, 2, &ok);
+        if (ok && view->undoStack()) {
+            view->undoStack()->push(new ChangePropertyCommand(view->scene(), vsrc, "DC Voltage", vsrc->dcVoltage(), val));
+        }
+    };
+    registerAction(SchematicItem::VoltageSourceType, setDC);
+
+    ContextAction setSine;
+    setSine.label = "Quick Set Sine Parameters...";
+    setSine.priority = 108;
+    setSine.isVisible = [](const auto& items) {
+        if (items.size() != 1) return false;
+        auto* vsrc = dynamic_cast<VoltageSourceItem*>(items.first());
+        return vsrc && vsrc->sourceType() == VoltageSourceItem::Sine;
+    };
+    setSine.handler = [](SchematicView* view, const auto& items) {
+        emit view->itemDoubleClicked(items.first()); // Since Sine needs multiple fields, just open properties
+    };
+    registerAction(SchematicItem::VoltageSourceType, setSine);
+
+    ContextAction setPulse;
+    setPulse.label = "Quick Set Pulse Parameters...";
+    setPulse.priority = 107;
+    setPulse.isVisible = [](const auto& items) {
+        if (items.size() != 1) return false;
+        auto* vsrc = dynamic_cast<VoltageSourceItem*>(items.first());
+        return vsrc && vsrc->sourceType() == VoltageSourceItem::Pulse;
+    };
+    setPulse.handler = [](SchematicView* view, const auto& items) {
+        emit view->itemDoubleClicked(items.first()); // Same for pulse
+    };
+    registerAction(SchematicItem::VoltageSourceType, setPulse);
+
+    // --- Label / Text Actions ---
+    
+    ContextAction editText;
+    editText.label = "Edit Text...";
+    editText.priority = 100;
+    editText.isVisible = [](const auto& items) {
+        return items.size() == 1 && items.first()->itemType() == SchematicItem::LabelType;
+    };
+    editText.handler = [](SchematicView* view, const auto& items) {
+        emit view->itemDoubleClicked(items.first());
+    };
+    registerAction(SchematicItem::LabelType, editText);
+
+    ContextAction rotateLabel;
+    rotateLabel.label = "Rotate (90° CCW)";
+    rotateLabel.shortcut = QKeySequence("Space");
+    rotateLabel.priority = 90;
+    rotateLabel.handler = [](SchematicView* view, const auto& items) {
+        if (view->undoStack()) {
+            view->undoStack()->push(new RotateItemCommand(view->scene(), items, 90));
+        }
+    };
+    registerAction(SchematicItem::LabelType, rotateLabel);
+
+    ContextAction resetPos;
+    resetPos.label = "Reset to Default Position";
+    resetPos.priority = 85;
+    resetPos.isVisible = [](const auto& items) {
+        // Only show if it's a sub-item (part of a component)
+        return !items.isEmpty() && items.first()->isSubItem();
+    };
+    resetPos.handler = [](SchematicView*, const auto& items) {
+        for (auto* it : items) {
+            if (auto* parent = dynamic_cast<SchematicItem*>(it->parentItem())) {
+                parent->resetLabels();
+            }
+        }
+    };
+    registerAction(SchematicItem::LabelType, resetPos);
+
+    ContextAction toggleVis;
+    toggleVis.label = "Hide Label";
+    toggleVis.priority = 80;
+    toggleVis.isVisible = [](const auto& items) {
+        return !items.isEmpty() && items.first()->isVisible();
+    };
+    toggleVis.handler = [](SchematicView*, const auto& items) {
+        for (auto* it : items) it->setVisible(false);
+    };
+    registerAction(SchematicItem::LabelType, toggleVis);
+
+    // --- Sheet Actions ---
+    
+    ContextAction enterSheet;
+    enterSheet.label = "Enter Sheet";
+    enterSheet.priority = 100;
+    enterSheet.isVisible = [](const auto& items) {
+        return items.size() == 1 && items.first()->itemType() == SchematicItem::SheetType;
+    };
+    enterSheet.handler = [](SchematicView* view, const auto& items) {
+        emit view->itemDoubleClicked(items.first());
+    };
+    registerAction(SchematicItem::SheetType, enterSheet);
+
+    ContextAction syncPins;
+    syncPins.label = "Synchronize Pins";
+    syncPins.priority = 99;
+    syncPins.isVisible = [](const auto& items) {
+        return items.size() == 1 && items.first()->itemType() == SchematicItem::SheetType;
+    };
+    syncPins.handler = [](SchematicView* view, const auto& items) {
+        emit view->syncSheetRequested(static_cast<SchematicSheetItem*>(items.first()));
+    };
+    registerAction(SchematicItem::SheetType, syncPins);
+}

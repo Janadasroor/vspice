@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-viospice-sch">
+    <comment>viospice Schematic</comment>
+    <glob pattern="*.sch"/>
+  </mime-type>
+  <mime-type type="application/x-viospice-flux">
+    <comment>viospice Project</comment>
+    <glob pattern="*.flux"/>
+  </mime-type>
+  <mime-type type="application/x-viospice-sclib">
+    <comment>viospice Symbol Library</comment>
+    <glob pattern="*.sclib"/>
+  </mime-type>
+  <mime-type type="application/x-kicad-symbol">
+    <comment>KiCad Symbol</comment>
+    <glob pattern="*.kicad_sym"/>
+  </mime-type>
+  <mime-type type="text/x-ltspice-symbol">
+    <comment>LTspice Symbol</comment>
+    <glob pattern="*.asy"/>
+  </mime-type>
+  <mime-type type="text/x-spice">
+    <comment>SPICE Netlist</comment>
+    <glob pattern="*.cir"/>
+    <glob pattern="*.sp"/>
+  </mime-type>
+</mime-info>

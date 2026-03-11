@@ -1,0 +1,1728 @@
+#include "simulation_panel.h"
+#include "../../simulator/bridge/sim_audio_engine.h"
+#include "../../core/theme_manager.h"
+#include "../../core/simulation_manager.h"
+#include "../io/netlist_generator.h"
+#include "../items/schematic_item.h"
+#include "../items/voltage_source_item.h"
+#include "../analysis/spice_netlist_generator.h"
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QGridLayout>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QLabel>
+#include <QDebug>
+#include <QDateTime>
+#include <QStandardPaths>
+#include <QDir>
+#include <QFile>
+#include <QTemporaryFile>
+#include <QTextStream>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QChart>
+#include <QChartView>
+#include <QLineSeries>
+#include <QValueAxis>
+#include <QLogValueAxis>
+#include <QListWidget>
+#include <QSplitter>
+#include <QCheckBox>
+#include <QSlider>
+#include <QDoubleSpinBox>
+#include <QToolBar>
+#include <QTabWidget>
+#include <QScrollArea>
+#include <QFileDialog>
+#include <QInputDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMessageBox>
+#include <QTableWidget>
+#include <QSet>
+#include <cmath>
+#include "virtual_instruments.h"
+#include "../../simulator/core/sim_math.h"
+#include "../../simulator/core/sim_value_parser.h"
+#include "../../simulator/bridge/sim_schematic_bridge.h"
+
+namespace {
+QString axisLabelFromSchema(const std::string& axisName) {
+    if (axisName == "time_s") return "Time (s)";
+    if (axisName == "frequency_hz") return "Frequency (Hz)";
+    if (axisName == "run") return "Run Number";
+    if (axisName == "component") return "Component";
+    if (axisName == "sweep_point") return "Sweep Point";
+    if (axisName == "magnitude") return "Magnitude";
+    if (axisName == "sensitivity") return "Sensitivity";
+    if (axisName == "index") return "Index";
+    if (axisName == "value") return "Value";
+    return QString::fromStdString(axisName);
+}
+
+QVector<QPointF> makePoints(const std::vector<double>& x, const std::vector<double>& y) {
+    const size_t n = std::min(x.size(), y.size());
+    QVector<QPointF> points;
+    points.reserve(static_cast<int>(n));
+    for (size_t i = 0; i < n; ++i) {
+        points.append(QPointF(x[i], y[i]));
+    }
+    return points;
+}
+
+QVector<QPointF> decimateMinMaxBuckets(const std::vector<double>& x, const std::vector<double>& y, int maxPoints) {
+    const size_t n = std::min(x.size(), y.size());
+    if (n == 0) return {};
+    if (maxPoints < 8) maxPoints = 8;
+    if (static_cast<int>(n) <= maxPoints) return makePoints(x, y);
+
+    QVector<QPointF> out;
+    out.reserve(maxPoints + 2);
+    out.append(QPointF(x.front(), y.front()));
+
+    const size_t interiorStart = 1;
+    const size_t interiorEnd = n - 1;
+    const size_t interiorCount = interiorEnd - interiorStart;
+    const int buckets = std::max(1, maxPoints / 2 - 1);
+    const double bucketSpan = static_cast<double>(interiorCount) / static_cast<double>(buckets);
+
+    for (int b = 0; b < buckets; ++b) {
+        const size_t begin = interiorStart + static_cast<size_t>(std::floor(b * bucketSpan));
+        size_t end = interiorStart + static_cast<size_t>(std::floor((b + 1) * bucketSpan));
+        if (b == buckets - 1 || end > interiorEnd) end = interiorEnd;
+        if (begin >= end) continue;
+
+        size_t minIdx = begin;
+        size_t maxIdx = begin;
+        for (size_t i = begin + 1; i < end; ++i) {
+            if (y[i] < y[minIdx]) minIdx = i;
+            if (y[i] > y[maxIdx]) maxIdx = i;
+        }
+
+        if (minIdx == maxIdx) {
+            out.append(QPointF(x[minIdx], y[minIdx]));
+        } else if (minIdx < maxIdx) {
+            out.append(QPointF(x[minIdx], y[minIdx]));
+            out.append(QPointF(x[maxIdx], y[maxIdx]));
+        } else {
+            out.append(QPointF(x[maxIdx], y[maxIdx]));
+            out.append(QPointF(x[minIdx], y[minIdx]));
+        }
+    }
+
+    out.append(QPointF(x.back(), y.back()));
+    return out;
+}
+
+int sampleStride(size_t pointCount, int targetPoints) {
+    if (targetPoints <= 0 || pointCount <= static_cast<size_t>(targetPoints)) return 1;
+    return static_cast<int>(std::ceil(static_cast<double>(pointCount) / static_cast<double>(targetPoints)));
+}
+}
+
+SimulationPanel::SimulationPanel(QGraphicsScene* scene, NetManager* netManager, const QString& projectDir, QWidget* parent)
+    : QWidget(parent), m_scene(scene), m_netManager(netManager), m_projectDir(projectDir) {
+    setupUI();
+    
+    auto& sim = SimulationManager::instance();
+    connect(&sim, &SimulationManager::outputReceived, this, &SimulationPanel::onLogReceived);
+    connect(&sim, &SimulationManager::simulationFinished, this, &SimulationPanel::onSimulationFinished);
+
+    auto& builtin = SimManager::instance();
+    connect(&builtin, &SimManager::logMessage, this, &SimulationPanel::onLogReceived);
+    connect(&builtin, &SimManager::simulationFinished, this, &SimulationPanel::onSimResultsReady);
+    connect(&builtin, &SimManager::errorOccurred, this, &SimulationPanel::onLogReceived);
+}
+
+SimulationPanel::~SimulationPanel() {
+    SimManager::instance().stopRealTime();
+}
+
+void SimulationPanel::addProbe(const QString& signalName) {
+    if (signalName.isEmpty()) return;
+    
+    // Check if it already exists
+    for (int i = 0; i < m_signalList->count(); ++i) {
+        if (m_signalList->item(i)->text() == signalName) {
+            m_signalList->item(i)->setCheckState(Qt::Checked);
+            return;
+        }
+    }
+    
+    QListWidgetItem* item = new QListWidgetItem(signalName);
+    item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    item->setCheckState(Qt::Checked);
+    m_signalList->addItem(item);
+    
+    m_logOutput->append(QString("Probed signal: %1").arg(signalName));
+}
+
+void SimulationPanel::addDifferentialProbe(const QString& pNet, const QString& nNet) {
+    if (pNet.isEmpty() || nNet.isEmpty()) return;
+    const QString signalName = QString("V(%1,%2)").arg(pNet, nNet);
+    addProbe(signalName);
+}
+
+void SimulationPanel::removeProbe(const QString& signalName) {
+    if (signalName.isEmpty() || !m_signalList) return;
+
+    for (int i = 0; i < m_signalList->count(); ++i) {
+        QListWidgetItem* item = m_signalList->item(i);
+        if (!item || item->text() != signalName) continue;
+        delete m_signalList->takeItem(i);
+
+        if (m_chart) {
+            const auto allSeries = m_chart->series();
+            for (auto* series : allSeries) {
+                if (series && series->name() == signalName) {
+                    m_chart->removeSeries(series);
+                    delete series;
+                    break;
+                }
+            }
+        }
+        if (m_spectrumChart) {
+            const auto spectrumSeries = m_spectrumChart->series();
+            for (auto* series : spectrumSeries) {
+                if (series && series->name() == signalName) {
+                    m_spectrumChart->removeSeries(series);
+                    delete series;
+                    break;
+                }
+            }
+        }
+        if (m_scopeChannelCombo) {
+            const int idx = m_scopeChannelCombo->findText(signalName);
+            if (idx >= 0) {
+                m_scopeChannelCombo->removeItem(idx);
+            }
+        }
+
+        m_logOutput->append(QString("Unprobed signal: %1").arg(signalName));
+        return;
+    }
+}
+
+void SimulationPanel::clearAllProbes() {
+    if (!m_signalList) return;
+    const int count = m_signalList->count();
+    m_signalList->clear();
+    if (m_chart) {
+        m_chart->removeAllSeries();
+    }
+    if (m_spectrumChart) {
+        m_spectrumChart->removeAllSeries();
+    }
+    if (m_scopeChannelCombo) {
+        m_scopeChannelCombo->clear();
+    }
+    m_logOutput->append(QString("Cleared %1 probe(s).").arg(count));
+}
+
+void SimulationPanel::setupUI() {
+    QVBoxLayout* mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
+    
+    PCBTheme* theme = ThemeManager::theme();
+    QString bg = theme ? theme->windowBackground().name() : "#1e1e1e";
+    QString panelBg = theme ? theme->panelBackground().name() : "#252526";
+    QString textColor = theme ? theme->textColor().name() : "#cccccc";
+    QString accent = theme ? theme->accentColor().name() : "#3b82f6";
+    QString borderColor = theme ? theme->panelBorder().name() : "#3c3c3c";
+
+    setObjectName("SimulationPanel");
+    setStyleSheet(QString("#SimulationPanel { background-color: %1; }").arg(bg));
+
+    // --- Toolbar ---
+    QToolBar* toolbar = new QToolBar("Simulation Controls");
+    toolbar->setIconSize(QSize(20, 20));
+    toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toolbar->setStyleSheet(QString(
+        "QToolBar { background-color: %1; border-bottom: 1px solid %2; padding: 4px; spacing: 8px; }"
+        "QToolButton { background: %3; border: 1px solid %2; border-radius: 2px; padding: 4px 8px; font-weight: bold; color: %4; }"
+        "QToolButton:hover { background: %5; }"
+    ).arg(panelBg, borderColor, bg, textColor, accent));
+
+    m_runButton = new QPushButton("Run Simulation");
+    m_runButton->setStyleSheet("background-color: #065f46; color: white; font-weight: bold; padding: 4px 12px; border-radius: 4px;");
+    connect(m_runButton, &QPushButton::clicked, this, &SimulationPanel::onRunSimulation);
+    toolbar->addWidget(m_runButton);
+
+    QPushButton* exportCsvResultsBtn = new QPushButton("Export Waves CSV");
+    exportCsvResultsBtn->setStyleSheet("background-color: #1f2937; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;");
+    connect(exportCsvResultsBtn, &QPushButton::clicked, this, &SimulationPanel::onExportResultsCsv);
+    toolbar->addWidget(exportCsvResultsBtn);
+
+    QPushButton* exportJsonResultsBtn = new QPushButton("Export Results JSON");
+    exportJsonResultsBtn->setStyleSheet("background-color: #1f2937; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;");
+    connect(exportJsonResultsBtn, &QPushButton::clicked, this, &SimulationPanel::onExportResultsJson);
+    toolbar->addWidget(exportJsonResultsBtn);
+
+    QPushButton* exportReportBtn = new QPushButton("Export Report");
+    exportReportBtn->setStyleSheet("background-color: #0f766e; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;");
+    connect(exportReportBtn, &QPushButton::clicked, this, &SimulationPanel::onExportResultsReport);
+    toolbar->addWidget(exportReportBtn);
+
+    m_overlayPreviousRun = new QCheckBox("Overlay Previous");
+    m_overlayPreviousRun->setStyleSheet("QCheckBox { color: #eee; font-weight: bold; }");
+    connect(m_overlayPreviousRun, &QCheckBox::toggled, this, [this](bool) {
+        if (m_hasLastResults) plotBuiltinResults(m_lastResults);
+    });
+    toolbar->addWidget(m_overlayPreviousRun);
+
+    QPushButton* probeBtn = new QPushButton("Add Probe");
+    probeBtn->setStyleSheet("background-color: #1e40af; color: white; font-weight: bold; padding: 4px 12px; border-radius: 4px;");
+    connect(probeBtn, &QPushButton::clicked, this, &SimulationPanel::probeRequested);
+    toolbar->addWidget(probeBtn);
+
+    QPushButton* probePinBtn = new QPushButton("Probe On Canvas");
+    probePinBtn->setStyleSheet("background-color: #1d4ed8; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;");
+    connect(probePinBtn, &QPushButton::clicked, this, [this]() { emit placementToolRequested("Probe"); });
+    toolbar->addWidget(probePinBtn);
+
+    QPushButton* placeScopeBtn = new QPushButton("Place Scope");
+    placeScopeBtn->setStyleSheet("background-color: #0f766e; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;");
+    connect(placeScopeBtn, &QPushButton::clicked, this, [this]() { emit placementToolRequested("Oscilloscope Instrument"); });
+    toolbar->addWidget(placeScopeBtn);
+
+    QPushButton* placeMeterBtn = new QPushButton("Place Voltmeter");
+    placeMeterBtn->setStyleSheet("background-color: #0f766e; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;");
+    connect(placeMeterBtn, &QPushButton::clicked, this, [this]() { emit placementToolRequested("Voltmeter (DC)"); });
+    toolbar->addWidget(placeMeterBtn);
+
+    QPushButton* removeProbeBtn = new QPushButton("Remove Probe");
+    removeProbeBtn->setStyleSheet("background-color: #9a3412; color: white; font-weight: bold; padding: 4px 12px; border-radius: 4px;");
+    connect(removeProbeBtn, &QPushButton::clicked, this, [this]() {
+        QListWidgetItem* item = m_signalList ? m_signalList->currentItem() : nullptr;
+        if (!item) {
+            m_logOutput->append("No selected probe to remove.");
+            return;
+        }
+        removeProbe(item->text());
+    });
+    toolbar->addWidget(removeProbeBtn);
+
+    QPushButton* clearProbesBtn = new QPushButton("Clear Probes");
+    clearProbesBtn->setStyleSheet("background-color: #4b5563; color: white; font-weight: bold; padding: 4px 12px; border-radius: 4px;");
+    connect(clearProbesBtn, &QPushButton::clicked, this, &SimulationPanel::clearAllProbes);
+    toolbar->addWidget(clearProbesBtn);
+
+    toolbar->addSeparator();
+
+    QCheckBox* showVoltageCheck = new QCheckBox("Voltages");
+    showVoltageCheck->setChecked(true);
+    showVoltageCheck->setStyleSheet("QCheckBox { color: #eee; font-weight: bold; }");
+    toolbar->addWidget(showVoltageCheck);
+
+    QCheckBox* showCurrentCheck = new QCheckBox("Currents");
+    showCurrentCheck->setChecked(true);
+    showCurrentCheck->setStyleSheet("QCheckBox { color: #eee; font-weight: bold; }");
+    toolbar->addWidget(showCurrentCheck);
+
+    auto updateOverlays = [this, showVoltageCheck, showCurrentCheck]() {
+        emit overlayVisibilityChanged(showVoltageCheck->isChecked(), showCurrentCheck->isChecked());
+    };
+    connect(showVoltageCheck, &QCheckBox::toggled, this, updateOverlays);
+    connect(showCurrentCheck, &QCheckBox::toggled, this, updateOverlays);
+
+    QPushButton* clearOverlaysBtn = new QPushButton("Clear Overlays");
+    clearOverlaysBtn->setStyleSheet("background-color: #1f2937; color: white; padding: 4px 8px; border-radius: 4px;");
+    connect(clearOverlaysBtn, &QPushButton::clicked, this, &SimulationPanel::clearOverlaysRequested);
+    toolbar->addWidget(clearOverlaysBtn);
+
+    toolbar->addSeparator();
+
+    QPushButton* netlistBtn = new QPushButton("View Netlist");
+    connect(netlistBtn, &QPushButton::clicked, this, &SimulationPanel::onViewNetlist);
+    toolbar->addWidget(netlistBtn);
+
+    toolbar->addSeparator();
+
+    QPushButton* listenBtn = new QPushButton("Listen");
+    listenBtn->setToolTip("Play selected signal through speakers (Transient only)");
+    listenBtn->setStyleSheet("background-color: #7c3aed; color: white; font-weight: bold; padding: 4px 12px; border-radius: 4px;");
+    connect(listenBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_signalList || !m_signalList->currentItem()) return;
+        QString name = m_signalList->currentItem()->text();
+        for (const auto& w : m_lastResults.waveforms) {
+            if (QString::fromStdString(w.name) == name) {
+                SimAudioEngine::instance().playWaveform(w);
+                break;
+            }
+        }
+    });
+    toolbar->addWidget(listenBtn);
+
+    mainLayout->addWidget(toolbar);
+
+    QSplitter* mainSplitter = new QSplitter(Qt::Horizontal, this);
+    mainSplitter->setHandleWidth(2);
+    mainSplitter->setStyleSheet(QString("QSplitter::handle { background-color: %1; }").arg(borderColor));
+
+    // --- Sidebar ---
+    QWidget* sidebar = new QWidget();
+    sidebar->setMinimumWidth(240);
+    sidebar->setStyleSheet(QString("QWidget { background-color: %1; }").arg(panelBg));
+    QVBoxLayout* sidebarLayout = new QVBoxLayout(sidebar);
+    sidebarLayout->setContentsMargins(8, 12, 8, 12);
+    sidebarLayout->setSpacing(15);
+
+    QLabel* settingsLabel = new QLabel("ANALYSIS SETUP");
+    settingsLabel->setStyleSheet(QString("QLabel { font-weight: bold; font-size: 10px; color: %1; letter-spacing: 1px; border: none; }").arg(theme ? theme->textSecondary().name() : "#888"));
+    sidebarLayout->addWidget(settingsLabel);
+
+    QFrame* configFrame = new QFrame();
+    configFrame->setStyleSheet(QString("QFrame { background: %1; border: 1px solid %2; border-radius: 3px; }").arg(bg, borderColor));
+    QFormLayout* configForm = new QFormLayout(configFrame);
+    configForm->setLabelAlignment(Qt::AlignRight);
+
+    m_analysisType = new QComboBox();
+    m_analysisType->addItems({"Transient", "DC OP", "AC Sweep", "Monte Carlo", "Parametric Sweep", "Sensitivity", "Real-time Mode"});
+    m_analysisType->setCurrentIndex(1);
+    m_analysisType->setStyleSheet("QComboBox { background: #121214; color: #eee; }");
+    configForm->addRow("Type:", m_analysisType);
+
+    m_useBuiltin = new QCheckBox("Native Engine");
+    m_useBuiltin->setChecked(true);
+    m_useBuiltin->setStyleSheet("QCheckBox { color: #eee; }");
+    configForm->addRow("", m_useBuiltin);
+
+    m_param1 = new QLineEdit("1u");
+    m_param2 = new QLineEdit("10m");
+    m_param3 = new QLineEdit("0");
+    m_param4 = new QLineEdit();
+    m_param5 = new QLineEdit();
+    for(auto* l : {m_param1, m_param2, m_param3, m_param4, m_param5}) l->setStyleSheet("QLineEdit { background: #121214; color: #fff; border: 1px solid #333; }");
+    
+    configForm->addRow("Step:", m_param1);
+    configForm->addRow("Stop:", m_param2);
+    configForm->addRow("Start:", m_param3);
+    configForm->addRow("P4:", m_param4);
+    configForm->addRow("P5:", m_param5);
+    sidebarLayout->addWidget(configFrame);
+
+    QLabel* generatorsLabel = new QLabel("SOURCE GENERATORS");
+    generatorsLabel->setStyleSheet(settingsLabel->styleSheet());
+    sidebarLayout->addWidget(generatorsLabel);
+
+    QFrame* generatorFrame = new QFrame();
+    generatorFrame->setStyleSheet(QString("QFrame { background: %1; border: 1px solid %2; border-radius: 3px; }").arg(bg, borderColor));
+    QFormLayout* generatorForm = new QFormLayout(generatorFrame);
+    generatorForm->setLabelAlignment(Qt::AlignRight);
+
+    m_generatorType = new QComboBox();
+    m_generatorType->addItems({"DC", "SIN", "PULSE", "EXP", "SFFM", "PWL", "AM", "FM"});
+    m_generatorType->setStyleSheet("QComboBox { background: #121214; color: #eee; }");
+    generatorForm->addRow("Type:", m_generatorType);
+
+    m_generatorPresetCombo = new QComboBox();
+    m_generatorPresetCombo->setStyleSheet("QComboBox { background: #121214; color: #eee; }");
+    generatorForm->addRow("Template:", m_generatorPresetCombo);
+
+    m_genLabel1 = new QLabel("Value:");
+    m_genLabel2 = new QLabel("P2:");
+    m_genLabel3 = new QLabel("P3:");
+    m_genLabel4 = new QLabel("P4:");
+    m_genLabel5 = new QLabel("P5:");
+    m_genLabel6 = new QLabel("P6:");
+
+    m_genParam1 = new QLineEdit("5");
+    m_genParam2 = new QLineEdit("1");
+    m_genParam3 = new QLineEdit("1k");
+    m_genParam4 = new QLineEdit("0");
+    m_genParam5 = new QLineEdit("0");
+    m_genParam6 = new QLineEdit("0");
+    for (auto* l : {m_genParam1, m_genParam2, m_genParam3, m_genParam4, m_genParam5, m_genParam6}) {
+        l->setStyleSheet("QLineEdit { background: #121214; color: #fff; border: 1px solid #333; }");
+    }
+
+    generatorForm->addRow(m_genLabel1, m_genParam1);
+    generatorForm->addRow(m_genLabel2, m_genParam2);
+    generatorForm->addRow(m_genLabel3, m_genParam3);
+    generatorForm->addRow(m_genLabel4, m_genParam4);
+    generatorForm->addRow(m_genLabel5, m_genParam5);
+    generatorForm->addRow(m_genLabel6, m_genParam6);
+
+    QPushButton* applyGeneratorBtn = new QPushButton("Apply to Selected Source");
+    applyGeneratorBtn->setStyleSheet("QPushButton { background-color: #7c2d12; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px; }");
+    generatorForm->addRow("", applyGeneratorBtn);
+
+    QWidget* waveTools = new QWidget();
+    QGridLayout* waveToolsLayout = new QGridLayout(waveTools);
+    waveToolsLayout->setContentsMargins(0, 0, 0, 0);
+    waveToolsLayout->setHorizontalSpacing(6);
+    waveToolsLayout->setVerticalSpacing(6);
+
+    QPushButton* pwlEditorBtn = new QPushButton("PWL Editor");
+    QPushButton* importCsvBtn = new QPushButton("Import CSV");
+    QPushButton* exportCsvBtn = new QPushButton("Export CSV");
+    QPushButton* savePresetBtn = new QPushButton("Save Preset");
+    QPushButton* deletePresetBtn = new QPushButton("Delete Preset");
+    for (QPushButton* b : {pwlEditorBtn, importCsvBtn, exportCsvBtn, savePresetBtn, deletePresetBtn}) {
+        b->setStyleSheet("QPushButton { background-color: #374151; color: white; padding: 4px 8px; border-radius: 4px; }");
+    }
+    pwlEditorBtn->setStyleSheet("QPushButton { background-color: #1e40af; color: white; font-weight: bold; padding: 4px 8px; border-radius: 4px; }");
+    savePresetBtn->setStyleSheet("QPushButton { background-color: #065f46; color: white; font-weight: bold; padding: 4px 8px; border-radius: 4px; }");
+    deletePresetBtn->setStyleSheet("QPushButton { background-color: #7f1d1d; color: white; padding: 4px 8px; border-radius: 4px; }");
+
+    waveToolsLayout->addWidget(pwlEditorBtn, 0, 0);
+    waveToolsLayout->addWidget(importCsvBtn, 0, 1);
+    waveToolsLayout->addWidget(exportCsvBtn, 1, 0);
+    waveToolsLayout->addWidget(savePresetBtn, 1, 1);
+    waveToolsLayout->addWidget(deletePresetBtn, 2, 0, 1, 2);
+    generatorForm->addRow("", waveTools);
+    sidebarLayout->addWidget(generatorFrame);
+
+    QLabel* signalsLabel = new QLabel("TRACE MONITOR");
+    signalsLabel->setStyleSheet(settingsLabel->styleSheet());
+    sidebarLayout->addWidget(signalsLabel);
+
+    m_signalList = new QListWidget();
+    m_signalList->setStyleSheet(QString(
+        "QListWidget { background: %1; border: 1px solid %2; border-radius: 3px; color: #eee; }"
+        "QListWidget::item { padding: 4px; border-bottom: 1px solid %2; }"
+        "QListWidget::item:selected { background: %3; color: white; }"
+    ).arg(bg, borderColor, accent));
+    sidebarLayout->addWidget(m_signalList, 1);
+
+    QLabel* measurementsLabel = new QLabel("MEASUREMENTS");
+    measurementsLabel->setStyleSheet(settingsLabel->styleSheet());
+    sidebarLayout->addWidget(measurementsLabel);
+
+    QWidget* cursorWidget = new QWidget();
+    QHBoxLayout* cursorLayout = new QHBoxLayout(cursorWidget);
+    cursorLayout->setContentsMargins(0, 0, 0, 0);
+    cursorLayout->setSpacing(6);
+    cursorLayout->addWidget(new QLabel("A%"));
+    QDoubleSpinBox* cursorASpin = new QDoubleSpinBox();
+    cursorASpin->setRange(0.0, 100.0);
+    cursorASpin->setDecimals(1);
+    cursorASpin->setSingleStep(1.0);
+    cursorASpin->setValue(m_cursorAFrac * 100.0);
+    cursorASpin->setStyleSheet("QDoubleSpinBox { background: #121214; color: #fff; border: 1px solid #333; }");
+    cursorLayout->addWidget(cursorASpin);
+    cursorLayout->addWidget(new QLabel("B%"));
+    QDoubleSpinBox* cursorBSpin = new QDoubleSpinBox();
+    cursorBSpin->setRange(0.0, 100.0);
+    cursorBSpin->setDecimals(1);
+    cursorBSpin->setSingleStep(1.0);
+    cursorBSpin->setValue(m_cursorBFrac * 100.0);
+    cursorBSpin->setStyleSheet("QDoubleSpinBox { background: #121214; color: #fff; border: 1px solid #333; }");
+    cursorLayout->addWidget(cursorBSpin);
+    sidebarLayout->addWidget(cursorWidget);
+
+    connect(cursorASpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+        m_cursorAFrac = std::clamp(v / 100.0, 0.0, 1.0);
+    });
+    connect(cursorBSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+        m_cursorBFrac = std::clamp(v / 100.0, 0.0, 1.0);
+    });
+
+    m_measurementsTable = new QTableWidget(0, 6);
+    m_measurementsTable->setHorizontalHeaderLabels({"Signal", "Vpp/Ipp", "Avg", "RMS", "Freq", "Delta(A-B)"});
+    m_measurementsTable->horizontalHeader()->setStretchLastSection(true);
+    m_measurementsTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    m_measurementsTable->verticalHeader()->hide();
+    m_measurementsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_measurementsTable->setStyleSheet(QString(
+        "QTableWidget { background: %1; border: 1px solid %2; color: %3; font-size: 9px; }"
+        "QHeaderView::section { background: %4; border: 1px solid %2; color: %3; padding: 2px; }"
+    ).arg(bg, borderColor, textColor, panelBg));
+    sidebarLayout->addWidget(m_measurementsTable, 1);
+
+    m_logOutput = new QTextEdit();
+    m_logOutput->setReadOnly(true);
+    m_logOutput->setMaximumHeight(100);
+    m_logOutput->setStyleSheet(QString("QTextEdit { background: %1; border: 1px solid %2; font-family: monospace; font-size: 9px; color: #eee; }").arg(bg, borderColor));
+    sidebarLayout->addWidget(m_logOutput);
+
+    QLabel* issuesLabel = new QLabel("SIM ISSUES (DOUBLE-CLICK TO NAVIGATE)");
+    issuesLabel->setStyleSheet(settingsLabel->styleSheet());
+    sidebarLayout->addWidget(issuesLabel);
+
+    m_issueList = new QListWidget();
+    m_issueList->setStyleSheet(QString(
+        "QListWidget { background: %1; border: 1px solid %2; border-radius: 3px; color: #fbbf24; }"
+        "QListWidget::item { padding: 4px; border-bottom: 1px solid %2; }"
+    ).arg(bg, borderColor));
+    connect(m_issueList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+        if (!item) return;
+        const QString type = item->data(Qt::UserRole + 1).toString();
+        const QString id = item->data(Qt::UserRole + 2).toString();
+        if (!type.isEmpty() && !id.isEmpty()) {
+            emit simulationTargetRequested(type, id);
+        }
+    });
+    sidebarLayout->addWidget(m_issueList, 1);
+
+    QScrollArea* sidebarScroll = new QScrollArea();
+    sidebarScroll->setWidgetResizable(true);
+    sidebarScroll->setFrameShape(QFrame::NoFrame);
+    sidebarScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    sidebarScroll->setMinimumWidth(240);
+    sidebarScroll->setStyleSheet(QString("QScrollArea { background-color: %1; border-right: 1px solid %2; }").arg(panelBg, borderColor));
+    sidebarScroll->setWidget(sidebar);
+    mainSplitter->addWidget(sidebarScroll);
+
+    // --- Main Plot Content ---
+    QWidget* plotContainer = new QWidget();
+    QVBoxLayout* plotLayout = new QVBoxLayout(plotContainer);
+    plotLayout->setContentsMargins(10, 10, 10, 10);
+
+    // ── Time-Travel Timeline ───────────────────────────────────────────
+    QWidget* timelineWidget = new QWidget();
+    QHBoxLayout* timelineLayout = new QHBoxLayout(timelineWidget);
+    timelineLayout->setContentsMargins(0, 0, 0, 0);
+    
+    QLabel* ttLabel = new QLabel("TIME-TRAVEL:");
+    ttLabel->setStyleSheet("font-weight: bold; font-size: 10px; color: #569cd6;");
+    timelineLayout->addWidget(ttLabel);
+    
+    m_timelineSlider = new QSlider(Qt::Horizontal);
+    m_timelineSlider->setRange(0, 1000);
+    m_timelineSlider->setEnabled(false);
+    m_timelineSlider->setStyleSheet("QSlider::handle:horizontal { background: #569cd6; border-radius: 4px; width: 12px; }");
+    timelineLayout->addWidget(m_timelineSlider, 1);
+    
+    m_timelineLabel = new QLabel("--- s");
+    m_timelineLabel->setMinimumWidth(80);
+    m_timelineLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_timelineLabel->setStyleSheet("font-family: monospace; color: #fff; font-size: 11px;");
+    timelineLayout->addWidget(m_timelineLabel);
+    
+    plotLayout->addWidget(timelineWidget);
+    connect(m_timelineSlider, &QSlider::valueChanged, this, &SimulationPanel::onTimelineValueChanged);
+
+    m_chart = new QChart();
+    m_chart->setTitle("Waveform Viewer");
+    m_chart->setTheme(QChart::ChartThemeDark);
+    m_chart->setBackgroundBrush(QBrush(QColor(bg)));
+    m_chart->setPlotAreaBackgroundBrush(QBrush(QColor(panelBg)));
+    m_chart->setPlotAreaBackgroundVisible(true);
+    
+    m_plotView = new QChartView(m_chart);
+    m_plotView->setRenderHint(QPainter::Antialiasing);
+    m_plotView->setStyleSheet(QString("background-color: %1; border: 1px solid %2;").arg(bg, borderColor));
+
+    m_spectrumChart = new QChart();
+    m_spectrumChart->setTitle("FFT Spectrum Analysis");
+    m_spectrumChart->setTheme(QChart::ChartThemeDark);
+    m_spectrumChart->setBackgroundBrush(QBrush(QColor(bg)));
+    m_spectrumChart->setPlotAreaBackgroundBrush(QBrush(QColor(panelBg)));
+    m_spectrumChart->setPlotAreaBackgroundVisible(true);
+    m_spectrumChart->legend()->hide();
+
+    m_spectrumView = new QChartView(m_spectrumChart);
+    m_spectrumView->setRenderHint(QPainter::Antialiasing);
+    m_spectrumView->setStyleSheet(m_plotView->styleSheet());
+
+    QTabWidget* viewTabs = new QTabWidget();
+    viewTabs->setStyleSheet(QString("QTabWidget::pane { border: 1px solid %1; } QTabBar::tab { background: %2; color: %3; padding: 8px; } QTabBar::tab:selected { background: %4; }")
+                            .arg(borderColor, panelBg, textColor, accent));
+    
+    m_oscilloscope = new OscilloscopeWidget();
+    
+    // Oscilloscope Control Bar
+    m_scopeContainer = new QWidget();
+    QVBoxLayout* scopeLayout = new QVBoxLayout(m_scopeContainer);
+    scopeLayout->setContentsMargins(0, 0, 0, 0);
+    scopeLayout->setSpacing(0);
+    
+    QWidget* scopeControls = new QWidget();
+    scopeControls->setStyleSheet(QString("background: %1; border-top: 1px solid %2;").arg(panelBg, borderColor));
+    QHBoxLayout* ctrlLayout = new QHBoxLayout(scopeControls);
+    ctrlLayout->setContentsMargins(10, 4, 10, 4);
+    
+    auto addScopeSpin = [&](const QString& label, double val, double min, double max, auto slot) {
+        ctrlLayout->addWidget(new QLabel(label));
+        QDoubleSpinBox* sb = new QDoubleSpinBox();
+        sb->setRange(min, max);
+        sb->setValue(val);
+        sb->setDecimals(3);
+        sb->setStyleSheet("QDoubleSpinBox { background: #121214; color: #fff; border: 1px solid #333; }");
+        connect(sb, QOverload<double>::of(&QDoubleSpinBox::valueChanged), m_oscilloscope, slot);
+        ctrlLayout->addWidget(sb);
+        return sb;
+    };
+
+    m_scopeTimeDiv = addScopeSpin("T/Div:", 1.0, 0.001, 1000.0, &OscilloscopeWidget::setTimePerDiv);
+    m_scopeVoltDiv = addScopeSpin("V/Div:", 1.0, 0.01, 100.0, &OscilloscopeWidget::setVoltsPerDiv);
+    
+    connect(m_oscilloscope, &OscilloscopeWidget::timePerDivChanged, this, [this](double v){
+        m_scopeTimeDiv->blockSignals(true);
+        m_scopeTimeDiv->setValue(v);
+        m_scopeTimeDiv->blockSignals(false);
+    });
+    connect(m_oscilloscope, &OscilloscopeWidget::voltsPerDivChanged, this, [this](double v){
+        m_scopeVoltDiv->blockSignals(true);
+        m_scopeVoltDiv->setValue(v);
+        m_scopeVoltDiv->blockSignals(false);
+    });
+    
+    ctrlLayout->addWidget(new QLabel("  CH Selection:"));
+    m_scopeChannelCombo = new QComboBox();
+    m_scopeChannelCombo->setStyleSheet("QComboBox { background: #121214; color: #fff; border: 1px solid #333; min-width: 120px; }");
+    connect(m_scopeChannelCombo, &QComboBox::currentTextChanged, m_oscilloscope, &OscilloscopeWidget::setActiveChannel);
+    ctrlLayout->addWidget(m_scopeChannelCombo);
+
+    ctrlLayout->addStretch();
+    QPushButton* autoScaleBtn = new QPushButton("Auto Scale");
+    autoScaleBtn->setStyleSheet("QPushButton { padding: 4px 12px; background: #059669; color: #fff; border-radius: 2px; font-weight: bold; }");
+    connect(autoScaleBtn, &QPushButton::clicked, m_oscilloscope, &OscilloscopeWidget::autoScale);
+    ctrlLayout->addWidget(autoScaleBtn);
+
+    QPushButton* clearScopeBtn = new QPushButton("Clear Display");
+    clearScopeBtn->setStyleSheet("QPushButton { padding: 4px 12px; background: #333; color: #eee; border-radius: 2px; }");
+    connect(clearScopeBtn, &QPushButton::clicked, m_oscilloscope, &OscilloscopeWidget::clear);
+    ctrlLayout->addWidget(clearScopeBtn);
+
+    scopeLayout->addWidget(m_oscilloscope, 1);
+    scopeLayout->addWidget(scopeControls);
+
+    viewTabs->addTab(m_plotView, "Standard Waves");
+    viewTabs->addTab(m_spectrumView, "FFT Spectrum");
+    // viewTabs->addTab(m_scopeContainer, "Oscilloscope"); // Moved to bottom dock in SchematicEditor
+    
+    m_logicAnalyzer = new LogicAnalyzerWidget();
+    viewTabs->addTab(m_logicAnalyzer, "Logic Analyzer");
+
+    m_voltmeter = new VoltmeterWidget();
+    viewTabs->addTab(m_voltmeter, "Voltmeter");
+
+    m_ammeter = new AmmeterWidget();
+    viewTabs->addTab(m_ammeter, "Ammeter");
+
+    m_wattmeter = new WattmeterWidget();
+    viewTabs->addTab(m_wattmeter, "Wattmeter");
+
+    m_freqCounter = new FrequencyCounterWidget();
+    viewTabs->addTab(m_freqCounter, "Frequency Counter");
+
+    m_logicProbe = new LogicProbeWidget();
+    viewTabs->addTab(m_logicProbe, "Logic Probe");
+
+    plotLayout->addWidget(viewTabs);
+
+    mainSplitter->addWidget(plotContainer);
+    mainSplitter->setSizes({260, 600});
+    mainLayout->addWidget(mainSplitter);
+
+    connect(m_analysisType, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SimulationPanel::onAnalysisChanged);
+    connect(m_generatorType, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SimulationPanel::onGeneratorTypeChanged);
+    connect(m_generatorPresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SimulationPanel::onGeneratorPresetActivated);
+    connect(applyGeneratorBtn, &QPushButton::clicked, this, &SimulationPanel::onApplyGeneratorToSelection);
+    connect(pwlEditorBtn, &QPushButton::clicked, this, &SimulationPanel::onOpenPwlEditor);
+    connect(importCsvBtn, &QPushButton::clicked, this, &SimulationPanel::onImportPwlCsv);
+    connect(exportCsvBtn, &QPushButton::clicked, this, &SimulationPanel::onExportPwlCsv);
+    connect(savePresetBtn, &QPushButton::clicked, this, &SimulationPanel::onSaveGeneratorPreset);
+    connect(deletePresetBtn, &QPushButton::clicked, this, &SimulationPanel::onDeleteGeneratorPreset);
+    connect(m_signalList, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
+        QString seriesName = item->text();
+        bool isVisible = (item->checkState() == Qt::Checked);
+        if (m_chart) {
+            for (auto* series : m_chart->series()) {
+                if (series->name() == seriesName) {
+                    series->setVisible(isVisible);
+                    break;
+                }
+            }
+        }
+    });
+
+    onGeneratorTypeChanged(m_generatorType->currentIndex());
+    loadGeneratorLibrary();
+}
+
+void SimulationPanel::onViewNetlist() {
+    QDialog* dlg = new QDialog(this);
+    dlg->setWindowTitle("Generated SPICE Netlist");
+    dlg->resize(600, 500);
+    QVBoxLayout* lay = new QVBoxLayout(dlg);
+    QTextEdit* edit = new QTextEdit;
+    edit->setReadOnly(true);
+    edit->setPlainText(generateSpiceNetlist());
+    edit->setStyleSheet("background-color: #1e1e24; color: #dcdcdc; font-family: monospace;");
+    lay->addWidget(edit);
+    dlg->exec();
+}
+
+void SimulationPanel::onAnalysisChanged(int index) {
+    SimManager::instance().stopRealTime();
+
+    QFormLayout* layout = qobject_cast<QFormLayout*>(m_param1->parentWidget()->layout());
+    if (!layout) return;
+    
+    auto setLabel = [&](QLineEdit* field, const QString& text) {
+        if (auto* lbl = qobject_cast<QLabel*>(layout->labelForField(field)))
+            lbl->setText(text);
+    };
+
+    if (index == 0) { // Transient
+        setLabel(m_param1, "Step:");
+        setLabel(m_param2, "Stop Time:");
+        setLabel(m_param3, "Start Time:");
+        m_param1->setVisible(true); m_param2->setVisible(true); m_param3->setVisible(true);
+        m_param4->setVisible(false); m_param5->setVisible(false);
+        m_param1->setText("1u"); m_param2->setText("10m"); m_param3->setText("0");
+    } else if (index == 1) { // DC OP
+        m_param1->setVisible(false); m_param2->setVisible(false); m_param3->setVisible(false);
+        m_param4->setVisible(false); m_param5->setVisible(false);
+    } else if (index == 2) { // AC Sweep
+        setLabel(m_param1, "Start Freq:");
+        setLabel(m_param2, "Stop Freq:");
+        setLabel(m_param3, "Points/Dec:");
+        m_param1->setVisible(true); m_param2->setVisible(true); m_param3->setVisible(true);
+        m_param4->setVisible(false); m_param5->setVisible(false);
+        m_param1->setText("10"); m_param2->setText("1Meg"); m_param3->setText("10");
+    } else if (index == 3) { // Monte Carlo
+        setLabel(m_param1, "Runs:");
+        m_param1->setVisible(true); m_param2->setVisible(false); m_param3->setVisible(false);
+        m_param4->setVisible(false); m_param5->setVisible(false);
+        m_param1->setText("10");
+    } else if (index == 4) { // Parametric Sweep
+        setLabel(m_param1, "Component:");
+        setLabel(m_param2, "Param:");
+        setLabel(m_param3, "Start:");
+        setLabel(m_param4, "Stop:");
+        setLabel(m_param5, "Steps:");
+        m_param1->setVisible(true); m_param2->setVisible(true); m_param3->setVisible(true);
+        m_param4->setVisible(true); m_param5->setVisible(true);
+        m_param1->setText("R1"); m_param2->setText("resistance"); m_param3->setText("1k");
+        m_param4->setText("10k"); m_param5->setText("10");
+    } else if (index == 5) { // Sensitivity
+        setLabel(m_param1, "Target Signal:");
+        m_param1->setVisible(true); m_param2->setVisible(false); m_param3->setVisible(false);
+        m_param4->setVisible(false); m_param5->setVisible(false);
+        m_param1->setText("V(Out)");
+    } else if (index == 6) { // Real-time
+        setLabel(m_param1, "Update (ms):");
+        m_param1->setVisible(true); m_param2->setVisible(false); m_param3->setVisible(false);
+        m_param4->setVisible(false); m_param5->setVisible(false);
+        m_param1->setText("100");
+    }
+}
+
+void SimulationPanel::onGeneratorTypeChanged(int index) {
+    Q_UNUSED(index)
+    if (!m_generatorType) return;
+    const QString type = m_generatorType->currentText();
+
+    auto showParam = [](QLabel* lbl, QLineEdit* edit, const QString& title, const QString& value) {
+        lbl->setVisible(true);
+        edit->setVisible(true);
+        lbl->setText(title);
+        if (edit->text().isEmpty()) {
+            edit->setText(value);
+        }
+    };
+    auto hideParam = [](QLabel* lbl, QLineEdit* edit) {
+        lbl->setVisible(false);
+        edit->setVisible(false);
+    };
+
+    if (type == "DC") {
+        showParam(m_genLabel1, m_genParam1, "Value:", "5");
+        hideParam(m_genLabel2, m_genParam2); hideParam(m_genLabel3, m_genParam3);
+        hideParam(m_genLabel4, m_genParam4); hideParam(m_genLabel5, m_genParam5);
+        hideParam(m_genLabel6, m_genParam6);
+    } else if (type == "SIN") {
+        showParam(m_genLabel1, m_genParam1, "Offset:", "0");
+        showParam(m_genLabel2, m_genParam2, "Amplitude:", "5");
+        showParam(m_genLabel3, m_genParam3, "Freq:", "1k");
+        showParam(m_genLabel4, m_genParam4, "Delay:", "0");
+        showParam(m_genLabel5, m_genParam5, "Phase:", "0");
+        hideParam(m_genLabel6, m_genParam6);
+    } else if (type == "PULSE") {
+        showParam(m_genLabel1, m_genParam1, "V1:", "0");
+        showParam(m_genLabel2, m_genParam2, "V2:", "5");
+        showParam(m_genLabel3, m_genParam3, "Delay:", "0");
+        showParam(m_genLabel4, m_genParam4, "Rise:", "1u");
+        showParam(m_genLabel5, m_genParam5, "Fall:", "1u");
+        showParam(m_genLabel6, m_genParam6, "Width:", "500u");
+    } else if (type == "PWL") {
+        showParam(m_genLabel1, m_genParam1, "T1:", "0");
+        showParam(m_genLabel2, m_genParam2, "V1:", "0");
+        showParam(m_genLabel3, m_genParam3, "T2:", "1m");
+        showParam(m_genLabel4, m_genParam4, "V2:", "5");
+        showParam(m_genLabel5, m_genParam5, "T3:", "2m");
+        showParam(m_genLabel6, m_genParam6, "V3:", "0");
+    }
+}
+
+void SimulationPanel::onOpenPwlEditor() {
+    seedDefaultPwlPointsIfNeeded();
+    QDialog dlg(this);
+    dlg.setWindowTitle("PWL Editor");
+    QVBoxLayout* layout = new QVBoxLayout(&dlg);
+    QTableWidget* table = new QTableWidget(static_cast<int>(m_pwlPoints.size()), 2, &dlg);
+    table->setHorizontalHeaderLabels({"Time", "Value"});
+    for (int i = 0; i < static_cast<int>(m_pwlPoints.size()); ++i) {
+        table->setItem(i, 0, new QTableWidgetItem(m_pwlPoints[i].first));
+        table->setItem(i, 1, new QTableWidgetItem(m_pwlPoints[i].second));
+    }
+    layout->addWidget(table);
+    QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    if (dlg.exec() == QDialog::Accepted) {
+        m_pwlPoints.clear();
+        for (int r = 0; r < table->rowCount(); ++r) {
+            m_pwlPoints.push_back({table->item(r, 0)->text(), table->item(r, 1)->text()});
+        }
+    }
+}
+
+void SimulationPanel::onImportPwlCsv() {
+    QString path = QFileDialog::getOpenFileName(this, "Import PWL CSV", m_projectDir, "CSV Files (*.csv)");
+    if (!path.isEmpty()) importPwlCsvFile(path);
+}
+
+void SimulationPanel::onExportPwlCsv() {
+    QString path = QFileDialog::getSaveFileName(this, "Export PWL CSV", m_projectDir, "CSV Files (*.csv)");
+    if (!path.isEmpty()) exportPwlCsvFile(path);
+}
+
+void SimulationPanel::onExportResultsCsv() {
+    QString path = QFileDialog::getSaveFileName(this, "Export Results CSV", m_projectDir, "CSV Files (*.csv)");
+    if (!path.isEmpty()) exportResultsCsvFile(path);
+}
+
+void SimulationPanel::onExportResultsJson() {
+    QString path = QFileDialog::getSaveFileName(this, "Export Results JSON", m_projectDir, "JSON Files (*.json)");
+    if (!path.isEmpty()) exportResultsJsonFile(path);
+}
+
+void SimulationPanel::onExportResultsReport() {
+    QString path = QFileDialog::getSaveFileName(this, "Export Results Report", m_projectDir, "Markdown Files (*.md)");
+    if (!path.isEmpty()) exportResultsReportFile(path);
+}
+
+void SimulationPanel::onSaveGeneratorPreset() {
+    QString name = QInputDialog::getText(this, "Save Preset", "Preset Name:");
+    if (!name.isEmpty()) {
+        m_userGeneratorPresets[name] = collectGeneratorConfig();
+        saveUserGeneratorPresets();
+        refreshGeneratorPresetCombo();
+    }
+}
+
+void SimulationPanel::onDeleteGeneratorPreset() {
+    QString tag = m_generatorPresetCombo->currentData().toString();
+    if (tag.startsWith("U:")) {
+        m_userGeneratorPresets.remove(tag.mid(2));
+        saveUserGeneratorPresets();
+        refreshGeneratorPresetCombo();
+    }
+}
+
+void SimulationPanel::setAnalysisConfig(const AnalysisConfig& cfg) {
+    if (!m_analysisType) return;
+    
+    int idx = 0;
+    switch (cfg.type) {
+        case SimAnalysisType::Transient: idx = 0; break;
+        case SimAnalysisType::OP:        idx = 1; break;
+        case SimAnalysisType::AC:        idx = 2; break;
+        case SimAnalysisType::MonteCarlo: idx = 3; break;
+        case SimAnalysisType::Sensitivity: idx = 4; break;
+    }
+    
+    m_analysisType->setCurrentIndex(idx);
+    
+    if (idx == 0) {
+        m_param1->setText(QString::number(cfg.step));
+        m_param2->setText(QString::number(cfg.stop));
+    } else if (idx == 2) {
+        m_param1->setText(QString::number(cfg.fStart));
+        m_param2->setText(QString::number(cfg.fStop));
+        m_param3->setText(QString::number(cfg.pts));
+    }
+}
+
+void SimulationPanel::onRunSimulation() {
+    m_logOutput->clear();
+    if (m_issueList) m_issueList->clear();
+
+    if (m_useBuiltin->isChecked()) {
+        SimNetlist netlist = SimSchematicBridge::buildNetlist(m_scene, m_netManager);
+        for (const auto& sig : netlist.autoProbes()) {
+            addProbe(QString::fromStdString(sig));
+        }
+
+        int idx = m_analysisType->currentIndex();
+        if (idx == 0) { // Transient
+            double tStop = parseValue(m_param2->text(), 10e-3);
+            double tStep = parseValue(m_param1->text(), 1u);
+            SimManager::instance().runTransient(m_scene, m_netManager, tStop, tStep);
+        } else if (idx == 1) { // DC OP
+            SimManager::instance().runDCOP(m_scene, m_netManager);
+        } else if (idx == 2) { // AC
+            double fStart = parseValue(m_param1->text(), 10);
+            double fStop = parseValue(m_param2->text(), 1e6);
+            int pts = m_param3->text().toInt();
+            if (pts <= 0) pts = 10;
+            SimManager::instance().runAC(m_scene, m_netManager, fStart, fStop, pts);
+        } else if (idx == 3) { // Monte Carlo
+            int runs = m_param1->text().toInt();
+            if (runs <= 0) runs = 10;
+            SimManager::instance().runMonteCarlo(m_scene, m_netManager, runs);
+        } else if (idx == 4) { // Parametric Sweep
+            QString comp = m_param1->text();
+            QString param = m_param2->text();
+            double start = parseValue(m_param3->text(), 0);
+            double stop = parseValue(m_param4->text(), 0);
+            int steps = m_param5->text().toInt();
+            if (steps <= 0) steps = 5;
+            SimManager::instance().runParametricSweep(m_scene, m_netManager, comp, param, start, stop, steps);
+        } else if (idx == 5) { // Sensitivity
+            QString target = m_param1->text();
+            SimManager::instance().runSensitivity(m_scene, m_netManager, target);
+        } else if (idx == 6) { // Real-time
+            int interval = m_param1->text().toInt();
+            if (interval < 10) interval = 10; // Min 10ms
+            SimManager::instance().runRealTime(m_scene, m_netManager, interval);
+        }
+        return;
+    }
+
+    if (!SimulationManager::instance().isAvailable()) {
+        m_logOutput->append("Error: Ngspice not found. Please install libngspice.");
+        return;
+    }
+
+    m_logOutput->append("Generating netlist for ngspice...");
+    QString netlist = generateSpiceNetlist();
+    if (netlist.isEmpty()) {
+        m_logOutput->append("Error: Failed to generate netlist.");
+        return;
+    }
+
+    // Save to temp file as ngspice shared lib 'source' command works best with files
+    QTemporaryFile* temp = new QTemporaryFile(this);
+    if (temp->open()) {
+        temp->write(netlist.toUtf8());
+        m_lastNetlistPath = temp->fileName();
+        temp->close();
+        temp->setAutoRemove(false); // Keep it for the duration of the simulation
+
+        SimulationManager::instance().runSimulation(m_lastNetlistPath);
+    } else {
+        m_logOutput->append("Error: Could not create temporary netlist file.");
+    }
+}
+
+void SimulationPanel::onLogReceived(const QString& msg) {
+    m_logOutput->append(msg);
+
+    const auto target = SimSchematicBridge::extractDiagnosticTarget(msg);
+    QString targetType;
+    if (target.type == SimSchematicBridge::DiagnosticTarget::Type::Component) {
+        targetType = "component";
+    } else if (target.type == SimSchematicBridge::DiagnosticTarget::Type::Net) {
+        targetType = "net";
+    }
+
+    if (m_issueList) {
+        bool isIssue = msg.contains("Error", Qt::CaseInsensitive) || 
+                       msg.contains("Warn", Qt::CaseInsensitive) || 
+                       msg.contains("Fail", Qt::CaseInsensitive) ||
+                       msg.contains("[Diag]", Qt::CaseInsensitive) ||
+                       msg.contains("[Fix]", Qt::CaseInsensitive);
+
+        if (isIssue || !targetType.isEmpty()) {
+            QListWidgetItem* item = new QListWidgetItem(msg);
+            if (!targetType.isEmpty() && !target.id.trimmed().isEmpty()) {
+                item->setData(Qt::UserRole + 1, targetType);
+                item->setData(Qt::UserRole + 2, target.id.trimmed());
+                item->setToolTip(QString("Navigate to %1: %2").arg(targetType, target.id));
+                item->setForeground(QColor(msg.contains("Error", Qt::CaseInsensitive) ? "#ff3333" : "#ffcc00"));
+            } else {
+                item->setForeground(QColor("#cccccc"));
+            }
+            m_issueList->addItem(item);
+        }
+    }
+}
+
+void SimulationPanel::onSimulationFinished() {
+    m_logOutput->append("Simulation finished.");
+    
+    QString rawPath = m_lastNetlistPath;
+    rawPath.replace(".cir", ".raw");
+    
+    QFile::copy(m_lastNetlistPath.replace(".cir", ".raw"), rawPath);
+    plotResultsFromRaw(rawPath);
+}
+
+void SimulationPanel::plotResultsFromRaw(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        m_logOutput->append("Error: Could not open simulation results: " + path);
+        return;
+    }
+
+    m_chart->removeAllSeries();
+    for (auto* axis : m_chart->axes()) m_chart->removeAxis(axis);
+
+    QTextStream in(&file);
+    QString line;
+    int numVariables = 0;
+    int numPoints = 0;
+    QStringList varNames;
+    bool collectingData = false;
+
+    while (!in.atEnd()) {
+        line = in.readLine().trimmed();
+        if (line.startsWith("No. Variables:")) {
+            numVariables = line.section(':', 1).trimmed().toInt();
+        } else if (line.startsWith("No. Points:")) {
+            numPoints = line.section(':', 1).trimmed().toInt();
+        } else if (line.startsWith("Variables:")) {
+            for (int i = 0; i < numVariables; ++i) {
+                QString vLine = in.readLine().trimmed();
+                QStringList parts = vLine.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+                if (parts.size() >= 2) varNames << parts[1];
+            }
+        } else if (line.startsWith("Values:")) {
+            collectingData = true;
+            break;
+        }
+    }
+
+    if (!collectingData || varNames.isEmpty()) return;
+
+    QVector<QLineSeries*> seriesList;
+    for (int i = 1; i < varNames.size(); ++i) { 
+        auto* s = new QLineSeries();
+        s->setName(varNames[i]);
+        seriesList << s;
+        m_chart->addSeries(s);
+    }
+
+    for (int p = 0; p < numPoints; ++p) {
+        QString xLine = in.readLine().trimmed();
+        QStringList xParts = xLine.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+        if (xParts.size() < 2) break;
+        double xVal = xParts[1].toDouble();
+
+        for (int v = 1; v < numVariables; ++v) {
+            QString vLine = in.readLine().trimmed();
+            double yVal = vLine.toDouble();
+            if (v-1 < seriesList.size()) {
+                seriesList[v-1]->append(xVal, yVal);
+            }
+        }
+    }
+
+    m_chart->createDefaultAxes();
+    if (!m_chart->axes(Qt::Horizontal).isEmpty()) {
+        m_chart->axes(Qt::Horizontal).first()->setTitleText(varNames[0]);
+    }
+    if (!m_chart->axes(Qt::Vertical).isEmpty()) {
+        m_chart->axes(Qt::Vertical).first()->setTitleText("Value");
+    }
+    
+    m_signalList->blockSignals(true);
+    m_signalList->clear();
+    for (int i = 1; i < varNames.size(); ++i) {
+        QListWidgetItem* item = new QListWidgetItem(varNames[i]);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked); 
+        m_signalList->addItem(item);
+    }
+    m_signalList->blockSignals(false);
+    
+    m_logOutput->append(QString("Plotted %1 points for %2 variables.").arg(numPoints).arg(numVariables-1));
+}
+
+QString SimulationPanel::generateSpiceNetlist() {
+    SpiceNetlistGenerator::SimulationParams params;
+    int typeIndex = m_analysisType->currentIndex();
+    
+    if (typeIndex == 0) {
+        params.type = SpiceNetlistGenerator::Transient;
+        params.stop = m_param2->text();
+        params.step = m_param1->text();
+    } else if (typeIndex == 1) {
+        params.type = SpiceNetlistGenerator::OP;
+    } else if (typeIndex == 2) {
+        params.type = SpiceNetlistGenerator::AC;
+        params.start = m_param1->text();
+        params.stop = m_param2->text();
+        params.step = m_param3->text(); 
+    } else {
+        params.type = SpiceNetlistGenerator::Transient; 
+        params.stop = "10m";
+        params.step = "100u";
+    }
+
+    return SpiceNetlistGenerator::generate(m_scene, m_projectDir, m_netManager, params);
+}
+
+void SimulationPanel::onSimResultsReady(const SimResults& results) {
+    if (!results.isSchemaCompatible()) {
+        m_logOutput->append(QString("Unsupported simulator results schema v%1 (expected v%2).")
+                            .arg(results.schemaVersion)
+                            .arg(SimResults::kSchemaVersion));
+        return;
+    }
+
+    if (m_hasLastResults) {
+        m_previousResults = m_lastResults;
+        m_hasPreviousResults = true;
+    }
+    m_lastResults = results;
+    m_hasLastResults = true;
+    m_lastRunTimestampUtc = QDateTime::currentDateTimeUtc();
+
+    m_logOutput->append("Built-in simulation finished.");
+    for (const auto& d : results.diagnostics) {
+        onLogReceived(QString("[Diag] %1").arg(QString::fromStdString(d)));
+    }
+    for (const auto& s : results.fixSuggestions) {
+        onLogReceived(QString("[Fix] %1").arg(QString::fromStdString(s)));
+    }
+
+    // ── Timeline Initialization ──────────────────────────────────────
+    bool isTransient = (results.analysisType == SimAnalysisType::Transient);
+    m_timelineSlider->setEnabled(isTransient);
+            if (isTransient) {
+            m_timelineSlider->blockSignals(true);
+            m_timelineSlider->setValue(1000); // Start at end
+            m_timelineSlider->blockSignals(false);
+            
+            if (!results.waveforms.empty() && !results.waveforms.front().xData.empty()) {
+                m_timelineLabel->setText(QString::number(results.waveforms.front().xData.back(), 'g', 4) + " s");
+            }
+        } else {
+    
+        m_timelineLabel->setText("--- s");
+    }
+
+    plotBuiltinResults(results);
+    
+    if (m_oscilloscope) m_oscilloscope->clear();
+    if (m_logicAnalyzer) m_logicAnalyzer->clear();
+    if (m_voltmeter) m_voltmeter->clear();
+    if (m_ammeter) m_ammeter->clear();
+    if (m_wattmeter) m_wattmeter->clear();
+    if (m_freqCounter) m_freqCounter->clear();
+    if (m_logicProbe) m_logicProbe->clear();
+
+    int logicCh = 0;
+    if (m_oscilloscope) m_oscilloscope->beginBatchUpdate();
+    if (m_logicAnalyzer) m_logicAnalyzer->beginBatchUpdate();
+    for (const auto& wave : results.waveforms) {
+        QString name = QString::fromStdString(wave.name);
+        const int scopeStride = sampleStride(wave.xData.size(), 3000);
+        
+        if (m_oscilloscope) {
+            QVector<QPointF> scopePoints;
+            scopePoints.reserve(static_cast<int>((wave.xData.size() + static_cast<size_t>(scopeStride) - 1) / static_cast<size_t>(scopeStride)));
+            for (size_t i = 0; i < wave.xData.size(); i += static_cast<size_t>(scopeStride)) {
+                scopePoints.append(QPointF(wave.xData[i], wave.yData[i]));
+            }
+            m_oscilloscope->setChannelData(name, scopePoints);
+        }
+
+        if (m_logicAnalyzer && logicCh < 8) {
+            bool looksDigital = true;
+            for(double v : wave.yData) {
+                if (std::abs(v) > 0.5 && std::abs(v - 5.0) > 0.5 && std::abs(v - 3.3) > 0.5) {
+                    looksDigital = false;
+                    break;
+                }
+            }
+            
+            if (looksDigital) {
+                const int logicStride = sampleStride(wave.xData.size(), 2500);
+                QVector<QPointF> logicPoints;
+                logicPoints.reserve(static_cast<int>((wave.xData.size() + static_cast<size_t>(logicStride) - 1) / static_cast<size_t>(logicStride)));
+                for (size_t i = 0; i < wave.xData.size(); i += static_cast<size_t>(logicStride)) {
+                    logicPoints.append(QPointF(wave.xData[i], wave.yData[i] > 2.0 ? 1.0 : 0.0));
+                }
+                m_logicAnalyzer->setChannelData(name, logicPoints);
+                logicCh++;
+            }
+        }
+    }
+    if (m_oscilloscope) {
+        m_oscilloscope->autoScale();
+        m_oscilloscope->endBatchUpdate();
+    }
+    if (m_logicAnalyzer) m_logicAnalyzer->endBatchUpdate();
+
+    updateVirtualMeters(results);
+    emit resultsReady(results);
+}
+
+void SimulationPanel::onTimelineValueChanged(int value) {
+    if (!m_hasLastResults || m_lastResults.waveforms.empty()) return;
+    if (m_lastResults.analysisType != SimAnalysisType::Transient) return;
+    
+    // Find time range
+    double tMin = 1e18, tMax = -1e18;
+    for (const auto& w : m_lastResults.waveforms) {
+        if (w.xData.empty()) continue;
+        tMin = std::min(tMin, w.xData.front());
+        tMax = std::max(tMax, w.xData.back());
+    }
+    
+    if (tMin >= tMax) return;
+    
+    double t = tMin + (tMax - tMin) * (value / 1000.0);
+    m_timelineLabel->setText(QString::number(t, 'g', 4) + " s");
+    
+    auto snap = m_lastResults.interpolateAt(t);
+    
+    QMap<QString, double> nodeVoltages;
+    for (auto const& [name, val] : snap.nodeVoltages) nodeVoltages[name.c_str()] = val;
+    
+    QMap<QString, double> currents;
+    for (auto const& [name, val] : snap.branchCurrents) currents[name.c_str()] = val;
+    
+    emit timeSnapshotReady(t, nodeVoltages, currents);
+}
+
+void SimulationPanel::plotBuiltinResults(const SimResults& results) {
+    QSet<QString> currentWaveNames;
+    m_chart->removeAllSeries();
+    for (auto* axis : m_chart->axes()) m_chart->removeAxis(axis);
+    
+    m_spectrumChart->removeAllSeries();
+    for (auto* axis : m_spectrumChart->axes()) m_spectrumChart->removeAxis(axis);
+
+    m_signalList->blockSignals(true);
+    m_signalList->clear();
+    if (m_measurementsTable) m_measurementsTable->setRowCount(0);
+    
+    QString lastScopeChannel = m_scopeChannelCombo->currentText();
+    m_scopeChannelCombo->blockSignals(true);
+    m_scopeChannelCombo->clear();
+    for(const auto& w : results.waveforms) {
+        m_scopeChannelCombo->addItem(QString::fromStdString(w.name));
+    }
+    if (m_scopeChannelCombo->count() > 0) {
+        int idx = m_scopeChannelCombo->findText(lastScopeChannel);
+        if (idx >= 0) m_scopeChannelCombo->setCurrentIndex(idx);
+        else m_scopeChannelCombo->setCurrentIndex(0);
+    }
+    m_scopeChannelCombo->blockSignals(false);
+    if (m_oscilloscope) m_oscilloscope->setActiveChannel(m_scopeChannelCombo->currentText());
+
+    if (results.waveforms.empty()) {
+        if (!results.sensitivities.empty()) {
+            m_logOutput->append("\n--- Sensitivity Analysis ---");
+            for (const auto& [name, val] : results.sensitivities) {
+                m_logOutput->append(QString("dTarget/d(%1) = %2").arg(QString::fromStdString(name)).arg(val));
+            }
+        } else {
+            m_logOutput->append("\n--- DC Operating Point ---");
+            for (const auto& [name, val] : results.nodeVoltages) {
+                m_logOutput->append(QString("V(%1) = %2 V").arg(QString::fromStdString(name)).arg(val));
+            }
+        }
+        m_signalList->blockSignals(false);
+        return;
+    }
+
+    m_chart->legend()->hide();
+
+    int analysisIdx = m_analysisType->currentIndex();
+    QAbstractAxis* axisX = nullptr;
+    QValueAxis* axisYPhase = nullptr;
+    
+    if (analysisIdx == 2) { // AC Sweep / Bode Plot
+        auto* logX = new QLogValueAxis();
+        logX->setTitleText("Frequency (Hz)");
+        logX->setBase(10.0);
+        logX->setLabelFormat("%.0e");
+        axisX = logX;
+
+        axisYPhase = new QValueAxis();
+        axisYPhase->setTitleText("Phase (Deg)");
+        axisYPhase->setRange(-180, 180);
+        axisYPhase->setLabelFormat("%d");
+        axisYPhase->setGridLineVisible(false);
+        m_chart->addAxis(axisYPhase, Qt::AlignRight);
+    } else {
+        auto* valX = new QValueAxis();
+        if (analysisIdx == 3) valX->setTitleText("Run Number");
+        else valX->setTitleText(axisLabelFromSchema(results.xAxisName));
+        axisX = valX;
+    }
+    
+    axisX->setGridLinePen(QPen(QColor("#d0d0d0"), 1, Qt::DotLine));
+    m_chart->addAxis(axisX, Qt::AlignBottom);
+
+    QValueAxis* axisY = new QValueAxis();
+    if (analysisIdx == 2) axisY->setTitleText("Magnitude (dB)");
+    else axisY->setTitleText(axisLabelFromSchema(results.yAxisName));
+    axisY->setGridLinePen(QPen(QColor("#d0d0d0"), 1, Qt::DotLine));
+    m_chart->addAxis(axisY, Qt::AlignLeft);
+
+    const QList<QColor> colors = {Qt::red, Qt::blue, QColor("#00aa00"), Qt::magenta, Qt::darkCyan};
+    int colorIdx = 0;
+    
+    for (const auto& wave : results.waveforms) {
+        QLineSeries* series = new QLineSeries();
+        series->setName(QString::fromStdString(wave.name));
+        series->setPen(QPen(colors[colorIdx % colors.size()], 1.5));
+        
+        QLineSeries* phaseSeries = nullptr;
+        if (analysisIdx == 2 && !wave.yPhase.empty()) {
+            phaseSeries = new QLineSeries();
+            phaseSeries->setName(series->name() + " (Phase)");
+            QPen phasePen = series->pen();
+            phasePen.setStyle(Qt::DashLine);
+            phasePen.setWidthF(1.0);
+            phaseSeries->setPen(phasePen);
+        }
+
+        const int targetPoints = 4000;
+        
+        if (analysisIdx == 2) {
+            // AC Magnitude in dB
+            std::vector<double> dbData;
+            dbData.reserve(wave.yData.size());
+            for (double v : wave.yData) dbData.push_back(20.0 * std::log10(std::max(v, 1e-15)));
+            series->replace(decimateMinMaxBuckets(wave.xData, dbData, targetPoints));
+            
+            if (phaseSeries) {
+                phaseSeries->replace(decimateMinMaxBuckets(wave.xData, wave.yPhase, targetPoints));
+            }
+        } else {
+            series->replace(decimateMinMaxBuckets(wave.xData, wave.yData, targetPoints));
+        }
+
+        m_chart->addSeries(series);
+        series->attachAxis(axisX);
+        series->attachAxis(axisY);
+
+        if (phaseSeries) {
+            m_chart->addSeries(phaseSeries);
+            phaseSeries->attachAxis(axisX);
+            phaseSeries->attachAxis(axisYPhase);
+        }
+
+        colorIdx++;
+        
+        const QString waveName = QString::fromStdString(wave.name);
+        currentWaveNames.insert(waveName);
+
+        double minVal = 0.0, maxVal = 0.0, avgVal = 0.0;
+        if (!wave.yData.empty()) {
+            auto [minIt, maxIt] = std::minmax_element(wave.yData.begin(), wave.yData.end());
+            minVal = *minIt;
+            maxVal = *maxIt;
+            double sum = 0.0;
+            for (double v : wave.yData) sum += v;
+            avgVal = sum / static_cast<double>(wave.yData.size());
+        }
+
+        if (analysisIdx == 0 && wave.yData.size() >= 64) {
+            int nfft = 1024;
+            std::vector<double> resampled = SimMath::resample(wave.xData, wave.yData, nfft);
+            std::vector<std::complex<double>> complexIn(nfft);
+            for(int i=0; i<nfft; ++i) complexIn[i] = resampled[i];
+            auto complexOut = SimMath::fft(complexIn);
+            QLineSeries* specSeries = new QLineSeries();
+            specSeries->setPen(series->pen());
+            double sampleRate = 1.0 / ( (wave.xData.back() - wave.xData.front()) / (wave.xData.size()-1) );
+            for (int i = 0; i < nfft / 2; ++i) {
+                double freq = i * sampleRate / nfft;
+                double mag = 2.0 * std::abs(complexOut[i]) / nfft;
+                if (i == 0) mag /= 2.0;
+                specSeries->append(freq, 20.0 * std::log10(std::max(mag, 1e-9)));
+            }
+            m_spectrumChart->addSeries(specSeries);
+        }
+
+        QListWidgetItem* item = new QListWidgetItem(series->name());
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked);
+        item->setForeground(series->pen().color());
+        m_signalList->addItem(item);
+
+        if (m_measurementsTable) {
+            int row = m_measurementsTable->rowCount();
+            m_measurementsTable->insertRow(row);
+            m_measurementsTable->setItem(row, 0, new QTableWidgetItem(series->name()));
+            m_measurementsTable->item(row, 0)->setForeground(series->pen().color());
+            m_measurementsTable->setItem(row, 1, new QTableWidgetItem(QString::number(maxVal - minVal, 'f', 3)));
+            m_measurementsTable->setItem(row, 2, new QTableWidgetItem(QString::number(avgVal, 'f', 3)));
+            double sumSq = 0.0;
+            for (double v : wave.yData) sumSq += v * v;
+            const double rmsVal = wave.yData.empty() ? 0.0 : std::sqrt(sumSq / static_cast<double>(wave.yData.size()));
+            m_measurementsTable->setItem(row, 3, new QTableWidgetItem(QString::number(rmsVal, 'f', 3)));
+            const double freqHz = estimateFrequency(wave);
+            QString freqStr = (freqHz > 0.0) ? QString("%1 Hz").arg(QString::number(freqHz, 'g', 4)) : "-";
+            if (analysisIdx == 0) {
+                const double fftPeak = estimateFftPeakHz(wave);
+                if (fftPeak > 0.0) freqStr = QString("%1 (FFT %2)").arg(freqStr == "-" ? QString("~") : freqStr).arg(QString::number(fftPeak, 'g', 4));
+            }
+            m_measurementsTable->setItem(row, 4, new QTableWidgetItem(freqStr));
+            QString deltaStr = "-";
+            if (wave.xData.size() >= 2 && wave.yData.size() >= 2) {
+                const double x0 = wave.xData.front();
+                const double x1 = wave.xData.back();
+                const double xa = x0 + (x1 - x0) * m_cursorAFrac;
+                const double xb = x0 + (x1 - x0) * m_cursorBFrac;
+                deltaStr = QString::number(sampleAtX(wave, xb) - sampleAtX(wave, xa), 'f', 3);
+            }
+            m_measurementsTable->setItem(row, 5, new QTableWidgetItem(deltaStr));
+        }
+    }
+
+    if (m_overlayPreviousRun && m_overlayPreviousRun->isChecked() && m_hasPreviousResults) {
+        for (const auto& wave : m_previousResults.waveforms) {
+            const QString prevName = QString::fromStdString(wave.name);
+            if (currentWaveNames.contains(prevName)) {
+                QLineSeries* prevSeries = new QLineSeries();
+                prevSeries->setName("Prev: " + prevName);
+                prevSeries->setPen(QPen(QColor("#94a3b8"), 1.1, Qt::DashLine));
+                prevSeries->replace(decimateMinMaxBuckets(wave.xData, wave.yData, 3000));
+                m_chart->addSeries(prevSeries);
+                prevSeries->attachAxis(axisX);
+                prevSeries->attachAxis(axisY);
+            }
+        }
+    }
+
+    if (!m_spectrumChart->series().isEmpty()) {
+        QValueAxis* axisFreq = new QValueAxis();
+        axisFreq->setTitleText("Frequency (Hz)");
+        m_spectrumChart->addAxis(axisFreq, Qt::AlignBottom);
+        for(auto* s : m_spectrumChart->series()) s->attachAxis(axisFreq);
+        QValueAxis* axisMag = new QValueAxis();
+        axisMag->setTitleText("Magnitude (dB)");
+        m_spectrumChart->addAxis(axisMag, Qt::AlignLeft);
+        for(auto* s : m_spectrumChart->series()) s->attachAxis(axisMag);
+    }
+
+    m_signalList->blockSignals(false);
+}
+
+double SimulationPanel::parseValue(const QString& text, double defaultVal) {
+    double parsed = 0.0;
+    if (SimValueParser::parseSpiceNumber(text, parsed)) return parsed;
+    return defaultVal;
+}
+
+double SimulationPanel::sampleAtX(const SimWaveform& wave, double x) const {
+    if (wave.xData.empty() || wave.yData.empty()) return 0.0;
+    const size_t n = std::min(wave.xData.size(), wave.yData.size());
+    if (n == 1 || x <= wave.xData.front()) return wave.yData.front();
+    if (x >= wave.xData[n - 1]) return wave.yData[n - 1];
+    auto it = std::lower_bound(wave.xData.begin(), wave.xData.begin() + static_cast<long>(n), x);
+    const size_t i1 = static_cast<size_t>(std::distance(wave.xData.begin(), it));
+    const size_t i0 = i1 - 1;
+    const double x0 = wave.xData[i0], x1 = wave.xData[i1], y0 = wave.yData[i0], y1 = wave.yData[i1];
+    if (std::abs(x1 - x0) < 1e-18) return y0;
+    return y0 + (x - x0) / (x1 - x0) * (y1 - y0);
+}
+
+double SimulationPanel::estimateFrequency(const SimWaveform& wave) const {
+    const size_t n = std::min(wave.xData.size(), wave.yData.size());
+    if (n < 4) return 0.0;
+    int crossings = 0;
+    for (size_t i = 1; i < n; ++i) {
+        if ((wave.yData[i-1] <= 0.0 && wave.yData[i] > 0.0) || (wave.yData[i-1] >= 0.0 && wave.yData[i] < 0.0)) crossings++;
+    }
+    const double dt = wave.xData[n - 1] - wave.xData[0];
+    if (dt <= 0.0 || crossings < 2) return 0.0;
+    return (crossings * 0.5) / dt;
+}
+
+double SimulationPanel::estimateFftPeakHz(const SimWaveform& wave) const {
+    const size_t n = std::min(wave.xData.size(), wave.yData.size());
+    if (n < 64) return 0.0;
+    const int nfft = 1024;
+    std::vector<double> resampled = SimMath::resample(wave.xData, wave.yData, nfft);
+    std::vector<std::complex<double>> complexIn(nfft);
+    for (int i = 0; i < nfft; ++i) complexIn[i] = resampled[i];
+    auto out = SimMath::fft(complexIn);
+    const double totalT = wave.xData.back() - wave.xData.front();
+    if (totalT <= 0.0) return 0.0;
+    const double sampleRate = static_cast<double>(n) / totalT;
+    int bestBin = -1; double bestMag = 0.0;
+    for (int i = 1; i < nfft / 2; ++i) {
+        if (std::abs(out[i]) > bestMag) { bestMag = std::abs(out[i]); bestBin = i; }
+    }
+    return bestBin <= 0 ? 0.0 : bestBin * sampleRate / nfft;
+}
+
+QString SimulationPanel::buildGeneratorExpression() const {
+    const QString type = m_generatorType ? m_generatorType->currentText() : "DC";
+    if (type == "DC") return QString("DC %1").arg(m_genParam1->text().trimmed());
+    if (type == "SIN") return QString("SINE(%1 %2 %3 %4 %5)").arg(m_genParam1->text().trimmed(), m_genParam2->text().trimmed(), m_genParam3->text().trimmed(), m_genParam4->text().trimmed(), m_genParam5->text().trimmed());
+    if (type == "PULSE") return QString("PULSE(%1 %2 %3 %4 %5 %6 %7)").arg(m_genParam1->text().trimmed(), m_genParam2->text().trimmed(), m_genParam3->text().trimmed(), m_genParam4->text().trimmed(), m_genParam5->text().trimmed(), m_genParam6->text().trimmed(), "1m");
+    if (type == "EXP") return QString("EXP(%1 %2 %3 %4 %5 %6)").arg(m_genParam1->text().trimmed(), m_genParam2->text().trimmed(), m_genParam3->text().trimmed(), m_genParam4->text().trimmed(), m_genParam5->text().trimmed(), m_genParam6->text().trimmed());
+    if (type == "SFFM") return QString("SFFM(%1 %2 %3 %4 %5)").arg(m_genParam1->text().trimmed(), m_genParam2->text().trimmed(), m_genParam3->text().trimmed(), m_genParam4->text().trimmed(), m_genParam5->text().trimmed());
+    if (type == "PWL") {
+        QStringList pairs;
+        if (!m_pwlPoints.isEmpty()) { for (const auto& p : m_pwlPoints) pairs << p.first.trimmed() << p.second.trimmed(); }
+        else pairs << m_genParam1->text().trimmed() << m_genParam2->text().trimmed() << m_genParam3->text().trimmed() << m_genParam4->text().trimmed() << m_genParam5->text().trimmed() << m_genParam6->text().trimmed();
+        return QString("PWL(%1)").arg(pairs.join(' '));
+    }
+    if (type == "AM") return QString("AM(%1 %2 %3 %4 %5)").arg(m_genParam1->text().trimmed(), m_genParam2->text().trimmed(), m_genParam3->text().trimmed(), m_genParam4->text().trimmed(), m_genParam5->text().trimmed());
+    if (type == "FM") return QString("FM(%1 %2 %3 %4 %5)").arg(m_genParam1->text().trimmed(), m_genParam2->text().trimmed(), m_genParam3->text().trimmed(), m_genParam4->text().trimmed(), m_genParam5->text().trimmed());
+    return QString("DC %1").arg(m_genParam1->text().trimmed());
+}
+
+QVariantMap SimulationPanel::collectGeneratorConfig() const {
+    QVariantMap cfg;
+    cfg["type"] = m_generatorType ? m_generatorType->currentText() : "DC";
+    cfg["p1"] = m_genParam1->text().trimmed(); cfg["p2"] = m_genParam2->text().trimmed();
+    cfg["p3"] = m_genParam3->text().trimmed(); cfg["p4"] = m_genParam4->text().trimmed();
+    cfg["p5"] = m_genParam5->text().trimmed(); cfg["p6"] = m_genParam6->text().trimmed();
+    cfg["expression"] = buildGeneratorExpression();
+    QVariantList points;
+    for (const auto& p : m_pwlPoints) { QVariantMap pt; pt["t"] = p.first; pt["v"] = p.second; points.push_back(pt); }
+    cfg["pwl_points"] = points;
+    return cfg;
+}
+
+void SimulationPanel::applyGeneratorConfig(const QVariantMap& cfg) {
+    if (m_generatorType) { int idx = m_generatorType->findText(cfg.value("type", "DC").toString()); if (idx >= 0) m_generatorType->setCurrentIndex(idx); }
+    m_genParam1->setText(cfg.value("p1").toString()); m_genParam2->setText(cfg.value("p2").toString());
+    m_genParam3->setText(cfg.value("p3").toString()); m_genParam4->setText(cfg.value("p4").toString());
+    m_genParam5->setText(cfg.value("p5").toString()); m_genParam6->setText(cfg.value("p6").toString());
+    m_pwlPoints.clear();
+    for (const QVariant& v : cfg.value("pwl_points").toList()) { QVariantMap m = v.toMap(); m_pwlPoints.push_back({m.value("t").toString(), m.value("v").toString()}); }
+}
+
+QString SimulationPanel::generatorPresetsPath() const {
+    QString b = m_projectDir.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) : m_projectDir;
+    QDir(b).mkpath("."); return QDir(b).filePath("generator_presets.json");
+}
+
+void SimulationPanel::loadGeneratorLibrary() {
+    m_generatorTemplates["Template: DC 5V"] = QVariantMap{{"type", "DC"}, {"p1", "5"}};
+    m_generatorTemplates["Template: SIN 1kHz"] = QVariantMap{{"type", "SIN"}, {"p1", "0"}, {"p2", "5"}, {"p3", "1k"}, {"p4", "0"}, {"p5", "0"}};
+    m_generatorTemplates["Template: Pulse 0-5V"] = QVariantMap{{"type", "PULSE"}, {"p1", "0"}, {"p2", "5"}, {"p3", "0"}, {"p4", "1u"}, {"p5", "1u"}, {"p6", "500u"}};
+    QFile f(generatorPresetsPath());
+    if (f.open(QIODevice::ReadOnly)) {
+        QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+        for (const QJsonValue& v : root.value("presets").toArray()) {
+            QJsonObject po = v.toObject(); m_userGeneratorPresets[po.value("name").toString()] = po.value("config").toObject().toVariantMap();
+        }
+    }
+    refreshGeneratorPresetCombo();
+}
+
+void SimulationPanel::saveUserGeneratorPresets() const {
+    QJsonArray arr;
+    for (auto it = m_userGeneratorPresets.constBegin(); it != m_userGeneratorPresets.constEnd(); ++it) {
+        QJsonObject p; p["name"] = it.key(); p["config"] = QJsonObject::fromVariantMap(it.value()); arr.append(p);
+    }
+    QJsonObject root; root["presets"] = arr;
+    QFile f(generatorPresetsPath()); if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(root).toJson());
+}
+
+void SimulationPanel::refreshGeneratorPresetCombo() {
+    if (!m_generatorPresetCombo) return;
+    m_generatorPresetCombo->blockSignals(true); m_generatorPresetCombo->clear();
+    m_generatorPresetCombo->addItem("Select Template/Preset", "__none__");
+    for (auto it = m_generatorTemplates.constBegin(); it != m_generatorTemplates.constEnd(); ++it) m_generatorPresetCombo->addItem(it.key(), "T:" + it.key());
+    for (auto it = m_userGeneratorPresets.constBegin(); it != m_userGeneratorPresets.constEnd(); ++it) m_generatorPresetCombo->addItem("Preset: " + it.key(), "U:" + it.key());
+    m_generatorPresetCombo->blockSignals(false);
+}
+
+void SimulationPanel::seedDefaultPwlPointsIfNeeded() {
+    if (!m_pwlPoints.isEmpty()) return;
+    m_pwlPoints.push_back({"0", "0"}); m_pwlPoints.push_back({"1m", "5"}); m_pwlPoints.push_back({"2m", "0"});
+}
+
+bool SimulationPanel::importPwlCsvFile(const QString& path) {
+    QFile f(path); if (!f.open(QIODevice::ReadOnly)) return false;
+    m_pwlPoints.clear(); QTextStream in(&f);
+    while(!in.atEnd()) {
+        QStringList p = in.readLine().split(QRegularExpression("\\s*,\\s*|\\s+"), Qt::SkipEmptyParts);
+        if (p.size() >= 2) m_pwlPoints.push_back({p[0], p[1]});
+    }
+    return m_pwlPoints.size() >= 2;
+}
+
+bool SimulationPanel::exportPwlCsvFile(const QString& path) const {
+    QFile f(path); if (!f.open(QIODevice::WriteOnly)) return false;
+    QTextStream out(&f); out << "time,value\n";
+    for (const auto& p : m_pwlPoints) out << p.first << "," << p.second << "\n";
+    return true;
+}
+
+bool SimulationPanel::exportResultsCsvFile(const QString& path) const {
+    if (!m_hasLastResults) return false;
+    QFile f(path); if (!f.open(QIODevice::WriteOnly)) return false;
+    QTextStream out(&f); out << "index";
+    for (const auto& w : m_lastResults.waveforms) out << "," << QString::fromStdString(w.name) << "_x," << QString::fromStdString(w.name) << "_y";
+    out << "\n";
+    size_t max = 0; for (const auto& w : m_lastResults.waveforms) max = std::max(max, w.xData.size());
+    for (size_t i = 0; i < max; ++i) {
+        out << static_cast<qulonglong>(i);
+        for (const auto& w : m_lastResults.waveforms) {
+            if (i < w.xData.size()) out << "," << w.xData[i] << "," << w.yData[i]; else out << ",,";
+        }
+        out << "\n";
+    }
+    return true;
+}
+
+bool SimulationPanel::exportResultsJsonFile(const QString& path) const {
+    if (!m_hasLastResults) return false;
+    QJsonObject root; root["schema"] = m_lastResults.schemaVersion;
+    QJsonArray waves;
+    for (const auto& w : m_lastResults.waveforms) {
+        QJsonObject o; o["name"] = QString::fromStdString(w.name);
+        QJsonArray x, y; for(double v : w.xData) x.append(v); for(double v : w.yData) y.append(v);
+        o["x"] = x; o["y"] = y; waves.append(o);
+    }
+    root["waveforms"] = waves;
+    QFile f(path); if (!f.open(QIODevice::WriteOnly)) return false;
+    f.write(QJsonDocument(root).toJson()); return true;
+}
+
+bool SimulationPanel::exportResultsReportFile(const QString& path) const {
+    if (!m_hasLastResults) return false;
+    QFile f(path); if (!f.open(QIODevice::WriteOnly)) return false;
+    QTextStream out(&f); out << "# Simulation Report\n\n";
+    for (const auto& w : m_lastResults.waveforms) out << "- " << QString::fromStdString(w.name) << ": " << w.xData.size() << " points\n";
+    return true;
+}
+
+void SimulationPanel::onGeneratorPresetActivated(int index) {
+    if (index < 0 || !m_generatorPresetCombo) return;
+    QString tag = m_generatorPresetCombo->itemData(index).toString();
+    QVariantMap cfg = tag.startsWith("T:") ? m_generatorTemplates.value(tag.mid(2)) : m_userGeneratorPresets.value(tag.mid(2));
+    if (!cfg.isEmpty()) applyGeneratorConfig(cfg);
+}
+
+void SimulationPanel::onApplyGeneratorToSelection() {
+    if (!m_scene) return;
+    QString expr = buildGeneratorExpression();
+    int applied = 0;
+    for (QGraphicsItem* gi : m_scene->selectedItems()) {
+        if (auto* v = dynamic_cast<VoltageSourceItem*>(gi)) {
+            v->setValue(expr); v->update(); applied++;
+        }
+    }
+    m_logOutput->append(QString("Applied to %1 sources.").arg(applied));
+}
+
+void SimulationPanel::updateVirtualMeters(const SimResults& results) {
+    if (m_voltmeter) {
+        for (const auto& w : results.waveforms) {
+            if (QString::fromStdString(w.name).startsWith("V(") && !w.yData.empty()) {
+                m_voltmeter->setReading(QString::fromStdString(w.name), w.yData.back()); break;
+            }
+        }
+    }
+}
+
+QWidget* SimulationPanel::getOscilloscopeContainer() const {
+    return m_scopeContainer;
+}

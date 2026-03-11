@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=viospice
+Comment=High-performance SPICE-class simulator
+Exec=/home/jnd/qt_projects/viospice/build/viospice %f
+Icon=/home/jnd/qt_projects/viospice/resources/icons/app_icon.svg
+Terminal=false
+Categories=Engineering;Electronics;Science;
+MimeType=application/x-viospice-sch;text/x-spice;application/x-viospice-flux;application/x-viospice-sclib;application/x-kicad-symbol;text/x-ltspice-symbol;
+Keywords=spice;simulator;schematic;circuit;

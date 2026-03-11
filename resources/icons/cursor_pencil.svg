@@ -1,0 +1,8 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- The pencil body -->
+  <path d="M4 28L8 24L24 8L28 4L30 8L14 24L10 28H4Z" fill="#cccccc" stroke="#1a1a1a" stroke-width="1"/>
+  <!-- The pencil tip -->
+  <path d="M4 28L6 26L8 28H4Z" fill="#333333"/>
+  <!-- Decorative lines -->
+  <path d="M22 10L26 14" stroke="#1a1a1a" stroke-width="1"/>
+</svg>

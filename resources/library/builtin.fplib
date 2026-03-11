@@ -1,0 +1,48 @@
+{
+    "library": "Built-in Footprints",
+    "footprints": [
+        {
+            "name": "R_0805",
+            "category": "Passives",
+            "primitives": [
+                {"type": "Pad", "x": -1.0, "y": 0, "number": "1", "shape": "Rect", "width": 1.0, "height": 1.3},
+                {"type": "Pad", "x": 1.0, "y": 0, "number": "2", "shape": "Rect", "width": 1.0, "height": 1.3},
+                {"type": "Line", "x1": -1.5, "y1": -0.8, "x2": 1.5, "y2": -0.8},
+                {"type": "Line", "x1": -1.5, "y1": 0.8, "x2": 1.5, "y2": 0.8},
+                {"type": "Line", "x1": -1.5, "y1": -0.8, "x2": -1.5, "y2": 0.8},
+                {"type": "Line", "x1": 1.5, "y1": -0.8, "x2": 1.5, "y2": 0.8}
+            ]
+        },
+        {
+            "name": "C_0603",
+            "category": "Passives",
+            "primitives": [
+                {"type": "Pad", "x": -0.8, "y": 0, "number": "1", "shape": "Rect", "width": 0.8, "height": 1.0},
+                {"type": "Pad", "x": 0.8, "y": 0, "number": "2", "shape": "Rect", "width": 0.8, "height": 1.0},
+                {"type": "Line", "x1": -1.2, "y1": -0.6, "x2": 1.2, "y2": -0.6},
+                {"type": "Line", "x1": -1.2, "y1": 0.6, "x2": 1.2, "y2": 0.6},
+                {"type": "Line", "x1": -1.2, "y1": -0.6, "x2": -1.2, "y2": 0.6},
+                {"type": "Line", "x1": 1.2, "y1": -0.6, "x2": 1.2, "y2": 0.6}
+            ]
+        },
+        {
+            "name": "DIP-8",
+            "category": "ICs",
+            "primitives": [
+                {"type": "Pad", "x": -3.81, "y": -3.81, "number": "1", "shape": "Round", "width": 1.5, "height": 1.5, "drill_size": 0.8},
+                {"type": "Pad", "x": -3.81, "y": -1.27, "number": "2", "shape": "Round", "width": 1.5, "height": 1.5, "drill_size": 0.8},
+                {"type": "Pad", "x": -3.81, "y": 1.27, "number": "3", "shape": "Round", "width": 1.5, "height": 1.5, "drill_size": 0.8},
+                {"type": "Pad", "x": -3.81, "y": 3.81, "number": "4", "shape": "Round", "width": 1.5, "height": 1.5, "drill_size": 0.8},
+                {"type": "Pad", "x": 3.81, "y": 3.81, "number": "5", "shape": "Round", "width": 1.5, "height": 1.5, "drill_size": 0.8},
+                {"type": "Pad", "x": 3.81, "y": 1.27, "number": "6", "shape": "Round", "width": 1.5, "height": 1.5, "drill_size": 0.8},
+                {"type": "Pad", "x": 3.81, "y": -1.27, "number": "7", "shape": "Round", "width": 1.5, "height": 1.5, "drill_size": 0.8},
+                {"type": "Pad", "x": 3.81, "y": -3.81, "number": "8", "shape": "Round", "width": 1.5, "height": 1.5, "drill_size": 0.8},
+                {"type": "Line", "x1": -2.5, "y1": -4.5, "x2": 2.5, "y2": -4.5},
+                {"type": "Line", "x1": -2.5, "y1": 4.5, "x2": 2.5, "y2": 4.5},
+                {"type": "Line", "x1": -2.5, "y1": -4.5, "x2": -2.5, "y2": 4.5},
+                {"type": "Line", "x1": 2.5, "y1": -4.5, "x2": 2.5, "y2": 4.5},
+                {"type": "Arc", "x": -1, "y": -4.5, "w": 2, "h": 2, "start": 180, "span": 180}
+            ]
+        }
+    ]
+}

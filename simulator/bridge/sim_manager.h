@@ -1,0 +1,47 @@
+#ifndef SIM_MANAGER_QT_H
+#define SIM_MANAGER_QT_H
+
+#include <QObject>
+#include "../core/sim_engine.h"
+#include "sim_schematic_bridge.h"
+
+/**
+ * @brief Thread-safe (future) Manager for the simulation module.
+ */
+class SimManager : public QObject {
+    Q_OBJECT
+public:
+    static SimManager& instance();
+
+    void runDCOP(QGraphicsScene* scene, NetManager* netMgr);
+    void runTransient(QGraphicsScene* scene, NetManager* netMgr, double tStop, double tStep);
+    void runAC(QGraphicsScene* scene, NetManager* netMgr, double fStart, double fStop, int points);
+    void runMonteCarlo(QGraphicsScene* scene, NetManager* netMgr, int runs);
+    void runParametricSweep(QGraphicsScene* scene, NetManager* netMgr, const QString& component, const QString& param, double start, double stop, int steps);
+    void runSensitivity(QGraphicsScene* scene, NetManager* netMgr, const QString& targetSignal);
+    
+    void runRealTime(QGraphicsScene* scene, NetManager* netMgr, int intervalMs = 100);
+    void stopRealTime();
+    void stopAll();
+
+signals:
+    void simulationStarted();
+    void simulationFinished(const SimResults& results);
+    void errorOccurred(const QString& msg);
+    void logMessage(const QString& msg);
+
+private slots:
+    void onInteractiveStateChanged();
+    void onRealTimeTick();
+
+private:
+    explicit SimManager(QObject* parent = nullptr);
+
+    QGraphicsScene* m_rtScene = nullptr;
+    NetManager* m_rtNetMgr = nullptr;
+    bool m_rtPending = false;
+    double m_rtCurrentTime = 0.0;
+    class QTimer* m_rtTimer = nullptr;
+};
+
+#endif // SIM_MANAGER_QT_H
