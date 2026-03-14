@@ -32,6 +32,7 @@ public:
         PowerType,
         VoltageSourceType,
         SmartSignalType,
+        SpiceDirectiveType,
         CustomType = QGraphicsItem::UserType + 100
     };
 
@@ -115,8 +116,8 @@ public:
     void setParamExpression(const QString& name, const QString& expr) { m_paramExpressions[name] = expr; }
     void clearParamExpressions() { m_paramExpressions.clear(); }
 
-    QMap<QString, double> tolerances() const { return m_tolerances; }
-    void setTolerance(const QString& name, double value) { m_tolerances[name] = value; }
+    QMap<QString, QString> tolerances() const { return m_tolerances; }
+    void setTolerance(const QString& name, const QString& value) { m_tolerances[name] = value; }
     void clearTolerances() { m_tolerances.clear(); }
 
     QMap<QString, QString> pinPadMapping() const { return m_pinPadMapping; }
@@ -264,7 +265,7 @@ protected:
     QPointF m_defaultValOffset;
     QMap<int, QString> m_pinNets;
     QMap<QString, QString> m_paramExpressions;
-    QMap<QString, double> m_tolerances;
+    QMap<QString, QString> m_tolerances;
     QMap<QString, QString> m_pinPadMapping;
 };
 

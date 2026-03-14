@@ -96,67 +96,77 @@ void SimNetlist::flatten() {
     std::vector<SimComponentInstance> flatComponents;
     
     // Recursive expansion function
-    std::function<void(const std::vector<SimComponentInstance>&, const std::string&, const std::map<int, int>&)> expand;
+    // Recursive expansion function
+    std::function<void(const std::vector<SimComponentInstance>&, const std::string&, const std::map<int, int>&, std::map<std::string, double>, const SimSubcircuit*)> expand;
     
-    expand = [&](const std::vector<SimComponentInstance>& comps, const std::string& prefix, const std::map<int, int>& nodeMapping) {
+    expand = [&](const std::vector<SimComponentInstance>& comps, const std::string& prefix, const std::map<int, int>& nodeMapping, std::map<std::string, double> scopeParams, const SimSubcircuit* currentSubDef) {
         for (const auto& inst : comps) {
             if (!inst.subcircuitName.empty()) {
-                // Expand Subcircuit
                 const SimSubcircuit* sub = findSubcircuit(inst.subcircuitName);
                 if (!sub) {
                     addDiagnostic("Subcircuit definition '" + inst.subcircuitName + "' NOT FOUND for component '" + inst.name + "'");
                     continue;
                 }
 
-                // Create local node mapping for this subcircuit instance
+                std::map<std::string, double> subParams = scopeParams;
+                for (auto const& [k, v] : sub->parameters) subParams[k] = v;
+                for (auto const& [k, v] : inst.params) subParams[k] = v;
+
+                for (auto const& [mName, model] : sub->models) {
+                    SimModel globalModel = model;
+                    globalModel.name = prefix + inst.name + ":" + mName;
+                    addModel(globalModel);
+                }
+
                 std::map<int, int> subNodeMapping;
-                
-                // Map pins to external nodes
                 for (size_t i = 0; i < sub->pinNames.size() && i < inst.nodes.size(); ++i) {
                     subNodeMapping[i + 1] = nodeMapping.at(inst.nodes[i]);
                 }
-                
-                // Map ground (0 is always global 0)
                 subNodeMapping[0] = 0;
 
-                // For internal nodes of the subcircuit, create new global nodes
-                // We need to know which nodes are internal. 
-                // A better approach is to collect all node IDs used in sub->components
                 std::set<int> subInternalNodes;
                 for (const auto& sc : sub->components) {
-                    for (int n : sc.nodes) {
-                        if (n > (int)sub->pinNames.size()) subInternalNodes.insert(n);
-                    }
+                    for (int n : sc.nodes) if (n > (int)sub->pinNames.size()) subInternalNodes.insert(n);
                 }
-
                 for (int internalNode : subInternalNodes) {
                     std::string newName = prefix + inst.name + ":" + std::to_string(internalNode);
                     subNodeMapping[internalNode] = addNode(newName);
                 }
 
-                expand(sub->components, prefix + inst.name + ":", subNodeMapping);
+                expand(sub->components, prefix + inst.name + ":", subNodeMapping, subParams, sub);
             } else {
-                // Primitive Component
                 SimComponentInstance flatInst = inst;
                 flatInst.name = prefix + inst.name;
                 
-                // Remap nodes
                 for (size_t i = 0; i < flatInst.nodes.size(); ++i) {
                     if (nodeMapping.count(flatInst.nodes[i])) {
                         flatInst.nodes[i] = nodeMapping.at(flatInst.nodes[i]);
                     }
                 }
+
+                // Resolve model name
+                if (!flatInst.modelName.empty()) {
+                    if (currentSubDef && currentSubDef->models.count(flatInst.modelName)) {
+                        // It's a model local to the current subcircuit
+                        flatInst.modelName = prefix + flatInst.modelName; 
+                    } else if (findModel(flatInst.modelName)) {
+                        // It's a global model - leave as is
+                    } else {
+                        // Warning: model not found anywhere
+                        addDiagnostic("Model '" + flatInst.modelName + "' NOT FOUND for component '" + flatInst.name + "'");
+                    }
+                }
+
                 flatComponents.push_back(flatInst);
             }
         }
     };
 
-    // Initial mapping: nodes already in m_components are global
+    // Initial identity mapping for global nodes
     std::map<int, int> identityMap;
     for (size_t i = 0; i < m_nodes.size(); ++i) identityMap[i] = (int)i;
 
-    expand(m_components, "", identityMap);
-    
+    expand(m_components, "", identityMap, m_parameters, nullptr);
     m_components = flatComponents;
 }
 

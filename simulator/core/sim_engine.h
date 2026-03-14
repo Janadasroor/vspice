@@ -7,11 +7,21 @@
 #include <map>
 #include <string>
 
+#include <atomic>
+
 struct SimWaveform {
     std::string name;
     std::vector<double> xData; // Time or Frequency
     std::vector<double> yData; // Voltage/Current magnitude
     std::vector<double> yPhase; // Phase (for AC analysis)
+};
+
+/**
+ * @brief Thread-safe control flags for simulation execution.
+ */
+struct SimControl {
+    std::atomic<bool> stopRequested{false};
+    std::atomic<bool> pauseRequested{false};
 };
 
 class SimResults {
@@ -43,19 +53,19 @@ public:
 
 class SimEngine {
 public:
-    SimResults run(const SimNetlist& netlist);
+    SimResults run(const SimNetlist& netlist, SimControl* control = nullptr);
 
 private:
-    SimResults solveDCOP(const SimNetlist& netlist);
-    SimResults solveTransient(const SimNetlist& netlist);
-    SimResults solveAC(const SimNetlist& netlist);
-    SimResults solveMonteCarlo(const SimNetlist& netlist);
-    SimResults solveSensitivity(const SimNetlist& netlist);
-    SimResults solveParametricSweep(const SimNetlist& netlist);
-    SimResults solveNoise(const SimNetlist& netlist);
-    SimResults solveDistortion(const SimNetlist& netlist);
-    SimResults solveOptimization(const SimNetlist& netlist);
-    SimResults solveFFT(const SimNetlist& netlist);
+    SimResults solveDCOP(const SimNetlist& netlist, SimControl* control);
+    SimResults solveTransient(const SimNetlist& netlist, SimControl* control);
+    SimResults solveAC(const SimNetlist& netlist, SimControl* control);
+    SimResults solveMonteCarlo(const SimNetlist& netlist, SimControl* control);
+    SimResults solveSensitivity(const SimNetlist& netlist, SimControl* control);
+    SimResults solveParametricSweep(const SimNetlist& netlist, SimControl* control);
+    SimResults solveNoise(const SimNetlist& netlist, SimControl* control);
+    SimResults solveDistortion(const SimNetlist& netlist, SimControl* control);
+    SimResults solveOptimization(const SimNetlist& netlist, SimControl* control);
+    SimResults solveFFT(const SimNetlist& netlist, SimControl* control);
 
     // Convergence helpers
     bool solveNR(const SimNetlist& netlist, std::vector<double>& solution, double sourceFactor, double gmin, double t = 0.0);

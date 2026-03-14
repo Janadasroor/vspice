@@ -211,7 +211,7 @@ void NetManager::updateNets(QGraphicsScene* scene) {
     QMap<QString, QString> logicalNetClasses;
 
     auto getPriority = [](SchematicItem* item) -> int {
-        if (item->itemTypeName() == "Power") return 5;
+        if (item->itemType() == SchematicItem::PowerType) return 5;
         if (item->itemType() == SchematicItem::HierarchicalPortType) return 3;
         if (item->itemType() == SchematicItem::LabelType) return 1;
         if (item->itemType() == SchematicItem::NetLabelType) {

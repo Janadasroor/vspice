@@ -49,6 +49,7 @@ public:
     };
     void setAnalysisConfig(const AnalysisConfig& cfg);
     QWidget* getOscilloscopeContainer() const;
+    bool hasResults() const { return m_hasLastResults; }
 
 signals:
     void resultsReady(const SimResults& results);
@@ -155,7 +156,7 @@ private:
     QChart* m_spectrumChart;
     
     // Virtual Instruments
-    class OscilloscopeWidget* m_oscilloscope;
+    class WaveformViewer* m_waveformViewer;
     class LogicAnalyzerWidget* m_logicAnalyzer;
     class VoltmeterWidget* m_voltmeter;
     class AmmeterWidget* m_ammeter;

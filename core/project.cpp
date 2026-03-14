@@ -75,7 +75,7 @@ QString Project::projectFilePath() const {
 
 QString Project::schematicFilePath() const {
     if (m_path.isEmpty()) return QString();
-    return m_path + "/" + m_name + ".sch";
+    return m_path + "/" + m_name + ".flxsch";
 }
 
 QJsonObject Project::toJson() const {
@@ -88,6 +88,7 @@ QJsonObject Project::toJson() const {
     json["author"] = m_author;
     json["created"] = m_created.toString(Qt::ISODate);
     json["modified"] = m_modified.toString(Qt::ISODate);
+    json["schematicFile"] = m_name + ".flxsch";
     return json;
 }
 

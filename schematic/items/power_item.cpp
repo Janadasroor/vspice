@@ -3,6 +3,20 @@
 #include <QPainter>
 #include <QStyleOptionGraphicsItem>
 
+QString PowerItem::itemTypeName() const {
+    switch (m_type) {
+        case GND:           return "GND";
+        case VCC:           return "VCC";
+        case VDD:           return "VDD";
+        case VSS:           return "VSS";
+        case VBAT:          return "VBAT";
+        case THREE_V_THREE: return "3.3V";
+        case FIVE_V:        return "5V";
+        case TWELVE_V:      return "12V";
+        default:            return "Power";
+    }
+}
+
 PowerItem::PowerItem(QPointF pos, PowerType type, QGraphicsItem *parent)
     : SchematicItem(parent), m_type(type) {
     setPos(pos);
@@ -127,13 +141,15 @@ QList<QPointF> PowerItem::connectionPoints() const {
 
 QJsonObject PowerItem::toJson() const {
     QJsonObject json;
-    json["type"] = "Power";
+    json["type"] = itemTypeName();  // Matches the factory-registered key (GND, VCC, etc.)
     json["id"] = id().toString();
     json["x"] = pos().x();
     json["y"] = pos().y();
-    json["power_type"] = (int)m_type;
+    json["rotation"] = rotation();
+    json["power_type"] = (int)m_type; // Numeric backup for fromJson
     json["name"] = name();
     json["value"] = value();
+    json["isLocked"] = isLocked();
     
     if (m_valueLabelItem) {
         json["valX"] = m_valueLabelItem->pos().x();
@@ -143,9 +159,11 @@ QJsonObject PowerItem::toJson() const {
 }
 
 bool PowerItem::fromJson(const QJsonObject& json) {
-    if (json["type"].toString() != "Power") return false;
+    // Accept both old format ("Power") and new per-type format ("GND", "VCC", etc.)
+    // Don't hard-reject based on type string — the factory already matched it.
     if (json.contains("id")) setId(QUuid(json["id"].toString()));
     setPos(json["x"].toDouble(), json["y"].toDouble());
+    setRotation(json["rotation"].toDouble(0.0));
     m_type = (PowerType)json["power_type"].toInt();
     const QString defaultNet = netName();
     const QString loadedValue = json["value"].toString();
@@ -157,6 +175,7 @@ bool PowerItem::fromJson(const QJsonObject& json) {
     SchematicItem::setValue(net);
     setExcludeFromPcb(true);
     setFootprint(QString());
+    setLocked(json["isLocked"].toBool(false));
     buildPrimitives();
     
     QPointF labelOffset = (m_type == GND || m_type == VSS) ? QPointF(-22.5, 7.5) : QPointF(-22.5, -30);
@@ -166,6 +185,7 @@ bool PowerItem::fromJson(const QJsonObject& json) {
     if (json.contains("valX")) {
         setValueLabelPos(QPointF(json["valX"].toDouble(), json["valY"].toDouble()));
     }
+    updateLabelText();
     update();
     return true;
 }

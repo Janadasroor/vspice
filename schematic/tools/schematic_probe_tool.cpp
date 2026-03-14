@@ -116,11 +116,17 @@ QString SchematicProbeTool::tooltip() const {
 QCursor SchematicProbeTool::createProbeCursor(ProbeKind kind) {
     if (kind == ProbeKind::Voltage) {
         QPixmap pixmap(":/icons/p-v-probe.png");
-        if (!pixmap.isNull()) return QCursor(pixmap, 4, 44);
+        if (!pixmap.isNull()) {
+            QPixmap scaled = pixmap.scaled(32, 32, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            return QCursor(scaled, 3, 29);
+        }
     } else if (kind == ProbeKind::Current) {
         // Current used as Black/Negative probe for differential
         QPixmap pixmap(":/icons/n-v-probe.png");
-        if (!pixmap.isNull()) return QCursor(pixmap, 4, 44);
+        if (!pixmap.isNull()) {
+            QPixmap scaled = pixmap.scaled(32, 32, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            return QCursor(scaled, 3, 29);
+        }
     }
     
     // Fallback for Power/Logic

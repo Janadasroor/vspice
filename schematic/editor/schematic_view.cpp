@@ -1,13 +1,16 @@
 #include "schematic_view.h"
 #include "../../core/config_manager.h"
 #include "schematic_tool_registry.h"
+#include "schematic_editor.h"
 #include "theme_manager.h"
 #include "schematic_item.h"
 #include "../items/generic_component_item.h"
 #include "../items/schematic_sheet_item.h"
 #include "schematic_commands.h"
 #include "../dialogs/voltage_source_ltspice_dialog.h"
+#include "../dialogs/spice_directive_dialog.h"
 #include "../items/voltage_source_item.h"
+#include "../items/schematic_spice_directive_item.h"
 #include "../tools/schematic_probe_tool.h"
 #include <QPainter>
 #include <QWheelEvent>
@@ -24,6 +27,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QKeySequence>
+#include <QInputDialog>
 #include "flux/core/net_manager.h"
 #include <QTimer>
 
@@ -401,7 +405,7 @@ void SchematicView::mouseMoveEvent(QMouseEvent *event) {
         updateHoverHighlight(sItem);
 
         // --- LTspice Style: Automatic Voltage Probe on hover during simulation ---
-        if (m_simulationRunning) {
+        if (m_simulationRunning || m_probingEnabled) {
             bool isWireOrLabel = false;
             
             // Use a small search area (5x5 pixels) for easier wire hitting with the probe
@@ -425,6 +429,17 @@ void SchematicView::mouseMoveEvent(QMouseEvent *event) {
                         candidate->itemType() == SchematicItem::NetLabelType) {
                         isWireOrLabel = true;
                         break;
+                    }
+                }
+            }
+
+            // Fallback: if item probing failed, try net lookup directly (more robust for thin wires)
+            if (!isWireOrLabel) {
+                if (auto* editor = qobject_cast<SchematicEditor*>(window())) {
+                    if (auto* netMgr = editor->netManager()) {
+                        const QPointF scenePos = mapToScene(event->pos());
+                        const QString netName = netMgr->findNetAtPoint(scenePos);
+                        if (!netName.isEmpty()) isWireOrLabel = true;
                     }
                 }
             }
@@ -715,7 +730,26 @@ void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
     // SPECIAL: Direct dialog for Voltage Sources on right-click (LTspice style)
     if (targetSItem && targetSItem->itemType() == SchematicItem::VoltageSourceType) {
         if (auto* vsrc = dynamic_cast<VoltageSourceItem*>(targetSItem)) {
-            VoltageSourceLTSpiceDialog dlg(vsrc, m_undoStack, scene(), this);
+            if (vsrc->sourceType() == VoltageSourceItem::Behavioral) {
+                bool ok;
+                QString val = QInputDialog::getText(this, "Behavioral Voltage Source", 
+                                                   "Expression (e.g. V=V(in)*2):", QLineEdit::Normal, 
+                                                   vsrc->value(), &ok);
+                if (ok) {
+                    vsrc->setValue(val);
+                }
+            } else {
+                VoltageSourceLTSpiceDialog dlg(vsrc, m_undoStack, scene(), this);
+                dlg.exec();
+            }
+            return;
+        }
+    }
+
+    // SPECIAL: Direct dialog for SPICE Directives on right-click (LTspice style)
+    if (targetSItem && targetSItem->itemType() == SchematicItem::SpiceDirectiveType) {
+        if (auto* spice = dynamic_cast<SchematicSpiceDirectiveItem*>(targetSItem)) {
+            SpiceDirectiveDialog dlg(spice, m_undoStack, scene(), this);
             dlg.exec();
             return;
         }

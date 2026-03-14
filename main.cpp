@@ -22,6 +22,9 @@ int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
 
+    // Initialize global theme
+    ThemeManager::instance();
+
     a.setApplicationName("viospice");
     a.setApplicationVersion("0.1.0");
     a.setOrganizationName("VIO");
@@ -30,8 +33,32 @@ int main(int argc, char *argv[])
     // --- Single Instance / Command Line Argument Handling ---
     QString serverName = "viospice_instance_server";
     QString fileToOpen;
-    if (argc > 1) {
-        fileToOpen = QFileInfo(argv[1]).absoluteFilePath();
+    bool showHelp = false;
+    bool showVersion = false;
+
+    for (int i = 1; i < argc; ++i) {
+        QString arg = argv[i];
+        if (arg == "--help" || arg == "-h") {
+            showHelp = true;
+        } else if (arg == "--version" || arg == "-v") {
+            showVersion = true;
+        } else if (!arg.startsWith("-")) {
+            fileToOpen = QFileInfo(arg).absoluteFilePath();
+        }
+    }
+
+    if (showHelp) {
+        printf("viospice - High Performance Circuit Simulator\n");
+        printf("Usage: viospice [options] [file]\n\n");
+        printf("Options:\n");
+        printf("  -h, --help     Show this help message\n");
+        printf("  -v, --version  Show version information\n");
+        return 0;
+    }
+
+    if (showVersion) {
+        printf("viospice version 0.1.0\n");
+        return 0;
     }
 
     // Try to connect to an existing instance
@@ -116,12 +143,24 @@ int main(int argc, char *argv[])
     });
 
     if (!fileToOpen.isEmpty()) {
+        qDebug() << "Opening requested file:" << fileToOpen;
         openFile(fileToOpen);
     } else {
         QString lastRecent = RecentProjects::instance().mostRecent();
-        if (!lastRecent.isEmpty() && QFile::exists(lastRecent)) {
-            openFile(lastRecent);
+        qDebug() << "Checking most recent project:" << lastRecent;
+        if (!lastRecent.isEmpty()) {
+            if (QFile::exists(lastRecent)) {
+                qDebug() << "Auto-loading most recent project:" << lastRecent;
+                openFile(lastRecent);
+            } else {
+                qWarning() << "Most recent project file does not exist:" << lastRecent;
+                // Launch default empty schematic editor
+                SchematicEditor* schematicEditor = new SchematicEditor;
+                schematicEditor->setWindowTitle("viospice - Schematic Editor");
+                schematicEditor->show();
+            }
         } else {
+            qDebug() << "No recent project to auto-load.";
             // Launch default empty schematic editor
             SchematicEditor* schematicEditor = new SchematicEditor;
             schematicEditor->setWindowTitle("viospice - Schematic Editor");

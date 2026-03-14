@@ -33,6 +33,7 @@ int main() {
     expectOk("10p", 10e-12);
     expectOk("2meg", 2e6);
     expectOk("1m", 1e-3);
+    expectOk("1mil", 25.4e-6);
 
     // Optional units and locale-safe decimal rules
     expectOk("3.3V", 3.3);
@@ -42,6 +43,8 @@ int main() {
     expectOk("10uF", 10e-6);
     expectOk("100nF", 100e-9);
     expectOk("10uH", 10e-6);
+    expectOk("10uHenry", 10e-6);
+    expectOk("1MEGhz", 1e6);
     {
         QString val = "1k";
         val += QChar(0x03A9);
@@ -53,10 +56,12 @@ int main() {
 
     // Edge/malformed cases
     expectOk("  1.0e-6  ", 1e-6);
+    expectOk("1x", 1.0); // SPICE ignores trailing junk
+    expectOk("1,5", 1.0); // SPICE ignores trailing junk (comma)
     expectFail("");
     expectFail("abc");
-    expectFail("1,5");
-    expectFail("1x");
+    expectFail("1..2");
+    expectFail("1e");
     expectFail("1..2");
     expectFail("1e");
 

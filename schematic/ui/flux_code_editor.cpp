@@ -182,6 +182,11 @@ CodeEditor::CodeEditor(QGraphicsScene* scene, NetManager* netManager, QWidget* p
     m_highlighter = new FluxHighlighter(document());
 }
 
+void CodeEditor::setScene(QGraphicsScene* scene, NetManager* netManager) {
+    m_scene = scene;
+    m_netManager = netManager;
+}
+
 void CodeEditor::updateCompletionKeywords(const QStringList& additionalKeywords) {
     if (!m_completer) return;
     

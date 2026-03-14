@@ -271,7 +271,7 @@ void SchematicMenuRegistry::initializeDefaultActions() {
     setDC.handler = [](SchematicView* view, const auto& items) {
         auto* vsrc = dynamic_cast<VoltageSourceItem*>(items.first());
         bool ok;
-        double val = QInputDialog::getDouble(view, "Quick Edit", "DC Voltage (V):", vsrc->dcVoltage(), -1000, 1000, 2, &ok);
+        QString val = QInputDialog::getText(view, "Quick Edit", "DC Voltage (V):", QLineEdit::Normal, vsrc->dcVoltage(), &ok);
         if (ok && view->undoStack()) {
             view->undoStack()->push(new ChangePropertyCommand(view->scene(), vsrc, "DC Voltage", vsrc->dcVoltage(), val));
         }

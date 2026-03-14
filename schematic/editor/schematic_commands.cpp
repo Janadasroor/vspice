@@ -280,10 +280,10 @@ void ChangePropertyCommand::undo() {
         }
     } else if (auto* vsrc = dynamic_cast<VoltageSourceItem*>(m_item)) {
         if (m_propertyName == "Source Type") vsrc->setSourceType(m_oldValue.toString() == "DC" ? VoltageSourceItem::DC : VoltageSourceItem::Sine);
-        else if (m_propertyName == "DC Voltage") vsrc->setDcVoltage(m_oldValue.toDouble());
-        else if (m_propertyName == "AC Amplitude") vsrc->setSineAmplitude(m_oldValue.toDouble());
-        else if (m_propertyName == "AC Frequency") vsrc->setSineFrequency(m_oldValue.toDouble());
-        else if (m_propertyName == "AC Offset") vsrc->setSineOffset(m_oldValue.toDouble());
+        else if (m_propertyName == "DC Voltage") vsrc->setDcVoltage(m_oldValue.toString());
+        else if (m_propertyName == "AC Amplitude") vsrc->setSineAmplitude(m_oldValue.toString());
+        else if (m_propertyName == "AC Frequency") vsrc->setSineFrequency(m_oldValue.toString());
+        else if (m_propertyName == "AC Offset") vsrc->setSineOffset(m_oldValue.toString());
     } else if (auto* shape = dynamic_cast<SchematicShapeItem*>(m_item)) {
         if (m_propertyName == "Start X") {
             QPointF p = shape->startPoint(); p.setX(m_oldValue.toDouble()); shape->setStartPoint(p);
@@ -391,10 +391,10 @@ void ChangePropertyCommand::redo() {
         }
     } else if (auto* vsrc = dynamic_cast<VoltageSourceItem*>(m_item)) {
         if (m_propertyName == "Source Type") vsrc->setSourceType(m_newValue.toString() == "DC" ? VoltageSourceItem::DC : VoltageSourceItem::Sine);
-        else if (m_propertyName == "DC Voltage") vsrc->setDcVoltage(m_newValue.toDouble());
-        else if (m_propertyName == "AC Amplitude") vsrc->setSineAmplitude(m_newValue.toDouble());
-        else if (m_propertyName == "AC Frequency") vsrc->setSineFrequency(m_newValue.toDouble());
-        else if (m_propertyName == "AC Offset") vsrc->setSineOffset(m_newValue.toDouble());
+        else if (m_propertyName == "DC Voltage") vsrc->setDcVoltage(m_newValue.toString());
+        else if (m_propertyName == "AC Amplitude") vsrc->setSineAmplitude(m_newValue.toString());
+        else if (m_propertyName == "AC Frequency") vsrc->setSineFrequency(m_newValue.toString());
+        else if (m_propertyName == "AC Offset") vsrc->setSineOffset(m_newValue.toString());
     } else if (auto* shape = dynamic_cast<SchematicShapeItem*>(m_item)) {
         if (m_propertyName == "Start X") {
             QPointF p = shape->startPoint(); p.setX(m_newValue.toDouble()); shape->setStartPoint(p);

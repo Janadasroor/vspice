@@ -56,9 +56,10 @@ public:
                                const std::vector<double>& sol,
                                const std::vector<double>& prevSol,
                                const std::vector<double>& prev2Sol,
-                               int nodes, int& vSourceCounter) { 
+                               int nodes, int& vSourceCounter,
+                               double relTol, double absTol) { 
         (void)inst; (void)h; (void)sol; (void)prevSol; (void)prev2Sol;
-        (void)nodes; (void)vSourceCounter;
+        (void)nodes; (void)vSourceCounter; (void)relTol; (void)absTol;
         return 0.0; 
     }
 
@@ -146,7 +147,8 @@ public:
                        const std::vector<double>& sol,
                        const std::vector<double>& prevSol,
                        const std::vector<double>& prev2Sol,
-                       int nodes, int& vSourceCounter) override;
+                       int nodes, int& vSourceCounter,
+                       double relTol, double absTol) override;
 };
 
 class InductorModel : public SimComponentModel {
@@ -164,7 +166,8 @@ public:
                        const std::vector<double>& sol,
                        const std::vector<double>& prevSol,
                        const std::vector<double>& prev2Sol,
-                       int nodes, int& vSourceCounter) override;
+                       int nodes, int& vSourceCounter,
+                       double relTol, double absTol) override;
 };
 
 class BJTModel : public SimComponentModel {

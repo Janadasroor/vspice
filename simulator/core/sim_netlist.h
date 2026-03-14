@@ -83,6 +83,8 @@ struct SimSubcircuit {
     std::string name;
     std::vector<std::string> pinNames;
     std::vector<SimComponentInstance> components;
+    std::map<std::string, SimModel> models;
+    std::map<std::string, double> parameters;
 };
 
 struct SimAnalysisConfig {
@@ -235,6 +237,7 @@ public:
     const SimSubcircuit* findSubcircuit(const std::string& name) const;
 
     const std::map<std::string, SimModel>& models() const { return m_models; }
+    std::map<std::string, SimModel>& mutableModels() { return m_models; }
     const std::map<std::string, SimSubcircuit>& subcircuits() const { return m_subcircuits; }
 
     void addDiagnostic(const std::string& msg) { m_diagnostics.push_back(msg); }

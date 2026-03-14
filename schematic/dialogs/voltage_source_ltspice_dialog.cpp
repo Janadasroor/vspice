@@ -201,49 +201,49 @@ void VoltageSourceLTSpiceDialog::loadFromItem() {
     onFunctionChanged();
 
     // Pulse
-    m_pulseV1->setText(QString::number(m_item->pulseV1()));
-    m_pulseV2->setText(QString::number(m_item->pulseV2()));
-    m_pulseTd->setText(QString::number(m_item->pulseDelay()));
-    m_pulseTr->setText(QString::number(m_item->pulseRise()));
-    m_pulseTf->setText(QString::number(m_item->pulseFall()));
-    m_pulseTon->setText(QString::number(m_item->pulseWidth()));
-    m_pulseTperiod->setText(QString::number(m_item->pulsePeriod()));
-    m_pulseNcycles->setText(QString::number(m_item->pulseNcycles()));
+    m_pulseV1->setText(m_item->pulseV1());
+    m_pulseV2->setText(m_item->pulseV2());
+    m_pulseTd->setText(m_item->pulseDelay());
+    m_pulseTr->setText(m_item->pulseRise());
+    m_pulseTf->setText(m_item->pulseFall());
+    m_pulseTon->setText(m_item->pulseWidth());
+    m_pulseTperiod->setText(m_item->pulsePeriod());
+    m_pulseNcycles->setText(m_item->pulseNcycles());
 
     // Sine
-    m_sineVoffset->setText(QString::number(m_item->sineOffset()));
-    m_sineVamp->setText(QString::number(m_item->sineAmplitude()));
-    m_sineFreq->setText(QString::number(m_item->sineFrequency()));
-    m_sineTd->setText(QString::number(m_item->sineDelay()));
-    m_sineTheta->setText(QString::number(m_item->sineTheta()));
-    m_sinePhi->setText(QString::number(m_item->sinePhi()));
-    m_sineNcycles->setText(QString::number(m_item->sineNcycles()));
+    m_sineVoffset->setText(m_item->sineOffset());
+    m_sineVamp->setText(m_item->sineAmplitude());
+    m_sineFreq->setText(m_item->sineFrequency());
+    m_sineTd->setText(m_item->sineDelay());
+    m_sineTheta->setText(m_item->sineTheta());
+    m_sinePhi->setText(m_item->sinePhi());
+    m_sineNcycles->setText(m_item->sineNcycles());
 
     // EXP
-    m_expV1->setText(QString::number(m_item->expV1()));
-    m_expV2->setText(QString::number(m_item->expV2()));
-    m_expTd1->setText(QString::number(m_item->expTd1()));
-    m_expTau1->setText(QString::number(m_item->expTau1()));
-    m_expTd2->setText(QString::number(m_item->expTd2()));
-    m_expTau2->setText(QString::number(m_item->expTau2()));
+    m_expV1->setText(m_item->expV1());
+    m_expV2->setText(m_item->expV2());
+    m_expTd1->setText(m_item->expTd1());
+    m_expTau1->setText(m_item->expTau1());
+    m_expTd2->setText(m_item->expTd2());
+    m_expTau2->setText(m_item->expTau2());
 
     // SFFM
-    m_sffmVoff->setText(QString::number(m_item->sffmOff()));
-    m_sffmVamp->setText(QString::number(m_item->sffmAmplit()));
-    m_sffmFcar->setText(QString::number(m_item->sffmCarrier()));
-    m_sffmMdi->setText(QString::number(m_item->sffmModIndex()));
-    m_sffmFsig->setText(QString::number(m_item->sffmSignalFreq()));
+    m_sffmVoff->setText(m_item->sffmOff());
+    m_sffmVamp->setText(m_item->sffmAmplit());
+    m_sffmFcar->setText(m_item->sffmCarrier());
+    m_sffmMdi->setText(m_item->sffmModIndex());
+    m_sffmFsig->setText(m_item->sffmSignalFreq());
 
     // PWL
     m_pwlPoints->setText(m_item->pwlPoints());
     m_pwlFile->setText(m_item->pwlFile());
 
     // Right Col
-    m_dcValue->setText(QString::number(m_item->dcVoltage()));
-    m_acAmplitude->setText(QString::number(m_item->acAmplitude()));
-    m_acPhase->setText(QString::number(m_item->acPhase()));
-    m_seriesRes->setText(QString::number(m_item->seriesResistance()));
-    m_parallelCap->setText(QString::number(m_item->parallelCapacitance()));
+    m_dcValue->setText(m_item->dcVoltage());
+    m_acAmplitude->setText(m_item->acAmplitude());
+    m_acPhase->setText(m_item->acPhase());
+    m_seriesRes->setText(m_item->seriesResistance());
+    m_parallelCap->setText(m_item->parallelCapacitance());
 
     // Visibility
     m_functionVisible->setChecked(m_item->isFunctionVisible());
@@ -274,49 +274,49 @@ void VoltageSourceLTSpiceDialog::saveToItem() {
     m_item->setSourceType(type);
     
     // Pulse
-    m_item->setPulseV1(m_pulseV1->text().toDouble());
-    m_item->setPulseV2(m_pulseV2->text().toDouble());
-    m_item->setPulseDelay(m_pulseTd->text().toDouble());
-    m_item->setPulseRise(m_pulseTr->text().toDouble());
-    m_item->setPulseFall(m_pulseTf->text().toDouble());
-    m_item->setPulseWidth(m_pulseTon->text().toDouble());
-    m_item->setPulsePeriod(m_pulseTperiod->text().toDouble());
-    m_item->setPulseNcycles(m_pulseNcycles->text().toInt());
+    m_item->setPulseV1(m_pulseV1->text());
+    m_item->setPulseV2(m_pulseV2->text());
+    m_item->setPulseDelay(m_pulseTd->text());
+    m_item->setPulseRise(m_pulseTr->text());
+    m_item->setPulseFall(m_pulseTf->text());
+    m_item->setPulseWidth(m_pulseTon->text());
+    m_item->setPulsePeriod(m_pulseTperiod->text());
+    m_item->setPulseNcycles(m_pulseNcycles->text());
 
     // Sine
-    m_item->setSineOffset(m_sineVoffset->text().toDouble());
-    m_item->setSineAmplitude(m_sineVamp->text().toDouble());
-    m_item->setSineFrequency(m_sineFreq->text().toDouble());
-    m_item->setSineDelay(m_sineTd->text().toDouble());
-    m_item->setSineTheta(m_sineTheta->text().toDouble());
-    m_item->setSinePhi(m_sinePhi->text().toDouble());
-    m_item->setSineNcycles(m_sineNcycles->text().toInt());
+    m_item->setSineOffset(m_sineVoffset->text());
+    m_item->setSineAmplitude(m_sineVamp->text());
+    m_item->setSineFrequency(m_sineFreq->text());
+    m_item->setSineDelay(m_sineTd->text());
+    m_item->setSineTheta(m_sineTheta->text());
+    m_item->setSinePhi(m_sinePhi->text());
+    m_item->setSineNcycles(m_sineNcycles->text());
 
     // EXP
-    m_item->setExpV1(m_expV1->text().toDouble());
-    m_item->setExpV2(m_expV2->text().toDouble());
-    m_item->setExpTd1(m_expTd1->text().toDouble());
-    m_item->setExpTau1(m_expTau1->text().toDouble());
-    m_item->setExpTd2(m_expTd2->text().toDouble());
-    m_item->setExpTau2(m_expTau2->text().toDouble());
+    m_item->setExpV1(m_expV1->text());
+    m_item->setExpV2(m_expV2->text());
+    m_item->setExpTd1(m_expTd1->text());
+    m_item->setExpTau1(m_expTau1->text());
+    m_item->setExpTd2(m_expTd2->text());
+    m_item->setExpTau2(m_expTau2->text());
 
     // SFFM
-    m_item->setSffmOff(m_sffmVoff->text().toDouble());
-    m_item->setSffmAmplit(m_sffmVamp->text().toDouble());
-    m_item->setSffmCarrier(m_sffmFcar->text().toDouble());
-    m_item->setSffmModIndex(m_sffmMdi->text().toDouble());
-    m_item->setSffmSignalFreq(m_sffmFsig->text().toDouble());
+    m_item->setSffmOff(m_sffmVoff->text());
+    m_item->setSffmAmplit(m_sffmVamp->text());
+    m_item->setSffmCarrier(m_sffmFcar->text());
+    m_item->setSffmModIndex(m_sffmMdi->text());
+    m_item->setSffmSignalFreq(m_sffmFsig->text());
 
     // PWL
     m_item->setPwlPoints(m_pwlPoints->text());
     m_item->setPwlFile(m_pwlFile->text());
 
     // Right Col
-    m_item->setDcVoltage(m_dcValue->text().toDouble());
-    m_item->setAcAmplitude(m_acAmplitude->text().toDouble());
-    m_item->setAcPhase(m_acPhase->text().toDouble());
-    m_item->setSeriesResistance(m_seriesRes->text().toDouble());
-    m_item->setParallelCapacitance(m_parallelCap->text().toDouble());
+    m_item->setDcVoltage(m_dcValue->text());
+    m_item->setAcAmplitude(m_acAmplitude->text());
+    m_item->setAcPhase(m_acPhase->text());
+    m_item->setSeriesResistance(m_seriesRes->text());
+    m_item->setParallelCapacitance(m_parallelCap->text());
 
     // Visibility
     m_item->setFunctionVisible(m_functionVisible->isChecked());

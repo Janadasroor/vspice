@@ -103,6 +103,41 @@ void SchematicEditor::onOpenSchematic() {
 bool SchematicEditor::openFile(const QString& filePath) {
     if (filePath.isEmpty()) return false;
 
+    // Detect and handle project files (.viospice) by opening their schematic instead
+    if (filePath.endsWith(".viospice", Qt::CaseInsensitive)) {
+        QFile file(filePath);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+            QJsonObject obj = doc.object();
+            QString schFile = obj["schematicFile"].toString();
+            file.close();
+            
+            if (schFile.isEmpty()) {
+                // Fallback: infer schematic filename from project name or file basename
+                QString projName = obj["name"].toString();
+                if (projName.isEmpty()) {
+                    projName = QFileInfo(filePath).completeBaseName();
+                }
+                schFile = projName + ".flxsch";
+            }
+            
+            // Resolve relative path based on project location
+            QFileInfo schInfo(schFile);
+            if (schInfo.isRelative()) {
+                schFile = QFileInfo(filePath).absolutePath() + "/" + schFile;
+            }
+            
+            if (QFile::exists(schFile)) {
+                // Set project context before opening the schematic
+                QFileInfo projInfo(filePath);
+                setProjectContext(projInfo.completeBaseName(), projInfo.absolutePath());
+                return openFile(schFile);
+            }
+        }
+        statusBar()->showMessage("Failed to resolve schematic from project file.", 3000);
+        return false; // MUST return here to prevent fallthrough to schematic loading
+    }
+
     // Check if already open
     for (int i = 0; i < m_workspaceTabs->count(); ++i) {
         if (m_workspaceTabs->widget(i)->property("filePath").toString() == filePath) {
@@ -117,9 +152,17 @@ bool SchematicEditor::openFile(const QString& filePath) {
         return true;
     }
 
-    // Create a new schematic tab for this file
-    addSchematicTab(QFileInfo(filePath).fileName());
-    m_view->setProperty("filePath", filePath);
+    // Create or reuse a schematic tab for this file
+    bool reused = false;
+    int currentIdx = m_workspaceTabs->currentIndex();
+    if (canReuseTab(currentIdx)) {
+        m_workspaceTabs->setTabText(currentIdx, QFileInfo(filePath).fileName());
+        m_view->setProperty("filePath", filePath);
+        reused = true;
+    } else {
+        addSchematicTab(QFileInfo(filePath).fileName());
+        m_view->setProperty("filePath", filePath);
+    }
 
     if (filePath.endsWith(".flux", Qt::CaseInsensitive)) {
         /* Legacy FluxScript file loading disabled
@@ -515,8 +558,7 @@ void SchematicEditor::onOpenBOM() {
 #include "../analysis/spice_netlist_generator.h"
 
 void SchematicEditor::onOpenNetlistEditor() {
-    NetlistEditor* editor = new NetlistEditor(); // Top-level
-    editor->setAttribute(Qt::WA_DeleteOnClose);
+    NetlistEditor* editor = new NetlistEditor(this);
     
     // Pre-populate with current schematic netlist
     if (m_scene && m_netManager) {
@@ -538,7 +580,8 @@ void SchematicEditor::onOpenNetlistEditor() {
         editor->setNetlist(netlist);
     }
     
-    editor->show();
+    int idx = m_workspaceTabs->addTab(editor, getThemeIcon(":/icons/tool_sheet.svg"), "Netlist Editor");
+    m_workspaceTabs->setCurrentIndex(idx);
 }
 
 #include "../items/net_label_item.h"

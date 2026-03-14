@@ -4,6 +4,7 @@
 #include <QFont>
 #include <QFontMetrics>
 #include <algorithm>
+#include <cmath>
 
 SchematicWaveformMarker::SchematicWaveformMarker(const QString& netName, const QString& kind, QGraphicsItem* parent)
     : SchematicItem(parent), m_netName(netName), m_kind(kind) {
@@ -22,10 +23,19 @@ QColor SchematicWaveformMarker::markerColor() const {
 }
 
 void SchematicWaveformMarker::updateData(const QVector<double>& x, const QVector<double>& y) {
-    m_xData = x;
-    m_yData = y;
-    if (!y.isEmpty()) {
-        auto [min, max] = std::minmax_element(y.begin(), y.end());
+    m_xData.clear();
+    m_yData.clear();
+    
+    // Filter out NaN and Inf values which can crash the graphics engine or std::minmax
+    for (int i = 0; i < y.size(); ++i) {
+        if (!std::isnan(y[i]) && !std::isinf(y[i]) && !std::isnan(x[i]) && !std::isinf(x[i])) {
+            m_xData.append(x[i]);
+            m_yData.append(y[i]);
+        }
+    }
+
+    if (!m_yData.isEmpty()) {
+        auto [min, max] = std::minmax_element(m_yData.begin(), m_yData.end());
         m_minY = *min;
         m_maxY = *max;
         if (m_minY == m_maxY) {

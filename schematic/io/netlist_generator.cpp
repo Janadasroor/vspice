@@ -176,6 +176,7 @@ ECOPackage NetlistGenerator::generateECOPackage(QGraphicsScene* scene, const QSt
                        sItem->itemType() != SchematicItem::JunctionType &&
                        sItem->itemType() != SchematicItem::NoConnectType &&
                        sItem->itemType() != SchematicItem::BusType &&
+                       sItem->itemType() != SchematicItem::SpiceDirectiveType &&
                        sItem->itemTypeName() != "BusEntry") {
                 
                 // Note: HierarchicalPortType and PowerType are now INCLUDED so they appear in netlist/simulator

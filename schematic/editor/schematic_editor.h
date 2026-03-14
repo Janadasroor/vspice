@@ -124,6 +124,7 @@ private slots:
     void refreshHierarchyPanel();
     void onEditTitleBlock();
     void onSimulationResultsReady(const class SimResults& results);
+    void onSimulationPaused(bool paused);
     void onTimeTravelSnapshot(double t, const QMap<QString, double>& nodeVoltages, const QMap<QString, double>& currents);
     void onOverlayVisibilityChanged(bool showVoltage, bool showCurrent);
     void onClearSimulationOverlays();
@@ -216,7 +217,6 @@ private:
 
     class SimulationPanel* m_simulationPanel;
     SimulationSetupDialog::Config m_simConfig;
-    QMap<QString, class InstrumentWindow*> m_instrumentWindows;
     QMap<QString, class LogicAnalyzerWindow*> m_laWindows;
 
     QDockWidget *m_geminiDock;
@@ -243,7 +243,9 @@ private:
     QAction* m_runSimMenuAction;
     QAction* m_stopSimMenuAction;
     QAction* m_runSimToolbarAction;
+    QAction* m_pauseSimToolbarAction;
     QAction* m_stopSimToolbarAction;
+    QWidget* m_simControlSubGroup;
 
     // Status bar
     QLabel *m_coordLabel;
@@ -254,6 +256,7 @@ private:
     QString m_currentFilePath;
     bool m_isModified;
     bool m_simulationRunning;
+    bool m_simPaused;
     bool m_showVoltageOverlays;
     bool m_showCurrentOverlays;
 
@@ -269,6 +272,7 @@ private:
     QStringList m_navigationStack;
     QWidget* m_breadcrumbWidget;
     void updateBreadcrumbs();
+    bool canReuseTab(int index) const;
 };
 
 #endif // SCHEMATICEDITOR_H

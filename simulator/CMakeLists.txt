@@ -43,7 +43,7 @@ else()
     message(STATUS "Flux Simulator: KLU not found, using professional dense fallback.")
 endif()
 
-target_link_libraries(FluxSimulator PUBLIC FluxCore FluxSchematicCore Qt${QT_VERSION_MAJOR}::Multimedia)
+target_link_libraries(FluxSimulator PUBLIC FluxCore FluxSchematicCore Qt${QT_VERSION_MAJOR}::Multimedia Qt${QT_VERSION_MAJOR}::Concurrent)
 
 if(NGSPICE_FOUND)
     target_link_libraries(FluxSimulator PRIVATE ${NGSPICE_LIBRARIES})

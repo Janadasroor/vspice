@@ -124,6 +124,15 @@ void SchematicEditor::updatePageFrame() {
 
     m_titleBlock.sheetNumber = QString::number(qMax(1, m_navigationStack.size() + 1));
 
+    // Find page frame in this scene instead of relying on potentially dangling pointer
+    m_pageFrame = nullptr;
+    for (auto* item : m_scene->items()) {
+        if (auto* pf = dynamic_cast<SchematicPageItem*>(item)) {
+            m_pageFrame = pf;
+            break;
+        }
+    }
+
     if (!m_pageFrame) {
         m_pageFrame = new SchematicPageItem(pageSize, m_titleBlock.projectName);
         m_pageFrame->setPageSizeName(m_currentPageSize.isEmpty() ? "A4" : m_currentPageSize);

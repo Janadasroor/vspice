@@ -80,6 +80,9 @@ public:
     // Apply theme to QWidget
     void applyToWidget(QWidget* widget) const;
 
+    // Apply theme to QApplication (global)
+    void applyToApplication() const;
+
     ThemeType type() const { return m_type; }
 
 private:

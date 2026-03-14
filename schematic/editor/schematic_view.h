@@ -80,6 +80,9 @@ public:
     void setSimulationRunning(bool running) { m_simulationRunning = running; }
     bool isSimulationRunning() const { return m_simulationRunning; }
 
+    void setProbingEnabled(bool enabled) { m_probingEnabled = enabled; }
+    bool isProbingEnabled() const { return m_probingEnabled; }
+
     void setSnapToGrid(bool enabled) { m_snapToGrid = enabled; }
     bool isSnapToGridEnabled() const { return m_snapToGrid; }
 
@@ -118,6 +121,7 @@ private:
     bool m_snapToPin;
     bool m_showCrosshair;
     bool m_simulationRunning = false;
+    bool m_probingEnabled = false;
     QPointF m_cursorScenePos;
     QUndoStack* m_undoStack;
     class NetManager* m_netManager = nullptr;

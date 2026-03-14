@@ -19,6 +19,7 @@ public:
         PWL,     // Piecewise Linear
         PWLFile, // PWL from file
         Noise,   // Random Noise
+        Behavioral, // Arbitrary Behavioral Source (BV)
         AC = Sine // Legacy compatibility
     };
 
@@ -27,7 +28,7 @@ public:
     // SchematicItem interface
     QString itemTypeName() const override;
     ItemType itemType() const override { return SchematicItem::VoltageSourceType; }
-    QString referencePrefix() const override { return "V"; }
+    QString referencePrefix() const override { return (m_sourceType == Behavioral) ? "B" : "V"; }
     void rebuildPrimitives() override;
     QJsonObject toJson() const override;
     bool fromJson(const QJsonObject& json) override;
@@ -46,68 +47,68 @@ public:
     SourceType sourceType() const { return m_sourceType; }
     void setSourceType(SourceType type);
 
-    double dcVoltage() const { return m_dcVoltage; }
-    void setDcVoltage(double v) { m_dcVoltage = v; updateValue(); update(); }
+    QString dcVoltage() const { return m_dcVoltage; }
+    void setDcVoltage(const QString& v) { m_dcVoltage = v; updateValue(); update(); }
 
     // Sine Params
-    double sineAmplitude() const { return m_sineAmplitude; }
-    void setSineAmplitude(double v) { m_sineAmplitude = v; updateValue(); update(); }
-    double sineFrequency() const { return m_sineFrequency; }
-    void setSineFrequency(double f) { m_sineFrequency = f; updateValue(); update(); }
-    double sineOffset() const { return m_sineOffset; }
-    void setSineOffset(double o) { m_sineOffset = o; updateValue(); update(); }
-    double sineDelay() const { return m_sineDelay; }
-    void setSineDelay(double d) { m_sineDelay = d; updateValue(); update(); }
-    double sineTheta() const { return m_sineTheta; }
-    void setSineTheta(double t) { m_sineTheta = t; updateValue(); update(); }
-    double sinePhi() const { return m_sinePhi; }
-    void setSinePhi(double p) { m_sinePhi = p; updateValue(); update(); }
-    int sineNcycles() const { return m_sineNcycles; }
-    void setSineNcycles(int n) { m_sineNcycles = n; updateValue(); update(); }
+    QString sineAmplitude() const { return m_sineAmplitude; }
+    void setSineAmplitude(const QString& v) { m_sineAmplitude = v; updateValue(); update(); }
+    QString sineFrequency() const { return m_sineFrequency; }
+    void setSineFrequency(const QString& f) { m_sineFrequency = f; updateValue(); update(); }
+    QString sineOffset() const { return m_sineOffset; }
+    void setSineOffset(const QString& o) { m_sineOffset = o; updateValue(); update(); }
+    QString sineDelay() const { return m_sineDelay; }
+    void setSineDelay(const QString& d) { m_sineDelay = d; updateValue(); update(); }
+    QString sineTheta() const { return m_sineTheta; }
+    void setSineTheta(const QString& t) { m_sineTheta = t; updateValue(); update(); }
+    QString sinePhi() const { return m_sinePhi; }
+    void setSinePhi(const QString& p) { m_sinePhi = p; updateValue(); update(); }
+    QString sineNcycles() const { return m_sineNcycles; }
+    void setSineNcycles(const QString& n) { m_sineNcycles = n; updateValue(); update(); }
 
     // Pulse Params
-    double pulseV1() const { return m_pulseV1; }
-    void setPulseV1(double v) { m_pulseV1 = v; updateValue(); update(); }
-    double pulseV2() const { return m_pulseV2; }
-    void setPulseV2(double v) { m_pulseV2 = v; updateValue(); update(); }
-    double pulseDelay() const { return m_pulseDelay; }
-    void setPulseDelay(double d) { m_pulseDelay = d; updateValue(); update(); }
-    double pulseRise() const { return m_pulseRise; }
-    void setPulseRise(double r) { m_pulseRise = r; updateValue(); update(); }
-    double pulseFall() const { return m_pulseFall; }
-    void setPulseFall(double f) { m_pulseFall = f; updateValue(); update(); }
-    double pulseWidth() const { return m_pulseWidth; }
-    void setPulseWidth(double w) { m_pulseWidth = w; updateValue(); update(); }
-    double pulsePeriod() const { return m_pulsePeriod; }
-    void setPulsePeriod(double p) { m_pulsePeriod = p; updateValue(); update(); }
-    int pulseNcycles() const { return m_pulseNcycles; }
-    void setPulseNcycles(int n) { m_pulseNcycles = n; updateValue(); update(); }
+    QString pulseV1() const { return m_pulseV1; }
+    void setPulseV1(const QString& v) { m_pulseV1 = v; updateValue(); update(); }
+    QString pulseV2() const { return m_pulseV2; }
+    void setPulseV2(const QString& v) { m_pulseV2 = v; updateValue(); update(); }
+    QString pulseDelay() const { return m_pulseDelay; }
+    void setPulseDelay(const QString& d) { m_pulseDelay = d; updateValue(); update(); }
+    QString pulseRise() const { return m_pulseRise; }
+    void setPulseRise(const QString& r) { m_pulseRise = r; updateValue(); update(); }
+    QString pulseFall() const { return m_pulseFall; }
+    void setPulseFall(const QString& f) { m_pulseFall = f; updateValue(); update(); }
+    QString pulseWidth() const { return m_pulseWidth; }
+    void setPulseWidth(const QString& w) { m_pulseWidth = w; updateValue(); update(); }
+    QString pulsePeriod() const { return m_pulsePeriod; }
+    void setPulsePeriod(const QString& p) { m_pulsePeriod = p; updateValue(); update(); }
+    QString pulseNcycles() const { return m_pulseNcycles; }
+    void setPulseNcycles(const QString& n) { m_pulseNcycles = n; updateValue(); update(); }
 
     // EXP Params
-    double expV1() const { return m_expV1; }
-    void setExpV1(double v) { m_expV1 = v; updateValue(); update(); }
-    double expV2() const { return m_expV2; }
-    void setExpV2(double v) { m_expV2 = v; updateValue(); update(); }
-    double expTd1() const { return m_expTd1; }
-    void setExpTd1(double t) { m_expTd1 = t; updateValue(); update(); }
-    double expTau1() const { return m_expTau1; }
-    void setExpTau1(double t) { m_expTau1 = t; updateValue(); update(); }
-    double expTd2() const { return m_expTd2; }
-    void setExpTd2(double t) { m_expTd2 = t; updateValue(); update(); }
-    double expTau2() const { return m_expTau2; }
-    void setExpTau2(double t) { m_expTau2 = t; updateValue(); update(); }
+    QString expV1() const { return m_expV1; }
+    void setExpV1(const QString& v) { m_expV1 = v; updateValue(); update(); }
+    QString expV2() const { return m_expV2; }
+    void setExpV2(const QString& v) { m_expV2 = v; updateValue(); update(); }
+    QString expTd1() const { return m_expTd1; }
+    void setExpTd1(const QString& t) { m_expTd1 = t; updateValue(); update(); }
+    QString expTau1() const { return m_expTau1; }
+    void setExpTau1(const QString& t) { m_expTau1 = t; updateValue(); update(); }
+    QString expTd2() const { return m_expTd2; }
+    void setExpTd2(const QString& t) { m_expTd2 = t; updateValue(); update(); }
+    QString expTau2() const { return m_expTau2; }
+    void setExpTau2(const QString& t) { m_expTau2 = t; updateValue(); update(); }
 
     // SFFM Params
-    double sffmOff() const { return m_sffmOff; }
-    void setSffmOff(double v) { m_sffmOff = v; updateValue(); update(); }
-    double sffmAmplit() const { return m_sffmAmplit; }
-    void setSffmAmplit(double v) { m_sffmAmplit = v; updateValue(); update(); }
-    double sffmCarrier() const { return m_sffmCarrier; }
-    void setSffmCarrier(double f) { m_sffmCarrier = f; updateValue(); update(); }
-    double sffmModIndex() const { return m_sffmModIndex; }
-    void setSffmModIndex(double i) { m_sffmModIndex = i; updateValue(); update(); }
-    double sffmSignalFreq() const { return m_sffmSignalFreq; }
-    void setSffmSignalFreq(double f) { m_sffmSignalFreq = f; updateValue(); update(); }
+    QString sffmOff() const { return m_sffmOff; }
+    void setSffmOff(const QString& v) { m_sffmOff = v; updateValue(); update(); }
+    QString sffmAmplit() const { return m_sffmAmplit; }
+    void setSffmAmplit(const QString& v) { m_sffmAmplit = v; updateValue(); update(); }
+    QString sffmCarrier() const { return m_sffmCarrier; }
+    void setSffmCarrier(const QString& f) { m_sffmCarrier = f; updateValue(); update(); }
+    QString sffmModIndex() const { return m_sffmModIndex; }
+    void setSffmModIndex(const QString& i) { m_sffmModIndex = i; updateValue(); update(); }
+    QString sffmSignalFreq() const { return m_sffmSignalFreq; }
+    void setSffmSignalFreq(const QString& f) { m_sffmSignalFreq = f; updateValue(); update(); }
 
     // PWL Params
     QString pwlPoints() const { return m_pwlPoints; }
@@ -116,16 +117,16 @@ public:
     void setPwlFile(const QString& f) { m_pwlFile = f; updateValue(); update(); }
 
     // AC Analysis
-    double acAmplitude() const { return m_acAmplitude; }
-    void setAcAmplitude(double v) { m_acAmplitude = v; updateValue(); update(); }
-    double acPhase() const { return m_acPhase; }
-    void setAcPhase(double p) { m_acPhase = p; updateValue(); update(); }
+    QString acAmplitude() const { return m_acAmplitude; }
+    void setAcAmplitude(const QString& v) { m_acAmplitude = v; updateValue(); update(); }
+    QString acPhase() const { return m_acPhase; }
+    void setAcPhase(const QString& p) { m_acPhase = p; updateValue(); update(); }
 
     // Parasitics
-    double seriesResistance() const { return m_seriesResistance; }
-    void setSeriesResistance(double r) { m_seriesResistance = r; updateValue(); update(); }
-    double parallelCapacitance() const { return m_parallelCapacitance; }
-    void setParallelCapacitance(double c) { m_parallelCapacitance = c; updateValue(); update(); }
+    QString seriesResistance() const { return m_seriesResistance; }
+    void setSeriesResistance(const QString& r) { m_seriesResistance = r; updateValue(); update(); }
+    QString parallelCapacitance() const { return m_parallelCapacitance; }
+    void setParallelCapacitance(const QString& c) { m_parallelCapacitance = c; updateValue(); update(); }
 
     // Visibility Flags
     bool isFunctionVisible() const { return m_showFunction; }
@@ -145,53 +146,53 @@ private:
     void updateValue();
 
     SourceType m_sourceType;
-    double m_dcVoltage;
+    QString m_dcVoltage;
     
     // Sine
-    double m_sineAmplitude;
-    double m_sineFrequency;
-    double m_sineOffset;
-    double m_sineDelay;
-    double m_sineTheta;
-    double m_sinePhi;
-    int m_sineNcycles;
+    QString m_sineAmplitude;
+    QString m_sineFrequency;
+    QString m_sineOffset;
+    QString m_sineDelay;
+    QString m_sineTheta;
+    QString m_sinePhi;
+    QString m_sineNcycles;
     
     // Pulse
-    double m_pulseV1;
-    double m_pulseV2;
-    double m_pulseDelay;
-    double m_pulseRise;
-    double m_pulseFall;
-    double m_pulseWidth;
-    double m_pulsePeriod;
-    int m_pulseNcycles;
+    QString m_pulseV1;
+    QString m_pulseV2;
+    QString m_pulseDelay;
+    QString m_pulseRise;
+    QString m_pulseFall;
+    QString m_pulseWidth;
+    QString m_pulsePeriod;
+    QString m_pulseNcycles;
 
     // EXP
-    double m_expV1;
-    double m_expV2;
-    double m_expTd1;
-    double m_expTau1;
-    double m_expTd2;
-    double m_expTau2;
+    QString m_expV1;
+    QString m_expV2;
+    QString m_expTd1;
+    QString m_expTau1;
+    QString m_expTd2;
+    QString m_expTau2;
 
     // SFFM
-    double m_sffmOff;
-    double m_sffmAmplit;
-    double m_sffmCarrier;
-    double m_sffmModIndex;
-    double m_sffmSignalFreq;
+    QString m_sffmOff;
+    QString m_sffmAmplit;
+    QString m_sffmCarrier;
+    QString m_sffmModIndex;
+    QString m_sffmSignalFreq;
 
     // PWL
     QString m_pwlPoints;
     QString m_pwlFile;
 
     // AC
-    double m_acAmplitude;
-    double m_acPhase;
+    QString m_acAmplitude;
+    QString m_acPhase;
 
     // Parasitics
-    double m_seriesResistance;
-    double m_parallelCapacitance;
+    QString m_seriesResistance;
+    QString m_parallelCapacitance;
 
     // Visibility
     bool m_showFunction;

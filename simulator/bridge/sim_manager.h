@@ -20,13 +20,21 @@ public:
     void runParametricSweep(QGraphicsScene* scene, NetManager* netMgr, const QString& component, const QString& param, double start, double stop, int steps);
     void runSensitivity(QGraphicsScene* scene, NetManager* netMgr, const QString& targetSignal);
     
+    // Debugger / Pre-flight check
+    QStringList preflightCheck(QGraphicsScene* scene, NetManager* netMgr, SimNetlist& outNetlist);
+    void runWithNetlist(const SimNetlist& netlist);
+    
     void runRealTime(QGraphicsScene* scene, NetManager* netMgr, int intervalMs = 100);
     void stopRealTime();
+    
     void stopAll();
+    void pauseSimulation(bool pause);
+    bool isPaused() const { return m_paused; }
 
 signals:
     void simulationStarted();
     void simulationFinished(const SimResults& results);
+    void simulationPaused(bool paused);
     void errorOccurred(const QString& msg);
     void logMessage(const QString& msg);
 
@@ -36,6 +44,9 @@ private slots:
 
 private:
     explicit SimManager(QObject* parent = nullptr);
+
+    SimControl* m_control = nullptr;
+    bool m_paused = false;
 
     QGraphicsScene* m_rtScene = nullptr;
     NetManager* m_rtNetMgr = nullptr;

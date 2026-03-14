@@ -233,8 +233,7 @@ QJsonArray SchematicFileIO::serializeItems(QGraphicsScene* scene) {
         SchematicItem* schematicItem = dynamic_cast<SchematicItem*>(item);
         if (schematicItem && !schematicItem->isSubItem()) {
             QJsonObject itemJson = schematicItem->toJson();
-            // Also save rotation
-            itemJson["rotation"] = item->rotation();
+            // rotation is already serialized by each item's own toJson()
             itemsArray.append(itemJson);
         }
     }
@@ -257,10 +256,7 @@ bool SchematicFileIO::deserializeItems(QGraphicsScene* scene, const QJsonArray& 
         SchematicItem* item = createItemFromJson(itemJson);
         
         if (item) {
-            // Apply rotation if saved
-            if (itemJson.contains("rotation")) {
-                item->setRotation(itemJson["rotation"].toDouble());
-            }
+            // rotation is already restored by each item's own fromJson()
             scene->addItem(item);
             loadedCount++;
         } else {

@@ -20,6 +20,12 @@ public:
     QString instrumentId() const { return m_id; }
     void setInstrumentId(const QString& id) { m_id = id; }
 
+signals:
+    void windowClosing(const QString& id);
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
 private:
     LogicAnalyzerWidget* m_la;
     QStringList m_targetNets;

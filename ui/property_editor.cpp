@@ -132,12 +132,12 @@ void PropertyEditor::setSchematicItems(const QList<SchematicItem*>& items) {
             addSectionHeader("Voltage Source");
             addProperty("Source Type", vsrc->sourceType() == VoltageSourceItem::DC ? "DC" : "AC", "enum|DC,AC");
             if (vsrc->sourceType() == VoltageSourceItem::DC) {
-                addProperty("DC Voltage", QString::number(vsrc->dcVoltage(), 'f', 2));
+                addProperty("DC Voltage", vsrc->dcVoltage());
             } else {
-                addProperty("AC Amplitude", QString::number(vsrc->acAmplitude(), 'f', 2));
-                addProperty("AC Frequency", QString::number(vsrc->sineFrequency(), 'f', 2));
-                addProperty("AC Phase", QString::number(vsrc->acPhase(), 'f', 2));
-                addProperty("AC Offset", QString::number(vsrc->sineOffset(), 'f', 2));
+                addProperty("AC Amplitude", vsrc->acAmplitude());
+                addProperty("AC Frequency", vsrc->sineFrequency());
+                addProperty("AC Phase", vsrc->acPhase());
+                addProperty("AC Offset", vsrc->sineOffset());
             }
         } else if (auto* pwr = dynamic_cast<PowerItem*>(item)) {
             addSectionHeader("Power Settings");

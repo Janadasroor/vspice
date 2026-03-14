@@ -47,6 +47,7 @@ public:
 
     void setCompleter(QCompleter* completer);
     QCompleter* completer() const;
+    void setScene(QGraphicsScene* scene, NetManager* netManager);
     void updateCompletionKeywords(const QStringList& keywords);
     void setErrorLines(const QMap<int, QString>& errors);
     void setActiveDebugLine(int line);

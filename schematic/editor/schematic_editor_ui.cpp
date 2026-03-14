@@ -14,6 +14,8 @@
 #include "../ui/simulation_panel.h"
 #include "../ui/logic_analyzer_window.h"
 #include "../../symbols/symbol_library.h"
+#include "../dialogs/simulation_debugger_dialog.h"
+#include "../../simulator/bridge/sim_manager.h"
 
 using Flux::Model::SymbolDefinition;
 using Flux::Model::SymbolPrimitive;
@@ -51,6 +53,23 @@ QIcon SchematicEditor::getThemeIcon(const QString& path) {
     QIcon icon(path);
     if (!ThemeManager::theme() || ThemeManager::theme()->type() == PCBTheme::Dark) {
         return icon; // Keep original for dark theme
+    }
+
+    // List of icons that should keep their original multi-color design
+    static const QStringList multiColorIcons = {
+        "probe", "ammeter", "voltmeter", "power_meter", "scissor", "n-v-probe", "p-v-probe"
+    };
+
+    bool isMultiColor = false;
+    for (const auto& tag : multiColorIcons) {
+        if (path.contains(tag, Qt::CaseInsensitive)) {
+            isMultiColor = true;
+            break;
+        }
+    }
+
+    if (isMultiColor) {
+        return icon;
     }
 
     // For light theme, we need to tint the monochrome icons
@@ -111,21 +130,11 @@ QIcon SchematicEditor::createComponentIcon(const QString& name) {
         painter.drawLine(12, 16, 20, 16);
         painter.drawLine(20, 16, 28, 4);
     } else if (name == "Probe" || name == "Voltage Probe" || name == "Current Probe" || name == "Power Probe" || name == "Logic Probe" || name == "Simulator") {
-        QString iconPath = ":/icons/p-v-probe.png";
-        if (name == "Current Probe") iconPath = ":/icons/n-v-probe.png";
-        
-        QPixmap probePix(iconPath);
-        if (!probePix.isNull()) {
-            painter.drawPixmap(0, 0, 32, 32, probePix);
-            
-            // Draw Letter indicator for specialized probes (Power/Logic if we had PNGs for them)
-            if (name != "Probe" && name != "Simulator" && name != "Voltage Probe" && name != "Current Probe") {
-                QString letter = (name == "Power Probe") ? "W" : "L";
-                painter.setPen(Qt::white);
-                painter.setFont(QFont("Arial", 8, QFont::Bold));
-                painter.drawText(QRectF(10, 16, 12, 12), Qt::AlignCenter, letter);
-            }
-        }
+        QString iconPath = ":/icons/tool_probe.svg";
+        if (name == "Voltage Probe") iconPath = ":/icons/tool_voltage_probe.svg";
+        else if (name == "Current Probe") iconPath = ":/icons/tool_current_probe.svg";
+        else if (name == "Power Probe") iconPath = ":/icons/tool_power_probe.svg";
+        return getThemeIcon(iconPath);
     } else if (name == "Logic Probe") {
         painter.drawLine(24, 5, 24, 10);
         painter.setPen(QPen(QColor("#60a5fa"), 2));
@@ -142,11 +151,14 @@ QIcon SchematicEditor::createComponentIcon(const QString& name) {
         painter.setPen(QPen(Qt::red, 2));
         painter.drawLine(10, 10, 22, 22);
         painter.drawLine(10, 22, 22, 10);
-    } else if (name == "Erase") {
-        painter.setPen(QPen(Qt::red, 2));
-        painter.drawRect(8, 8, 16, 16);
-        painter.drawLine(8, 8, 24, 24);
-        painter.drawLine(8, 24, 24, 8);
+    } else if (name == "Scissors" || name == "Erase") {
+        painter.setPen(QPen(Qt::black, 2));
+        painter.drawEllipse(4, 18, 8, 8);
+        painter.drawEllipse(4, 6, 8, 8);
+        painter.drawLine(11, 19, 25, 9);
+        painter.drawLine(11, 13, 25, 23);
+        painter.setBrush(Qt::black);
+        painter.drawEllipse(11, 15, 2, 2);
     } else if (name == "Resistor") {
         painter.drawPolyline(QVector<QPointF>{
             {4, 16}, {8, 16}, {10, 10}, {14, 22}, {18, 10}, {22, 22}, {24, 16}, {28, 16}
@@ -161,6 +173,16 @@ QIcon SchematicEditor::createComponentIcon(const QString& name) {
         painter.drawArc(12, 12, 8, 8, 0, 180 * 16);
         painter.drawArc(20, 12, 8, 8, 0, 180 * 16);
         painter.drawLine(4, 16, 4, 16); // Start point
+    } else if (name == "Spice Directive") {
+        painter.setPen(QPen(color, 2));
+        painter.drawRect(4, 4, 24, 24);
+        painter.setFont(QFont("Arial", 10, QFont::Bold));
+        painter.drawText(QRect(4, 4, 24, 24), Qt::AlignCenter, ".op");
+    } else if (name == "BV") {
+        painter.setPen(QPen(color, 2));
+        painter.drawEllipse(6, 6, 20, 20);
+        painter.setFont(QFont("Arial", 10, QFont::Bold));
+        painter.drawText(QRect(6, 6, 20, 20), Qt::AlignCenter, "B");
     } else if (name == "Diode") {
         painter.drawLine(4, 16, 28, 16);
         QPolygonF triangle;
@@ -731,12 +753,6 @@ void SchematicEditor::createToolBar() {
          }
     });
 
-    QAction* deleteAct = m_editActions["Delete"];
-    if (deleteAct) {
-        deleteAct->setIcon(getThemeIcon(":/icons/tool_delete.svg"));
-        mainToolbar->addAction(deleteAct);
-    }
-
     mainToolbar->addSeparator();
 
     QAction* ercAct = mainToolbar->addAction(createComponentIcon("ERC"), "Run ERC (F7)");
@@ -745,22 +761,51 @@ void SchematicEditor::createToolBar() {
     mainToolbar->addSeparator();
 
     // Professional Simulation Control Group
-    QAction* setupSimAct = mainToolbar->addAction(QIcon(":/icons/tool_gear.svg"), "Simulation Setup...");
+    QAction* setupSimAct = mainToolbar->addAction(getThemeIcon(":/icons/tool_gear.svg"), "Simulation Setup...");
     setupSimAct->setToolTip("Configure Simulation Analysis (Transient, AC, DC)");
     connect(setupSimAct, &QAction::triggered, this, &SchematicEditor::onOpenSimulationSetup);
 
-    m_runSimToolbarAction = mainToolbar->addAction(QIcon(":/icons/tool_run.svg"), "Run Simulation (F8)");
-    m_runSimToolbarAction->setShortcut(QKeySequence("F8"));
-    m_runSimToolbarAction->setToolTip("Run Analysis using current settings (F8)");
-    if (auto* btn = qobject_cast<QToolButton*>(mainToolbar->widgetForAction(m_runSimToolbarAction))) {
-        btn->setStyleSheet("QToolButton { background-color: #059669; border-radius: 4px; padding: 4px; color: white; } "
-                           "QToolButton:hover { background-color: #10b981; }");
-    }
-    connect(m_runSimToolbarAction, &QAction::triggered, this, &SchematicEditor::onRunSimulation);
+    mainToolbar->addSeparator();
 
-    m_stopSimToolbarAction = mainToolbar->addAction(QIcon(":/icons/tool_delete.svg"), "Stop");
-    m_stopSimToolbarAction->setToolTip("Stop active simulation");
-    connect(m_stopSimToolbarAction, &QAction::triggered, this, &SchematicEditor::onPauseSimulation);
+    // Professional Simulation Control Group (LTspice style: Run/Pause toggle + Stop)
+    QWidget* simGroup = new QWidget();
+    QHBoxLayout* simLayout = new QHBoxLayout(simGroup);
+    simLayout->setContentsMargins(0, 0, 0, 0);
+    simLayout->setSpacing(4);
+
+    m_runSimToolbarAction = new QAction(getThemeIcon(":/icons/tool_run.svg"), "Run Simulation (F8)", this);
+    m_runSimToolbarAction->setShortcut(QKeySequence("F8"));
+    m_runSimToolbarAction->setToolTip("Run Analysis (F8)");
+    connect(m_runSimToolbarAction, &QAction::triggered, this, &SchematicEditor::onRunSimulation);
+    
+    QToolButton* mainBtn = new QToolButton();
+    mainBtn->setDefaultAction(m_runSimToolbarAction);
+    mainBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    mainBtn->setIconSize(QSize(24, 24));
+    mainBtn->setStyleSheet("QToolButton { background-color: transparent; border: 1px solid transparent; border-radius: 4px; padding: 2px; } "
+                          "QToolButton:hover { background-color: rgba(0, 0, 0, 0.05); border-color: #cbd5e1; }");
+    simLayout->addWidget(mainBtn);
+
+    m_stopSimToolbarAction = new QAction(getThemeIcon(":/icons/tool_stop.svg"), "Stop", this);
+    m_stopSimToolbarAction->setShortcut(QKeySequence("Shift+F8"));
+    connect(m_stopSimToolbarAction, &QAction::triggered, this, []() { SimManager::instance().stopAll(); });
+    
+    QToolButton* stopBtn = new QToolButton();
+    stopBtn->setDefaultAction(m_stopSimToolbarAction);
+    stopBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    stopBtn->setIconSize(QSize(24, 24));
+    stopBtn->setStyleSheet("QToolButton { background-color: transparent; border: 1px solid transparent; border-radius: 4px; padding: 2px; } "
+                           "QToolButton:hover { background-color: rgba(0, 0, 0, 0.05); border-color: #cbd5e1; }");
+    simLayout->addWidget(stopBtn);
+    
+    // Store stop widget for visibility control
+    m_simControlSubGroup = stopBtn;
+    mainToolbar->addWidget(simGroup);
+
+    // Initial state: hide Stop button
+    m_simControlSubGroup->setVisible(false);
+
+    updateSimulationUiState(m_simulationRunning);
 
     updateSimulationUiState(m_simulationRunning);
 
@@ -910,14 +955,18 @@ void SchematicEditor::createToolBar() {
     toolGroup->setExclusive(true);
 
     auto addSchTool = [&](const QString& toolName, const QString& label, const QString& iconName, const QString& shortcut = "") {
-        QIcon icon = iconName.startsWith("tool_")
-            ? createComponentIcon(toolName)
-            : getThemeIcon(QString(":/icons/%1.svg").arg(iconName));
-        if (icon.isNull()) {
-            icon = iconName.startsWith("tool_")
-                ? getThemeIcon(QString(":/icons/%1.svg").arg(iconName))
-                : createComponentIcon(toolName);
+        QIcon icon = createComponentIcon(toolName);
+        
+        if (icon.isNull() && !iconName.isEmpty()) {
+            if (iconName.startsWith("tool_") || iconName.startsWith("comp_")) {
+                icon = getThemeIcon(QString(":/icons/%1.svg").arg(iconName));
+            }
         }
+        
+        if (icon.isNull() && !iconName.isEmpty()) {
+            icon = getThemeIcon(QString(":/icons/%1.svg").arg(iconName));
+        }
+
         QAction* action = schToolbar->addAction(icon, label);
         action->setCheckable(true);
         action->setData(toolName);
@@ -936,17 +985,20 @@ void SchematicEditor::createToolBar() {
     // Wiring Tools
     addSchTool("Select", "Select", "tool_select", "Esc");
     addSchTool("Probe", "Probe Signal", "tool_probe", "K");
-    addSchTool("Voltage Probe", "Voltage Probe", "tool_probe", "Shift+K");
-    addSchTool("Current Probe", "Current Probe", "tool_probe", "Alt+K");
-    addSchTool("Power Probe", "Power Probe", "tool_probe", "Ctrl+Shift+P");
+    addSchTool("Voltage Probe", "Voltage Probe", "tool_voltage_probe", "Shift+K");
+    addSchTool("Current Probe", "Current Probe", "tool_current_probe", "Alt+K");
+    addSchTool("Power Probe", "Power Probe", "tool_power_probe", "Ctrl+Shift+P");
+    addSchTool("Spice Directive", "SPICE Directive (.op)", "tool_spice_directive", "S");
+    addSchTool("BV", "Arbitrary Behavioral Source", "comp_bv", "B");
+    addSchTool("Scissors", "Delete (Scissors Tool)", "tool_scissors", "F5");
     addSchTool("Zoom Area", "Zoom to Area", "tool_zoom_area", "Z");
     addSchTool("Wire", "Place Wire", "tool_wire", "W");
-    addSchTool("Bus", "Place Bus", "tool_bus", "B");
+    addSchTool("Bus", "Place Bus", "tool_bus", "Shift+B");
     addSchTool("Bus Entry", "Place Bus Entry", "tool_bus_entry", "");
     addSchTool("Net Label", "Place Net Label (Local)", "tool_net_label", "L");
     addSchTool("Global Label", "Place Global Label", "tool_global_label", "Ctrl+L");
     addSchTool("Hierarchical Port", "Place Hierarchical Port", "tool_hierarchical_port", "H");
-    addSchTool("Sheet", "Place Hierarchical Sheet", "tool_sheet", "S");
+    addSchTool("Sheet", "Place Hierarchical Sheet", "tool_sheet", "Shift+S");
     addSchTool("No-Connect", "No-Connect Flag", "tool_no_connect", "X");
     addSchTool("GND", "Place Power GND", "comp_gnd", "G");
     addSchTool("VCC", "Place Power VCC", "comp_vcc", "V");
@@ -1043,6 +1095,10 @@ void SchematicEditor::createToolBar() {
 }
 
 void SchematicEditor::createDockWidgets() {
+    // Configure Dock Corners so bottom dock doesn't stretch across the entire width
+    setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+
     // === Component Library Dock ===
     m_componentDock = new QDockWidget("Components", this);
     m_componentDock->setObjectName("ComponentDock");
@@ -1391,9 +1447,9 @@ void SchematicEditor::createDockWidgets() {
     m_oscilloscopeDock = new QDockWidget("Analog Oscilloscope", this);
     m_oscilloscopeDock->setObjectName("OscilloscopeDock");
     m_oscilloscopeDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
-    
-    if (ThemeManager::theme()) {
-        m_oscilloscopeDock->setStyleSheet(QString(
+    m_oscilloscopeDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
+
+    if (ThemeManager::theme()) {        m_oscilloscopeDock->setStyleSheet(QString(
             "QDockWidget { border: none; }"
             "QDockWidget::title { background: %1; color: %2; padding: 6px; border-bottom: 1px solid %3; font-weight: bold; }"
         ).arg(ThemeManager::theme()->panelBackground().name(), 
@@ -1403,6 +1459,13 @@ void SchematicEditor::createDockWidgets() {
     
     m_oscilloscopeDock->hide();
     addDockWidget(Qt::BottomDockWidgetArea, m_oscilloscopeDock);
+
+    connect(m_oscilloscopeDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (m_view) {
+            bool hasResults = m_simulationPanel && m_simulationPanel->hasResults();
+            m_view->setProbingEnabled(visible || hasResults);
+        }
+    });
 
     // Initialize Simulation Panel (but don't add to tabs yet) so Oscilloscope is available
     if (m_scene && m_netManager) {
@@ -1561,7 +1624,8 @@ void SchematicEditor::createDrawingToolbar() {
     addTool("Polygon", "Draw Polygon");
     addTool("Bezier", "Draw Bezier Curve");
     addTool("Text", "Add Text");
-    addTool("Erase", "Erase Items (E)")->setShortcut(QKeySequence("E"));
+    addTool("Scissors", "Scissors Items (F5)")->setShortcut(QKeySequence("F5"));
+    addTool("Spice Directive", "SPICE Directive (S)")->setShortcut(QKeySequence("S"));
 
     drawToolbar->addSeparator();
 
@@ -1595,20 +1659,45 @@ void SchematicEditor::createDrawingToolbar() {
     addManipAction("Center Y", "Align Center Y", &SchematicEditor::onAlignCenterY);
 }
 
-#include "../ui/instrument_window.h"
 #include "../items/oscilloscope_item.h"
 
 void SchematicEditor::updateSimulationUiState(bool running, const QString& statusMessage) {
     if (m_view) m_view->setSimulationRunning(running);
+    m_simulationRunning = running;
     
-    if (m_runSimMenuAction) m_runSimMenuAction->setEnabled(!running);
-    if (m_runSimToolbarAction) m_runSimToolbarAction->setEnabled(!running);
+    // Primary Action (Run/Pause toggle)
+    if (m_runSimToolbarAction) {
+        if (running && !m_simPaused) {
+            m_runSimToolbarAction->setIcon(getThemeIcon(":/icons/tool_pause.svg"));
+            m_runSimToolbarAction->setText("Pause Simulation");
+            m_runSimToolbarAction->setToolTip("Pause current simulation");
+        } else if (m_simPaused) {
+            m_runSimToolbarAction->setIcon(getThemeIcon(":/icons/tool_run.svg"));
+            m_runSimToolbarAction->setText("Resume Simulation");
+            m_runSimToolbarAction->setToolTip("Resume current simulation");
+        } else {
+            m_runSimToolbarAction->setIcon(getThemeIcon(":/icons/tool_run.svg"));
+            m_runSimToolbarAction->setText("Run Simulation (F8)");
+            m_runSimToolbarAction->setToolTip("Run Analysis (F8)");
+        }
+        // Button remains enabled so it can toggle between Run and Pause
+        m_runSimToolbarAction->setEnabled(true);
+    }
+
+    if (m_runSimMenuAction) m_runSimMenuAction->setEnabled(!running || m_simPaused);
     if (m_stopSimMenuAction) m_stopSimMenuAction->setEnabled(running);
-    if (m_stopSimToolbarAction) m_stopSimToolbarAction->setEnabled(running);
+    
+    // Stop button visibility
+    if (m_simControlSubGroup) m_simControlSubGroup->setVisible(running);
 
     if (!statusMessage.isEmpty()) {
         statusBar()->showMessage(statusMessage, running ? 0 : 3000);
     }
+}
+
+void SchematicEditor::onSimulationPaused(bool paused) {
+    m_simPaused = paused;
+    updateSimulationUiState(m_simulationRunning, paused ? "Simulation paused." : "Simulation resumed.");
 }
 
 void SchematicEditor::connectSimulationSignals() {
@@ -1633,6 +1722,8 @@ void SchematicEditor::connectSimulationSignals() {
             updateSimulationUiState(false, "Simulation finished.");
         }
     });
+
+    connect(&sim, &SimManager::simulationPaused, this, &SchematicEditor::onSimulationPaused);
 
     connect(&sim, &SimManager::errorOccurred, this, [this](const QString& message) {
         m_simulationRunning = false;
@@ -1730,7 +1821,7 @@ void SchematicEditor::onRunSimulation() {
     }
 
     if (m_simulationRunning) {
-        statusBar()->showMessage("Simulation already running.", 2000);
+        onPauseSimulation(); // Toggle pause/resume if already running
         return;
     }
 
@@ -1741,6 +1832,10 @@ void SchematicEditor::onRunSimulation() {
 
     m_simulationRunning = true;
     updateSimulationUiState(true, "Starting simulation...");
+    
+    // Force UI update to show Pause/Stop buttons before heavy netlist building blocks the main thread
+    qApp->processEvents();
+
     m_netManager->updateNets(m_scene);
 
     // Open Simulation Tab if not already open
@@ -1764,34 +1859,7 @@ void SchematicEditor::onRunSimulation() {
         addSimulationTab("Simulation Results");
     }
     
-    // Ensure all oscilloscope instrument windows are ready.
-    int openedScopes = 0;
-    for (auto* item : m_scene->items()) {
-        auto* sItem = dynamic_cast<SchematicItem*>(item);
-        if (!sItem) continue;
-        const QString typeName = sItem->itemTypeName().toLower();
-        const QString ref = sItem->reference().toLower();
-        
-        if (!typeName.contains("oscilloscope") && !ref.startsWith("osc")) continue;
-
-        QString id = sItem->id().toString();
-        if (id.isEmpty()) id = QString("OSC_%1").arg(reinterpret_cast<quintptr>(sItem), 0, 16);
-
-        if (!m_instrumentWindows.contains(id)) {
-            auto* win = new InstrumentWindow("Oscilloscope - " + sItem->reference(), this);
-            win->setInstrumentId(id);
-            m_instrumentWindows[id] = win;
-        }
-
-        const QStringList nets = resolveConnectedInstrumentNets(sItem);
-        m_instrumentWindows[id]->setChannels(nets);
-        m_instrumentWindows[id]->show();
-        m_instrumentWindows[id]->raise();
-        m_instrumentWindows[id]->activateWindow();
-        openedScopes++;
-    }
-
-    // --- Logic Analyzers ---
+    // Ensure all logic analyzer windows are ready.
     for (auto* item : m_scene->items()) {
         auto* sItem = dynamic_cast<SchematicItem*>(item);
         if (!sItem) continue;
@@ -1804,6 +1872,9 @@ void SchematicEditor::onRunSimulation() {
         if (!m_laWindows.contains(id)) {
             auto* win = new LogicAnalyzerWindow("Logic Analyzer - " + sItem->reference(), this);
             win->setInstrumentId(id);
+            connect(win, &LogicAnalyzerWindow::windowClosing, this, [this](const QString& windowId) {
+                m_laWindows.remove(windowId);
+            });
             m_laWindows[id] = win;
         }
 
@@ -1814,52 +1885,74 @@ void SchematicEditor::onRunSimulation() {
         m_laWindows[id]->activateWindow();
     }
 
-    // Auto-open Probe Viewer if probes exist but no OSC component is placed
-    if (openedScopes == 0) {
-        QStringList probedNets;
-        for (auto* item : m_scene->items()) {
-            if (auto* m = dynamic_cast<SchematicWaveformMarker*>(item)) probedNets << m->netName();
-        }
-        if (!probedNets.isEmpty()) {
-            QString id = "SYSTEM_PROBE_SCOPE";
-            if (!m_instrumentWindows.contains(id)) {
-                auto* win = new InstrumentWindow("Waveform Viewer (Probes)", this);
-                win->setInstrumentId(id);
-                m_instrumentWindows[id] = win;
+    // Route probes and hardware oscilloscopes to the bottom dock simulation panel
+    QStringList probedNets;
+    for (auto* item : m_scene->items()) {
+        if (auto* m = dynamic_cast<SchematicWaveformMarker*>(item)) {
+            probedNets << m->netName();
+            if (m_simulationPanel) {
+                m_simulationPanel->addProbe(m->netName());
             }
-            m_instrumentWindows[id]->setChannels(probedNets);
-            m_instrumentWindows[id]->show();
-            m_instrumentWindows[id]->raise();
-            openedScopes++;
-        } else {
-            statusBar()->showMessage("No oscilloscope or probes found on schematic.", 3000);
+        } else if (auto* sItem = dynamic_cast<SchematicItem*>(item)) {
+            const QString typeName = sItem->itemTypeName().toLower();
+            const QString ref = sItem->reference().toLower();
+            if (typeName.contains("oscilloscope") || ref.startsWith("osc")) {
+                const QStringList oscNets = resolveConnectedInstrumentNets(sItem);
+                for (const QString& net : oscNets) {
+                    probedNets << net;
+                    if (m_simulationPanel) m_simulationPanel->addProbe(net);
+                }
+            }
+        }
+    }
+    
+    // 1. Preflight check and Debugger
+    SimNetlist netlist;
+    QStringList diagnostics = SimManager::instance().preflightCheck(m_scene, m_netManager, netlist);
+
+    // Apply simulation config to the pre-built netlist
+    if (m_simConfig.type == SimAnalysisType::Transient) {
+        SimAnalysisConfig config;
+        config.type = SimAnalysisType::Transient;
+        config.tStart = 0;
+        config.tStop = m_simConfig.stop;
+        config.tStep = m_simConfig.step;
+        config.transientStorageMode = SimTransientStorageMode::AutoDecimate;
+        config.transientMaxStoredPoints = 50000;
+        netlist.setAnalysis(config);
+    } else if (m_simConfig.type == SimAnalysisType::OP) {
+        SimAnalysisConfig config;
+        config.type = SimAnalysisType::OP;
+        netlist.setAnalysis(config);
+    } else if (m_simConfig.type == SimAnalysisType::AC) {
+        SimAnalysisConfig config;
+        config.type = SimAnalysisType::AC;
+        config.fStart = m_simConfig.fStart;
+        config.fStop = m_simConfig.fStop;
+        config.fPoints = m_simConfig.pts;
+        netlist.setAnalysis(config);
+    }
+
+    if (!diagnostics.isEmpty()) {
+        SimulationDebuggerDialog dlg(diagnostics, this);
+        if (dlg.exec() != QDialog::Accepted) {
+            m_simulationRunning = false;
+            updateSimulationUiState(false, "Simulation aborted by user.");
+            return;
         }
     }
 
-    // 2. Trigger Engine via SimManager
-    if (m_simConfig.type == SimAnalysisType::Transient) {
-        SimManager::instance().runTransient(m_scene, m_netManager, m_simConfig.stop, m_simConfig.step);
-    } else if (m_simConfig.type == SimAnalysisType::OP) {
-        SimManager::instance().runDCOP(m_scene, m_netManager);
-    } else if (m_simConfig.type == SimAnalysisType::AC) {
-        SimManager::instance().runAC(m_scene, m_netManager, m_simConfig.fStart, m_simConfig.fStop, m_simConfig.pts);
-    } else if (m_simConfig.type == SimAnalysisType::RealTime) {
-        SimManager::instance().runRealTime(m_scene, m_netManager, m_simConfig.rtIntervalMs);
-    } else {
-        m_simulationRunning = false;
-        updateSimulationUiState(false, "Simulation type is not supported by one-click run.");
-    }
+    // 2. Trigger Engine with the pre-built netlist
+    SimManager::instance().runWithNetlist(netlist);
 }
 
 void SchematicEditor::onPauseSimulation() {
     if (!m_simulationRunning) {
-        statusBar()->showMessage("No active simulation.", 2000);
+        onRunSimulation();
         return;
     }
 
-    SimManager::instance().stopAll();
-    m_simulationRunning = false;
-    updateSimulationUiState(false, "Simulation stop requested.");
+    SimManager::instance().pauseSimulation(!m_simPaused);
 }
 
 void SchematicEditor::onOpenFluxScript() {

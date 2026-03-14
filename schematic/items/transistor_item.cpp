@@ -108,6 +108,7 @@ void TransistorItem::buildPrimitives() {
 void TransistorItem::setValue(const QString& value) {
     if (m_value != value) {
         m_value = value;
+        updateLabelText();
         buildPrimitives();
         update();
     }
@@ -191,6 +192,7 @@ bool TransistorItem::fromJson(const QJsonObject& json) {
     if (json.contains("valX")) {
         setValueLabelPos(QPointF(json["valX"].toDouble(), json["valY"].toDouble()));
     }
+    updateLabelText();
     update();
     return true;
 }

@@ -35,7 +35,7 @@ struct ECOComponent {
 
     // Advanced Simulation Metadata
     QMap<QString, QString> paramExpressions;
-    QMap<QString, double> tolerances; // paramName -> relative value (e.g. 0.05)
+    QMap<QString, QString> tolerances; // paramName -> string value (e.g. "0.05" or "5%")
     QMap<QString, QString> pinPadMapping; // pinName -> padName
 };
 

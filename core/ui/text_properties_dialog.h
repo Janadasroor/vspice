@@ -17,6 +17,7 @@ public:
     int fontSize() const { return m_fontSizeSpin->value(); }
     QColor color() const { return m_color; }
     QString alignment() const { return m_alignCombo->currentText(); }
+    void setColor(const QColor& c);
 
 private slots:
     void onPickColor();

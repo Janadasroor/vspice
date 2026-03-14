@@ -39,30 +39,30 @@ public:
     WaveformType waveform() const { return m_waveform; }
     void setWaveform(WaveformType type);
 
-    double frequency() const { return m_freq; }
-    void setFrequency(double f);
+    QString frequency() const { return m_freq; }
+    void setFrequency(const QString& f);
 
-    double amplitude() const { return m_amplitude; }
-    void setAmplitude(double a);
+    QString amplitude() const { return m_amplitude; }
+    void setAmplitude(const QString& a);
 
-    double offset() const { return m_offset; }
-    void setOffset(double o);
+    QString offset() const { return m_offset; }
+    void setOffset(const QString& o);
 
-    double acMagnitude() const { return m_acMagnitude; }
-    void setAcMagnitude(double m);
+    QString acMagnitude() const { return m_acMagnitude; }
+    void setAcMagnitude(const QString& m);
 
-    double acPhase() const { return m_acPhase; }
-    void setAcPhase(double p);
+    QString acPhase() const { return m_acPhase; }
+    void setAcPhase(const QString& p);
 
 private:
     void updateSpiceValue();
 
     WaveformType m_waveform = Sine;
-    double m_freq = 1000.0;      // Hz
-    double m_amplitude = 5.0;    // V
-    double m_offset = 0.0;       // V
-    double m_acMagnitude = 1.0;  // V (for AC Analysis)
-    double m_acPhase = 0.0;      // Deg (for AC Analysis)
+    QString m_freq = "1000";      // Hz
+    QString m_amplitude = "5.0";    // V
+    QString m_offset = "0.0";       // V
+    QString m_acMagnitude = "1.0";  // V (for AC Analysis)
+    QString m_acPhase = "0.0";      // Deg (for AC Analysis)
 };
 
 #endif // SIGNALGENERATORITEM_H

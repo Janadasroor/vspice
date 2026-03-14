@@ -34,6 +34,7 @@ class SimModelParser {
 public:
     static bool parseModelLine(
         SimNetlist& netlist,
+        std::map<std::string, SimModel>& outModels,
         const std::string& line,
         int lineNumber = 0,
         const std::string& sourceName = "",

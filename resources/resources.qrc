@@ -12,8 +12,9 @@
         <file>icons/cursor_eraser.svg</file>
         <file>icons/viora_eda_logo.png</file>
         <file>icons/viospice_logo.png</file>
-        <file>icons/n-v-probe.png</file>
-        <file>icons/p-v-probe.png</file>
+        <file>icons/n-v-probe.svg</file>
+        <file>icons/p-v-probe.svg</file>
+        <file>icons/power-probe2.svg</file>
         <file>icons/tool_select.png</file>
         <file>icons/tool_line.png</file>
         <file>icons/tool_rect.png</file>
@@ -32,7 +33,12 @@
         <file>icons/tool_rotate_ccw.svg</file>
         <file>icons/tool_duplicate.svg</file>
         <file>icons/tool_delete.svg</file>
+        <file>icons/tool_stop.svg</file>
+        <file>icons/tool_pause.svg</file>
         <file>icons/tool_erase.svg</file>
+        <file>icons/tool_scissors.svg</file>
+        <file>icons/tool_spice_directive.svg</file>
+        <file>icons/comp_bv.svg</file>
         <file>icons/tool_line.svg</file>
         <file>icons/tool_rect.svg</file>
         <file>icons/tool_circle.svg</file>
@@ -74,6 +80,9 @@
         <file>icons/tool_anchor.svg</file>
         <file>icons/tool_search.svg</file>
         <file>icons/tool_probe.svg</file>
+        <file>icons/tool_voltage_probe.svg</file>
+        <file>icons/tool_current_probe.svg</file>
+        <file>icons/tool_power_probe.svg</file>
         <file>icons/tool_voltmeter.svg</file>
         <file>icons/tool_ammeter.svg</file>
         <file>icons/tool_power_meter.svg</file>
@@ -104,6 +113,7 @@
         <file>icons/comp_ram.svg</file>
         <file>icons/comp_opamp.svg</file>
         <file>icons/comp_logic.svg</file>
+        <file>icons/and_gate.svg</file>
         <file>icons/snap_grid.svg</file>
         <file>icons/tool_sync.svg</file>
         <file>icons/tool_global_label.svg</file>

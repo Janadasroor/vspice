@@ -1,4 +1,6 @@
 #include "simulation_panel.h"
+#include "waveform_viewer.h"
+#include "simulation_log_dialog.h"
 #include "../../simulator/bridge/sim_audio_engine.h"
 #include "../../core/theme_manager.h"
 #include "../../core/simulation_manager.h"
@@ -19,6 +21,7 @@
 #include <QFile>
 #include <QTemporaryFile>
 #include <QTextStream>
+#include <QTimer>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QChart>
@@ -156,6 +159,20 @@ void SimulationPanel::addProbe(const QString& signalName) {
     item->setCheckState(Qt::Checked);
     m_signalList->addItem(item);
     
+    // Sync with WaveformViewer
+    if (m_waveformViewer) {
+        // If results already exist, try to find the waveform and add it
+        bool found = false;
+        for (const auto& w : m_lastResults.waveforms) {
+            if (QString::fromStdString(w.name) == signalName) {
+                m_waveformViewer->addSignal(signalName, QVector<double>(w.xData.begin(), w.xData.end()), QVector<double>(w.yData.begin(), w.yData.end()));
+                found = true;
+                break;
+            }
+        }
+        m_waveformViewer->setSignalChecked(signalName, true);
+    }
+    
     m_logOutput->append(QString("Probed signal: %1").arg(signalName));
 }
 
@@ -200,6 +217,10 @@ void SimulationPanel::removeProbe(const QString& signalName) {
             }
         }
 
+        if (m_waveformViewer) {
+            m_waveformViewer->setSignalChecked(signalName, false);
+        }
+
         m_logOutput->append(QString("Unprobed signal: %1").arg(signalName));
         return;
     }
@@ -217,6 +238,9 @@ void SimulationPanel::clearAllProbes() {
     }
     if (m_scopeChannelCombo) {
         m_scopeChannelCombo->clear();
+    }
+    if (m_waveformViewer) {
+        m_waveformViewer->clear();
     }
     m_logOutput->append(QString("Cleared %1 probe(s).").arg(count));
 }
@@ -539,6 +563,14 @@ void SimulationPanel::setupUI() {
     m_logOutput->setStyleSheet(QString("QTextEdit { background: %1; border: 1px solid %2; font-family: monospace; font-size: 9px; color: #eee; }").arg(bg, borderColor));
     sidebarLayout->addWidget(m_logOutput);
 
+    QPushButton* showFullLogBtn = new QPushButton("Show Detailed Log");
+    showFullLogBtn->setStyleSheet("QPushButton { background: #374151; color: white; border-radius: 3px; padding: 4px; font-size: 10px; }");
+    connect(showFullLogBtn, &QPushButton::clicked, this, [this]() {
+        SimulationLogDialog dlg(m_logOutput->toPlainText(), this);
+        dlg.exec();
+    });
+    sidebarLayout->addWidget(showFullLogBtn);
+
     QLabel* issuesLabel = new QLabel("SIM ISSUES (DOUBLE-CLICK TO NAVIGATE)");
     issuesLabel->setStyleSheet(settingsLabel->styleSheet());
     sidebarLayout->addWidget(issuesLabel);
@@ -623,68 +655,12 @@ void SimulationPanel::setupUI() {
     viewTabs->setStyleSheet(QString("QTabWidget::pane { border: 1px solid %1; } QTabBar::tab { background: %2; color: %3; padding: 8px; } QTabBar::tab:selected { background: %4; }")
                             .arg(borderColor, panelBg, textColor, accent));
     
-    m_oscilloscope = new OscilloscopeWidget();
+    m_waveformViewer = new WaveformViewer();
+    m_scopeContainer = m_waveformViewer;
     
-    // Oscilloscope Control Bar
-    m_scopeContainer = new QWidget();
-    QVBoxLayout* scopeLayout = new QVBoxLayout(m_scopeContainer);
-    scopeLayout->setContentsMargins(0, 0, 0, 0);
-    scopeLayout->setSpacing(0);
-    
-    QWidget* scopeControls = new QWidget();
-    scopeControls->setStyleSheet(QString("background: %1; border-top: 1px solid %2;").arg(panelBg, borderColor));
-    QHBoxLayout* ctrlLayout = new QHBoxLayout(scopeControls);
-    ctrlLayout->setContentsMargins(10, 4, 10, 4);
-    
-    auto addScopeSpin = [&](const QString& label, double val, double min, double max, auto slot) {
-        ctrlLayout->addWidget(new QLabel(label));
-        QDoubleSpinBox* sb = new QDoubleSpinBox();
-        sb->setRange(min, max);
-        sb->setValue(val);
-        sb->setDecimals(3);
-        sb->setStyleSheet("QDoubleSpinBox { background: #121214; color: #fff; border: 1px solid #333; }");
-        connect(sb, QOverload<double>::of(&QDoubleSpinBox::valueChanged), m_oscilloscope, slot);
-        ctrlLayout->addWidget(sb);
-        return sb;
-    };
-
-    m_scopeTimeDiv = addScopeSpin("T/Div:", 1.0, 0.001, 1000.0, &OscilloscopeWidget::setTimePerDiv);
-    m_scopeVoltDiv = addScopeSpin("V/Div:", 1.0, 0.01, 100.0, &OscilloscopeWidget::setVoltsPerDiv);
-    
-    connect(m_oscilloscope, &OscilloscopeWidget::timePerDivChanged, this, [this](double v){
-        m_scopeTimeDiv->blockSignals(true);
-        m_scopeTimeDiv->setValue(v);
-        m_scopeTimeDiv->blockSignals(false);
-    });
-    connect(m_oscilloscope, &OscilloscopeWidget::voltsPerDivChanged, this, [this](double v){
-        m_scopeVoltDiv->blockSignals(true);
-        m_scopeVoltDiv->setValue(v);
-        m_scopeVoltDiv->blockSignals(false);
-    });
-    
-    ctrlLayout->addWidget(new QLabel("  CH Selection:"));
-    m_scopeChannelCombo = new QComboBox();
-    m_scopeChannelCombo->setStyleSheet("QComboBox { background: #121214; color: #fff; border: 1px solid #333; min-width: 120px; }");
-    connect(m_scopeChannelCombo, &QComboBox::currentTextChanged, m_oscilloscope, &OscilloscopeWidget::setActiveChannel);
-    ctrlLayout->addWidget(m_scopeChannelCombo);
-
-    ctrlLayout->addStretch();
-    QPushButton* autoScaleBtn = new QPushButton("Auto Scale");
-    autoScaleBtn->setStyleSheet("QPushButton { padding: 4px 12px; background: #059669; color: #fff; border-radius: 2px; font-weight: bold; }");
-    connect(autoScaleBtn, &QPushButton::clicked, m_oscilloscope, &OscilloscopeWidget::autoScale);
-    ctrlLayout->addWidget(autoScaleBtn);
-
-    QPushButton* clearScopeBtn = new QPushButton("Clear Display");
-    clearScopeBtn->setStyleSheet("QPushButton { padding: 4px 12px; background: #333; color: #eee; border-radius: 2px; }");
-    connect(clearScopeBtn, &QPushButton::clicked, m_oscilloscope, &OscilloscopeWidget::clear);
-    ctrlLayout->addWidget(clearScopeBtn);
-
-    scopeLayout->addWidget(m_oscilloscope, 1);
-    scopeLayout->addWidget(scopeControls);
-
     viewTabs->addTab(m_plotView, "Standard Waves");
     viewTabs->addTab(m_spectrumView, "FFT Spectrum");
-    // viewTabs->addTab(m_scopeContainer, "Oscilloscope"); // Moved to bottom dock in SchematicEditor
+    // viewTabs->addTab(m_waveformViewer, "Oscilloscope"); // Handled via bottom dock
     
     m_logicAnalyzer = new LogicAnalyzerWidget();
     viewTabs->addTab(m_logicAnalyzer, "Logic Analyzer");
@@ -830,7 +806,7 @@ void SimulationPanel::onGeneratorTypeChanged(int index) {
         hideParam(m_genLabel6, m_genParam6);
     } else if (type == "SIN") {
         showParam(m_genLabel1, m_genParam1, "Offset:", "0");
-        showParam(m_genLabel2, m_genParam2, "Amplitude:", "5");
+        showParam(m_genLabel2, m_genParam2, "Amplitude (Peak):", "5");
         showParam(m_genLabel3, m_genParam3, "Freq:", "1k");
         showParam(m_genLabel4, m_genParam4, "Delay:", "0");
         showParam(m_genLabel5, m_genParam5, "Phase:", "0");
@@ -956,7 +932,7 @@ void SimulationPanel::onRunSimulation() {
         int idx = m_analysisType->currentIndex();
         if (idx == 0) { // Transient
             double tStop = parseValue(m_param2->text(), 10e-3);
-            double tStep = parseValue(m_param1->text(), 1u);
+            double tStep = parseValue(m_param1->text(), 1e-6); // Use 1us as default, not 1.0
             SimManager::instance().runTransient(m_scene, m_netManager, tStop, tStep);
         } else if (idx == 1) { // DC OP
             SimManager::instance().runDCOP(m_scene, m_netManager);
@@ -1016,6 +992,7 @@ void SimulationPanel::onRunSimulation() {
 }
 
 void SimulationPanel::onLogReceived(const QString& msg) {
+    qDebug() << "Log:" << msg;
     m_logOutput->append(msg);
 
     const auto target = SimSchematicBridge::extractDiagnosticTarget(msg);
@@ -1049,13 +1026,25 @@ void SimulationPanel::onLogReceived(const QString& msg) {
 }
 
 void SimulationPanel::onSimulationFinished() {
-    m_logOutput->append("Simulation finished.");
+    qDebug() << "SimulationPanel::onSimulationFinished() called";
+    m_logOutput->append("\nSimulation finished (Ngspice).");
     
-    QString rawPath = m_lastNetlistPath;
-    rawPath.replace(".cir", ".raw");
+    // Show detailed log dialog
+    if (m_logOutput->toPlainText().length() > 0) {
+        QTimer::singleShot(500, this, [this]() {
+            SimulationLogDialog* dlg = new SimulationLogDialog(m_logOutput->toPlainText(), this);
+            dlg->setAttribute(Qt::WA_DeleteOnClose);
+            dlg->show();
+            dlg->raise();
+            dlg->activateWindow();
+        });
+    }
     
-    QFile::copy(m_lastNetlistPath.replace(".cir", ".raw"), rawPath);
-    plotResultsFromRaw(rawPath);
+    if (!m_lastNetlistPath.isEmpty()) {
+        QString rawPath = m_lastNetlistPath;
+        rawPath.replace(".cir", ".raw");
+        plotResultsFromRaw(rawPath);
+    }
 }
 
 void SimulationPanel::plotResultsFromRaw(const QString& path) {
@@ -1118,6 +1107,29 @@ void SimulationPanel::plotResultsFromRaw(const QString& path) {
         }
     }
 
+    // Populate WaveformViewer for Oscilloscope
+    if (m_waveformViewer) {
+        m_waveformViewer->clear();
+        for (int i = 1; i < varNames.size(); ++i) {
+            QVector<double> xData, yData;
+            QLineSeries* s = seriesList[i-1];
+            for (const auto& p : s->points()) {
+                xData << p.x();
+                yData << p.y();
+            }
+            m_waveformViewer->addSignal(varNames[i], xData, yData);
+            
+            // Auto-check if it's currently in m_signalList as checked
+            for (int j = 0; j < m_signalList->count(); ++j) {
+                if (m_signalList->item(j)->text() == varNames[i] && m_signalList->item(j)->checkState() == Qt::Checked) {
+                    m_waveformViewer->setSignalChecked(varNames[i], true);
+                }
+            }
+        }
+    }
+
+    if (m_waveformViewer) m_waveformViewer->endBatchUpdate();
+    
     m_chart->createDefaultAxes();
     if (!m_chart->axes(Qt::Horizontal).isEmpty()) {
         m_chart->axes(Qt::Horizontal).first()->setTitleText(varNames[0]);
@@ -1204,60 +1216,19 @@ void SimulationPanel::onSimResultsReady(const SimResults& results) {
     }
 
     plotBuiltinResults(results);
-    
-    if (m_oscilloscope) m_oscilloscope->clear();
-    if (m_logicAnalyzer) m_logicAnalyzer->clear();
-    if (m_voltmeter) m_voltmeter->clear();
-    if (m_ammeter) m_ammeter->clear();
-    if (m_wattmeter) m_wattmeter->clear();
-    if (m_freqCounter) m_freqCounter->clear();
-    if (m_logicProbe) m_logicProbe->clear();
 
-    int logicCh = 0;
-    if (m_oscilloscope) m_oscilloscope->beginBatchUpdate();
-    if (m_logicAnalyzer) m_logicAnalyzer->beginBatchUpdate();
-    for (const auto& wave : results.waveforms) {
-        QString name = QString::fromStdString(wave.name);
-        const int scopeStride = sampleStride(wave.xData.size(), 3000);
-        
-        if (m_oscilloscope) {
-            QVector<QPointF> scopePoints;
-            scopePoints.reserve(static_cast<int>((wave.xData.size() + static_cast<size_t>(scopeStride) - 1) / static_cast<size_t>(scopeStride)));
-            for (size_t i = 0; i < wave.xData.size(); i += static_cast<size_t>(scopeStride)) {
-                scopePoints.append(QPointF(wave.xData[i], wave.yData[i]));
-            }
-            m_oscilloscope->setChannelData(name, scopePoints);
-        }
+    qDebug() << "SimulationPanel::onSimResultsReady() - type:" << (int)results.analysisType;
 
-        if (m_logicAnalyzer && logicCh < 8) {
-            bool looksDigital = true;
-            for(double v : wave.yData) {
-                if (std::abs(v) > 0.5 && std::abs(v - 5.0) > 0.5 && std::abs(v - 3.3) > 0.5) {
-                    looksDigital = false;
-                    break;
-                }
-            }
-            
-            if (looksDigital) {
-                const int logicStride = sampleStride(wave.xData.size(), 2500);
-                QVector<QPointF> logicPoints;
-                logicPoints.reserve(static_cast<int>((wave.xData.size() + static_cast<size_t>(logicStride) - 1) / static_cast<size_t>(logicStride)));
-                for (size_t i = 0; i < wave.xData.size(); i += static_cast<size_t>(logicStride)) {
-                    logicPoints.append(QPointF(wave.xData[i], wave.yData[i] > 2.0 ? 1.0 : 0.0));
-                }
-                m_logicAnalyzer->setChannelData(name, logicPoints);
-                logicCh++;
-            }
-        }
+    // Show detailed log dialog (Only for offline analyses, not real-time)
+    if (results.analysisType != SimAnalysisType::RealTime && m_logOutput->toPlainText().length() > 0) {
+        QTimer::singleShot(500, this, [this]() {
+            SimulationLogDialog* dlg = new SimulationLogDialog(m_logOutput->toPlainText(), this);
+            dlg->setAttribute(Qt::WA_DeleteOnClose);
+            dlg->show();
+            dlg->raise();
+            dlg->activateWindow();
+        });
     }
-    if (m_oscilloscope) {
-        m_oscilloscope->autoScale();
-        m_oscilloscope->endBatchUpdate();
-    }
-    if (m_logicAnalyzer) m_logicAnalyzer->endBatchUpdate();
-
-    updateVirtualMeters(results);
-    emit resultsReady(results);
 }
 
 void SimulationPanel::onTimelineValueChanged(int value) {
@@ -1289,6 +1260,20 @@ void SimulationPanel::onTimelineValueChanged(int value) {
 }
 
 void SimulationPanel::plotBuiltinResults(const SimResults& results) {
+    if (m_waveformViewer) {
+        m_waveformViewer->beginBatchUpdate();
+        m_waveformViewer->clear();
+    }
+    if (m_logicAnalyzer) m_logicAnalyzer->clear();
+    if (m_voltmeter) m_voltmeter->clear();
+    if (m_ammeter) m_ammeter->clear();
+    if (m_wattmeter) m_wattmeter->clear();
+    if (m_freqCounter) m_freqCounter->clear();
+    if (m_logicProbe) m_logicProbe->clear();
+
+    int logicCh = 0;
+    if (m_logicAnalyzer) m_logicAnalyzer->beginBatchUpdate();
+
     QSet<QString> currentWaveNames;
     m_chart->removeAllSeries();
     for (auto* axis : m_chart->axes()) m_chart->removeAxis(axis);
@@ -1299,20 +1284,6 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
     m_signalList->blockSignals(true);
     m_signalList->clear();
     if (m_measurementsTable) m_measurementsTable->setRowCount(0);
-    
-    QString lastScopeChannel = m_scopeChannelCombo->currentText();
-    m_scopeChannelCombo->blockSignals(true);
-    m_scopeChannelCombo->clear();
-    for(const auto& w : results.waveforms) {
-        m_scopeChannelCombo->addItem(QString::fromStdString(w.name));
-    }
-    if (m_scopeChannelCombo->count() > 0) {
-        int idx = m_scopeChannelCombo->findText(lastScopeChannel);
-        if (idx >= 0) m_scopeChannelCombo->setCurrentIndex(idx);
-        else m_scopeChannelCombo->setCurrentIndex(0);
-    }
-    m_scopeChannelCombo->blockSignals(false);
-    if (m_oscilloscope) m_oscilloscope->setActiveChannel(m_scopeChannelCombo->currentText());
 
     if (results.waveforms.empty()) {
         if (!results.sensitivities.empty()) {
@@ -1403,6 +1374,38 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
         series->attachAxis(axisX);
         series->attachAxis(axisY);
 
+        if (m_waveformViewer) {
+            m_waveformViewer->addSignal(QString::fromStdString(wave.name), QVector<double>(wave.xData.begin(), wave.xData.end()), QVector<double>(wave.yData.begin(), wave.yData.end()));
+            
+            // Auto-check if it's currently in m_signalList as checked
+            for (int j = 0; j < m_signalList->count(); ++j) {
+                if (m_signalList->item(j)->text() == QString::fromStdString(wave.name) && m_signalList->item(j)->checkState() == Qt::Checked) {
+                    m_waveformViewer->setSignalChecked(QString::fromStdString(wave.name), true);
+                }
+            }
+        }
+        // endBatchUpdate is intentionally OUTSIDE the wave loop – moved below
+        
+        if (m_logicAnalyzer && logicCh < 8) {
+            bool looksDigital = true;
+            for(double v : wave.yData) {
+                if (std::abs(v) > 0.5 && std::abs(v - 5.0) > 0.5 && std::abs(v - 3.3) > 0.5) {
+                    looksDigital = false;
+                    break;
+                }
+            }
+            if (looksDigital) {
+                const int logicStride = sampleStride(wave.xData.size(), 2500);
+                QVector<QPointF> logicPoints;
+                logicPoints.reserve(static_cast<int>((wave.xData.size() + static_cast<size_t>(logicStride) - 1) / static_cast<size_t>(logicStride)));
+                for (size_t i = 0; i < wave.xData.size(); i += static_cast<size_t>(logicStride)) {
+                    logicPoints.append(QPointF(wave.xData[i], wave.yData[i] > 2.0 ? 1.0 : 0.0));
+                }
+                m_logicAnalyzer->setChannelData(QString::fromStdString(wave.name), logicPoints);
+                logicCh++;
+            }
+        }
+
         if (phaseSeries) {
             m_chart->addSeries(phaseSeries);
             phaseSeries->attachAxis(axisX);
@@ -1478,6 +1481,9 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
         }
     }
 
+    // Finalize the waveform viewer AFTER all waves have been added
+    if (m_waveformViewer) m_waveformViewer->endBatchUpdate();
+
     if (m_overlayPreviousRun && m_overlayPreviousRun->isChecked() && m_hasPreviousResults) {
         for (const auto& wave : m_previousResults.waveforms) {
             const QString prevName = QString::fromStdString(wave.name);
@@ -1503,6 +1509,14 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
         m_spectrumChart->addAxis(axisMag, Qt::AlignLeft);
         for(auto* s : m_spectrumChart->series()) s->attachAxis(axisMag);
     }
+
+    if (m_waveformViewer) {
+        m_waveformViewer->zoomFit();
+    }
+    if (m_logicAnalyzer) m_logicAnalyzer->endBatchUpdate();
+
+    updateVirtualMeters(results);
+    emit resultsReady(results);
 
     m_signalList->blockSignals(false);
 }

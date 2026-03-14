@@ -3,7 +3,7 @@
 #include "schematic_select_tool.h"
 #include "schematic_component_tool.h"
 #include "schematic_zoom_area_tool.h"
-#include "schematic_erase_tool.h"
+#include "schematic_scissors_tool.h"
 #include "schematic_probe_tool.h"
 
 #include "schematic_shape_tool.h"
@@ -12,6 +12,7 @@
 #include "schematic_bus_tool.h"
 #include "schematic_bus_entry_tool.h"
 #include "schematic_net_label_tool.h"
+#include "schematic_spice_directive_tool.h"
 #include "schematic_hierarchical_port_tool.h"
 #include "schematic_sheet_tool.h"
 
@@ -27,9 +28,11 @@ void SchematicToolRegistryBuiltIn::registerBuiltInTools() {
     registry.registerTool("Voltage Probe", []() { return new SchematicProbeTool("Voltage Probe", SchematicProbeTool::ProbeKind::Voltage); });
     registry.registerTool("Current Probe", []() { return new SchematicProbeTool("Current Probe", SchematicProbeTool::ProbeKind::Current); });
     registry.registerTool("Power Probe", []() { return new SchematicProbeTool("Power Probe", SchematicProbeTool::ProbeKind::Power); });
-    registry.registerTool("Erase", []() { return new SchematicEraseTool(); });
+    registry.registerTool("Scissors", []() { return new SchematicScissorsTool(); });
+    registry.registerTool("Erase", []() { return new SchematicScissorsTool(); }); // Alias
     registry.registerTool("Wire", []() { return new SchematicWireTool(); });
     registry.registerTool("Zoom Area", []() { return new SchematicZoomAreaTool(); });
+    registry.registerTool("Spice Directive", []() { return new SchematicSpiceDirectiveTool(); });
     registry.registerTool("No-Connect", []() { return new SchematicNoConnectTool(); });
     registry.registerTool("Bus", []() { return new SchematicBusTool(); });
     registry.registerTool("Bus Entry", []() { return new SchematicBusEntryTool(); });
@@ -87,6 +90,7 @@ void SchematicToolRegistryBuiltIn::registerBuiltInTools() {
     registry.registerTool("Voltage Source (Sine)", []() { return new SchematicComponentTool("Voltage_Source_Sine"); });
     registry.registerTool("Voltage Source (Pulse)", []() { return new SchematicComponentTool("Voltage_Source_Pulse"); });
     registry.registerTool("Voltage Source (AC)", []() { return new SchematicComponentTool("Voltage_Source_Sine"); }); // Alias
+    registry.registerTool("BV", []() { return new SchematicComponentTool("Voltage_Source_Behavioral"); });
     registry.registerTool("Voltmeter (DC)", []() { return new SchematicComponentTool("Voltmeter (DC)"); });
     registry.registerTool("Voltmeter (AC)", []() { return new SchematicComponentTool("Voltmeter (AC)"); });
     registry.registerTool("Ammeter (DC)", []() { return new SchematicComponentTool("Ammeter (DC)"); });

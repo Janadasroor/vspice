@@ -64,6 +64,9 @@ LogicEditorPanel::LogicEditorPanel(QGraphicsScene* scene, NetManager* netManager
 void LogicEditorPanel::setScene(QGraphicsScene* scene, NetManager* netManager) {
     m_scene = scene;
     m_netManager = netManager;
+    
+    if (m_editor) m_editor->setScene(scene, netManager);
+    if (m_geminiPanel) m_geminiPanel->setNetManager(netManager);
 }
 
 void LogicEditorPanel::refreshTemplates() {

@@ -869,6 +869,22 @@ SymbolDefinition SymbolEditor::symbolDefinition() const {
 //  SymbolEditor – UI Setup
 // ─────────────────────────────────────────────────────────────────────────────
 
+QIcon SymbolEditor::getThemeIcon(const QString& path) {
+    QIcon icon(path);
+    if (!ThemeManager::theme() || ThemeManager::theme()->type() == PCBTheme::Dark) {
+        return icon;
+    }
+
+    QPixmap pixmap = icon.pixmap(QSize(32, 32));
+    if (pixmap.isNull()) return icon;
+
+    QPainter painter(&pixmap);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(pixmap.rect(), ThemeManager::theme()->textColor());
+    painter.end();
+    return QIcon(pixmap);
+}
+
 void SymbolEditor::setupUI() {
     setWindowTitle("Symbol Editor");
     resize(1280, 850);
@@ -1448,10 +1464,10 @@ void SymbolEditor::createMenuBar() {
 
     // --- File Menu ---
     QMenu* fileMenu = mb->addMenu("&File");
-    fileMenu->addAction(QIcon(":/icons/toolbar_new.png"), "&New Symbol", this, &SymbolEditor::onNewSymbol, QKeySequence::New);
-    fileMenu->addAction(QIcon(":/icons/check.svg"), "&Save to Library", this, &SymbolEditor::onSaveToLibrary, QKeySequence::Save);
+    fileMenu->addAction(getThemeIcon(":/icons/toolbar_new.png"), "&New Symbol", this, &SymbolEditor::onNewSymbol, QKeySequence::New);
+    fileMenu->addAction(getThemeIcon(":/icons/check.svg"), "&Save to Library", this, &SymbolEditor::onSaveToLibrary, QKeySequence::Save);
     fileMenu->addSeparator();
-    fileMenu->addAction(QIcon(":/icons/schematic_editor.png"), "&Place in Schematic", this, &SymbolEditor::onPlaceInSchematic);
+    fileMenu->addAction(getThemeIcon(":/icons/schematic_editor.png"), "&Place in Schematic", this, &SymbolEditor::onPlaceInSchematic);
     fileMenu->addSeparator();
     fileMenu->addAction("Close", this, &QWidget::close, QKeySequence::Close);
 
@@ -1460,7 +1476,7 @@ void SymbolEditor::createMenuBar() {
     editMenu->addAction(m_undoStack->createUndoAction(this, "&Undo"));
     editMenu->addAction(m_undoStack->createRedoAction(this, "&Redo"));
     editMenu->addSeparator();
-    editMenu->addAction(QIcon(":/icons/tool_delete.svg"), "&Delete", this, &SymbolEditor::onDelete, QKeySequence::Delete);
+    editMenu->addAction(getThemeIcon(":/icons/tool_delete.svg"), "&Delete", this, &SymbolEditor::onDelete, QKeySequence::Delete);
     editMenu->addAction("Select &All", this, [this](){ 
         for (auto* it : m_scene->items()) it->setSelected(true); 
     }, QKeySequence::SelectAll);
@@ -1656,68 +1672,68 @@ void SymbolEditor::createToolBar() {
 
     // ── Top toolbar ──────────────────────────────────────────────────────────
 
-    QAction* newSym = m_toolbar->addAction(QIcon(":/icons/toolbar_new.png"), "New Symbol");
+    QAction* newSym = m_toolbar->addAction(getThemeIcon(":/icons/toolbar_new.png"), "New Symbol");
     newSym->setShortcut(QKeySequence::New);
     newSym->setToolTip("New Symbol (Ctrl+N)");
     connect(newSym, &QAction::triggered, this, &SymbolEditor::onNewSymbol);
 
-    QAction* saveAction = m_toolbar->addAction(QIcon(":/icons/check.svg"), "Save to Library");
+    QAction* saveAction = m_toolbar->addAction(getThemeIcon(":/icons/check.svg"), "Save to Library");
     saveAction->setShortcut(QKeySequence::Save);
     saveAction->setToolTip("Save to Library (Ctrl+S)");
     connect(saveAction, &QAction::triggered, this, &SymbolEditor::onSaveToLibrary);
 
-    auto* openSchAct = m_toolbar->addAction(QIcon(":/icons/schematic_editor.png"), "Open in Schematic");
+    auto* openSchAct = m_toolbar->addAction(getThemeIcon(":/icons/schematic_editor.png"), "Open in Schematic");
     openSchAct->setToolTip("Place this symbol in the current schematic");
     connect(openSchAct, &QAction::triggered, this, &SymbolEditor::onPlaceInSchematic);
 
-    auto* importImgAct = m_toolbar->addAction(QIcon(":/icons/tool_image.svg"), "Import Image");
+    auto* importImgAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_image.svg"), "Import Image");
     importImgAct->setToolTip("Import a bitmap image into the symbol");
     connect(importImgAct, &QAction::triggered, this, &SymbolEditor::onImportImage);
 
     m_toolbar->addSeparator();
 
     m_undoAction = m_undoStack->createUndoAction(this, "Undo");
-    m_undoAction->setIcon(QIcon(":/icons/undo.svg"));
+    m_undoAction->setIcon(getThemeIcon(":/icons/undo.svg"));
     m_undoAction->setShortcut(QKeySequence::Undo);
     m_toolbar->addAction(m_undoAction);
 
     m_redoAction = m_undoStack->createRedoAction(this, "Redo");
-    m_redoAction->setIcon(QIcon(":/icons/redo.svg"));
+    m_redoAction->setIcon(getThemeIcon(":/icons/redo.svg"));
     m_redoAction->setShortcut(QKeySequence::Redo);
     m_toolbar->addAction(m_redoAction);
 
-    m_deleteAction = new QAction(QIcon(":/icons/tool_delete.svg"), "Delete", this);
+    m_deleteAction = new QAction(getThemeIcon(":/icons/tool_delete.svg"), "Delete", this);
     m_deleteAction->setShortcut(QKeySequence::Delete);
     connect(m_deleteAction, &QAction::triggered, this, &SymbolEditor::onDelete);
     m_toolbar->addAction(m_deleteAction);
 
     m_toolbar->addSeparator();
 
-    auto* zoomIn  = m_toolbar->addAction(QIcon(":/icons/view_zoom_in.svg"),  "Zoom In");
-    auto* zoomOut = m_toolbar->addAction(QIcon(":/icons/view_zoom_out.svg"), "Zoom Out");
-    auto* zoomFit = m_toolbar->addAction(QIcon(":/icons/view_fit.svg"),      "Zoom Fit");
+    auto* zoomIn  = m_toolbar->addAction(getThemeIcon(":/icons/view_zoom_in.svg"),  "Zoom In");
+    auto* zoomOut = m_toolbar->addAction(getThemeIcon(":/icons/view_zoom_out.svg"), "Zoom Out");
+    auto* zoomFit = m_toolbar->addAction(getThemeIcon(":/icons/view_fit.svg"),      "Zoom Fit");
     connect(zoomIn,  &QAction::triggered, this, &SymbolEditor::onZoomIn);
     connect(zoomOut, &QAction::triggered, this, &SymbolEditor::onZoomOut);
     connect(zoomFit, &QAction::triggered, this, &SymbolEditor::onZoomFit);
 
     m_toolbar->addSeparator();
 
-    auto* rotateCWAct = m_toolbar->addAction(QIcon(":/icons/tool_rotate.svg"), "Rotate 90° CW");
+    auto* rotateCWAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_rotate.svg"), "Rotate 90° CW");
     rotateCWAct->setShortcut(QKeySequence("R"));
     connect(rotateCWAct, &QAction::triggered, this, &SymbolEditor::onRotateCW);
     this->addAction(rotateCWAct);
 
-    auto* rotateCCWAct = m_toolbar->addAction(QIcon(":/icons/tool_rotate_ccw.svg"), "Rotate 90° CCW");
+    auto* rotateCCWAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_rotate_ccw.svg"), "Rotate 90° CCW");
     rotateCCWAct->setShortcut(QKeySequence("Shift+R"));
     connect(rotateCCWAct, &QAction::triggered, this, &SymbolEditor::onRotateCCW);
     this->addAction(rotateCCWAct);
 
-    auto* flipH = m_toolbar->addAction(QIcon(":/icons/flip_h.svg"), "Flip Horizontal");
+    auto* flipH = m_toolbar->addAction(getThemeIcon(":/icons/flip_h.svg"), "Flip Horizontal");
     flipH->setShortcut(QKeySequence("X"));
     connect(flipH, &QAction::triggered, this, &SymbolEditor::onFlipH);
     this->addAction(flipH);
 
-    auto* flipV = m_toolbar->addAction(QIcon(":/icons/flip_v.svg"), "Flip Vertical");
+    auto* flipV = m_toolbar->addAction(getThemeIcon(":/icons/flip_v.svg"), "Flip Vertical");
     flipV->setShortcut(QKeySequence("Y"));
     connect(flipV, &QAction::triggered, this, &SymbolEditor::onFlipV);
     this->addAction(flipV);
@@ -1782,7 +1798,7 @@ void SymbolEditor::createToolBar() {
     connect(gridCombo, &QComboBox::currentTextChanged, this, &SymbolEditor::onGridSizeChanged);
     m_toolbar->addWidget(gridCombo);
 
-    auto* snapToggle = new QAction(QIcon(":/icons/snap_grid.svg"), "Magnet Pull", this);
+    auto* snapToggle = new QAction(getThemeIcon(":/icons/snap_grid.svg"), "Magnet Pull", this);
     snapToggle->setCheckable(true);
     snapToggle->setChecked(true);
     connect(snapToggle, &QAction::toggled, this, [this](bool on) {
@@ -1814,7 +1830,7 @@ void SymbolEditor::createToolBar() {
     });
     m_toolbar->addWidget(m_styleCombo);
 
-    auto* srcAct = m_toolbar->addAction(QIcon(":/icons/toolbar_refresh.png"), "Run SRC");
+    auto* srcAct = m_toolbar->addAction(getThemeIcon(":/icons/toolbar_refresh.png"), "Run SRC");
     srcAct->setToolTip("Run Symbol Rule Checker (F7)");
     srcAct->setShortcut(QKeySequence("F7"));
     connect(srcAct, &QAction::triggered, this, &SymbolEditor::onRunSRC);
@@ -1844,7 +1860,7 @@ void SymbolEditor::createToolBar() {
 
     m_toolbar->addSeparator();
 
-    auto* clearAct = m_toolbar->addAction(QIcon(":/icons/tool_clear.svg"), "Clear All");
+    auto* clearAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_clear.svg"), "Clear All");
     clearAct->setToolTip("Clear All Primitives");
     connect(clearAct, &QAction::triggered, this, &SymbolEditor::onClear);
 }
@@ -2078,7 +2094,7 @@ void SymbolEditor::populateLibraryTree() {
         if (lib->isBuiltIn()) continue;
         
         auto* libItem = new QTreeWidgetItem(m_libraryTree, {lib->name()});
-        libItem->setIcon(0, QIcon(":/icons/folder_closed.svg"));
+        libItem->setIcon(0, getThemeIcon(":/icons/folder_closed.svg"));
         libItem->setForeground(0, QBrush(QColor("#fbbf24"))); // Amber for user libs
 
         for (const QString& cat : lib->categories()) {
@@ -2086,11 +2102,11 @@ void SymbolEditor::populateLibraryTree() {
             if (syms.isEmpty()) continue;
 
             auto* catItem = new QTreeWidgetItem(libItem, {cat});
-            catItem->setIcon(0, QIcon(":/icons/folder_open.svg"));
+            catItem->setIcon(0, getThemeIcon(":/icons/folder_open.svg"));
 
             for (SymbolDefinition* sym : syms) {
                 auto* symItem = new QTreeWidgetItem(catItem, {sym->name()});
-                symItem->setIcon(0, QIcon(":/icons/component_file.svg"));
+                symItem->setIcon(0, getThemeIcon(":/icons/component_file.svg"));
                 symItem->setData(0, Qt::UserRole, lib->name());
             }
         }
@@ -2101,7 +2117,7 @@ void SymbolEditor::populateLibraryTree() {
         if (!lib->isBuiltIn()) continue;
 
         auto* libItem = new QTreeWidgetItem(m_libraryTree, {lib->name() + " [Built-in]"});
-        libItem->setIcon(0, QIcon(":/icons/folder_closed.svg"));
+        libItem->setIcon(0, getThemeIcon(":/icons/folder_closed.svg"));
         libItem->setForeground(0, QBrush(QColor("#94a3b8"))); // Grey for built-ins
 
         for (const QString& cat : lib->categories()) {
@@ -2109,11 +2125,11 @@ void SymbolEditor::populateLibraryTree() {
             if (syms.isEmpty()) continue;
 
             auto* catItem = new QTreeWidgetItem(libItem, {cat});
-            catItem->setIcon(0, QIcon(":/icons/folder_open.svg"));
+            catItem->setIcon(0, getThemeIcon(":/icons/folder_open.svg"));
 
             for (SymbolDefinition* sym : syms) {
                 auto* symItem = new QTreeWidgetItem(catItem, {sym->name()});
-                symItem->setIcon(0, QIcon(":/icons/component_file.svg"));
+                symItem->setIcon(0, getThemeIcon(":/icons/component_file.svg"));
                 symItem->setData(0, Qt::UserRole, lib->name());
             }
         }
@@ -3657,13 +3673,13 @@ void SymbolEditor::onLibraryContextMenu(const QPoint& pos) {
     QMenu menu(this);
     menu.setStyleSheet(ThemeManager::theme() ? ThemeManager::theme()->widgetStylesheet() : "");
 
-    QAction* editAct = menu.addAction(QIcon(":/icons/tool_line.svg"), "Edit Symbol");
-    QAction* dupAct  = menu.addAction(QIcon(":/icons/tool_duplicate.svg"), "Duplicate / Copy");
-    QAction* deriveAct = menu.addAction(QIcon(":/icons/tool_bezier.svg"), "Create Derived Symbol");
+    QAction* editAct = menu.addAction(getThemeIcon(":/icons/tool_line.svg"), "Edit Symbol");
+    QAction* dupAct  = menu.addAction(getThemeIcon(":/icons/tool_duplicate.svg"), "Duplicate / Copy");
+    QAction* deriveAct = menu.addAction(getThemeIcon(":/icons/tool_bezier.svg"), "Create Derived Symbol");
     menu.addSeparator();
-    QAction* placeAct = menu.addAction(QIcon(":/icons/nav_pcb.svg"), "Place in Schematic");
+    QAction* placeAct = menu.addAction(getThemeIcon(":/icons/nav_pcb.svg"), "Place in Schematic");
     menu.addSeparator();
-    QAction* delAct = menu.addAction(QIcon(":/icons/tool_delete.svg"), "Delete from Library");
+    QAction* delAct = menu.addAction(getThemeIcon(":/icons/tool_delete.svg"), "Delete from Library");
 
     if (lib->isBuiltIn()) {
         editAct->setText("View Symbol (Read-Only)");
@@ -3758,14 +3774,14 @@ void SymbolEditor::onCanvasContextMenu(const QPoint& pos) {
             m_scene->clearSelection();
             item->setSelected(true);
         }
-        menu.addAction(QIcon(":/icons/tool_duplicate.svg"), "Duplicate", this, &SymbolEditor::onDuplicate);
-        menu.addAction(QIcon(":/icons/undo.svg"), "Copy", this, &SymbolEditor::onCopy);
+        menu.addAction(getThemeIcon(":/icons/tool_duplicate.svg"), "Duplicate", this, &SymbolEditor::onDuplicate);
+        menu.addAction(getThemeIcon(":/icons/undo.svg"), "Copy", this, &SymbolEditor::onCopy);
         menu.addSeparator();
-        menu.addAction(QIcon(":/icons/tool_rotate.svg"), "Rotate 90° CW", this, &SymbolEditor::onRotateCW);
-        menu.addAction(QIcon(":/icons/tool_rotate_ccw.svg"), "Rotate 90° CCW", this, &SymbolEditor::onRotateCCW);
+        menu.addAction(getThemeIcon(":/icons/tool_rotate.svg"), "Rotate 90° CW", this, &SymbolEditor::onRotateCW);
+        menu.addAction(getThemeIcon(":/icons/tool_rotate_ccw.svg"), "Rotate 90° CCW", this, &SymbolEditor::onRotateCCW);
         QMenu* flipMenu = menu.addMenu("Flip");
-        flipMenu->addAction(QIcon(":/icons/flip_h.svg"), "Flip Horizontal", this, &SymbolEditor::onFlipH);
-        flipMenu->addAction(QIcon(":/icons/flip_v.svg"), "Flip Vertical", this, &SymbolEditor::onFlipV);
+        flipMenu->addAction(getThemeIcon(":/icons/flip_h.svg"), "Flip Horizontal", this, &SymbolEditor::onFlipH);
+        flipMenu->addAction(getThemeIcon(":/icons/flip_v.svg"), "Flip Vertical", this, &SymbolEditor::onFlipV);
         
         menu.addSeparator();
         menu.addAction("Match Spacing...", this, &SymbolEditor::onMatchSpacing);
@@ -3773,43 +3789,43 @@ void SymbolEditor::onCanvasContextMenu(const QPoint& pos) {
         menu.addAction("Copy to Alternate Style", this, &SymbolEditor::onCopyToAlternateStyle);
 
         menu.addSeparator();
-        menu.addAction(QIcon(":/icons/tool_delete.svg"), "Delete", this, &SymbolEditor::onDelete);
+        menu.addAction(getThemeIcon(":/icons/tool_delete.svg"), "Delete", this, &SymbolEditor::onDelete);
     } else {
         // Empty space context menu
-        menu.addAction(QIcon(":/icons/toolbar_new.png"), "New Symbol", this, &SymbolEditor::onNewSymbol);
-        menu.addAction(QIcon(":/icons/check.svg"), "Save to Library", this, &SymbolEditor::onSaveToLibrary);
-        menu.addAction(QIcon(":/icons/schematic_editor.png"), "Place in Schematic", this, &SymbolEditor::onPlaceInSchematic);
+        menu.addAction(getThemeIcon(":/icons/toolbar_new.png"), "New Symbol", this, &SymbolEditor::onNewSymbol);
+        menu.addAction(getThemeIcon(":/icons/check.svg"), "Save to Library", this, &SymbolEditor::onSaveToLibrary);
+        menu.addAction(getThemeIcon(":/icons/schematic_editor.png"), "Place in Schematic", this, &SymbolEditor::onPlaceInSchematic);
         
         menu.addSeparator();
-        menu.addAction(QIcon(":/icons/redo.svg"), "Paste", this, &SymbolEditor::onPaste);
+        menu.addAction(getThemeIcon(":/icons/redo.svg"), "Paste", this, &SymbolEditor::onPaste);
         menu.addAction("Select All", QKeySequence::SelectAll, [this](){ 
             for (auto* it : m_scene->items()) it->setSelected(true); 
         });
         
         menu.addSeparator();
-        menu.addAction(QIcon(":/icons/view_fit.svg"), "Zoom Fit", this, &SymbolEditor::onZoomFit);
-        menu.addAction(QIcon(":/icons/view_zoom_in.svg"), "Zoom Selection", this, &SymbolEditor::onZoomSelection);
+        menu.addAction(getThemeIcon(":/icons/view_fit.svg"), "Zoom Fit", this, &SymbolEditor::onZoomFit);
+        menu.addAction(getThemeIcon(":/icons/view_zoom_in.svg"), "Zoom Selection", this, &SymbolEditor::onZoomSelection);
         
         menu.addSeparator();
         QMenu* addMenu = menu.addMenu("Add Primitive");
-        addMenu->addAction(QIcon(":/icons/tool_pin.svg"), "Pin", [this, pos]() { m_currentTool = Pin; updatePinPreview(m_view->mapToScene(pos)); });
-        addMenu->addAction(QIcon(":/icons/tool_line.svg"), "Line", [this]() { m_currentTool = Line; });
-        addMenu->addAction(QIcon(":/icons/tool_rect.svg"), "Rectangle", [this]() { m_currentTool = Rect; });
-        addMenu->addAction(QIcon(":/icons/tool_circle.svg"), "Circle", [this]() { m_currentTool = Circle; });
-        addMenu->addAction(QIcon(":/icons/tool_arc.svg"), "Arc", [this]() { m_currentTool = Arc; });
-        addMenu->addAction(QIcon(":/icons/tool_polygon.svg"), "Polygon", [this]() { m_currentTool = Polygon; });
-        addMenu->addAction(QIcon(":/icons/tool_bezier.svg"), "Bezier Curve", [this]() { m_currentTool = Bezier; });
-        addMenu->addAction(QIcon(":/icons/tool_text.svg"), "Text", [this, pos]() { 
+        addMenu->addAction(getThemeIcon(":/icons/tool_pin.svg"), "Pin", [this, pos]() { m_currentTool = Pin; updatePinPreview(m_view->mapToScene(pos)); });
+        addMenu->addAction(getThemeIcon(":/icons/tool_line.svg"), "Line", [this]() { m_currentTool = Line; });
+        addMenu->addAction(getThemeIcon(":/icons/tool_rect.svg"), "Rectangle", [this]() { m_currentTool = Rect; });
+        addMenu->addAction(getThemeIcon(":/icons/tool_circle.svg"), "Circle", [this]() { m_currentTool = Circle; });
+        addMenu->addAction(getThemeIcon(":/icons/tool_arc.svg"), "Arc", [this]() { m_currentTool = Arc; });
+        addMenu->addAction(getThemeIcon(":/icons/tool_polygon.svg"), "Polygon", [this]() { m_currentTool = Polygon; });
+        addMenu->addAction(getThemeIcon(":/icons/tool_bezier.svg"), "Bezier Curve", [this]() { m_currentTool = Bezier; });
+        addMenu->addAction(getThemeIcon(":/icons/tool_text.svg"), "Text", [this, pos]() { 
             m_currentTool = Text; 
             QPointF scenePos = m_view->snapToGrid(m_view->mapToScene(pos));
             emit m_view->pointClicked(scenePos); 
         });
         addMenu->addSeparator();
-        addMenu->addAction(QIcon(":/icons/tool_anchor.svg"), "Set Anchor Point", [this]() { m_currentTool = Anchor; });
-        addMenu->addAction(QIcon(":/icons/toolbar_refresh.png"), "Import Image", this, &SymbolEditor::onImportImage);
+        addMenu->addAction(getThemeIcon(":/icons/tool_anchor.svg"), "Set Anchor Point", [this]() { m_currentTool = Anchor; });
+        addMenu->addAction(getThemeIcon(":/icons/toolbar_refresh.png"), "Import Image", this, &SymbolEditor::onImportImage);
 
         menu.addSeparator();
-        QAction* snapAct = menu.addAction(QIcon(":/icons/snap_grid.svg"), "Magnet Pull (Snapping)");
+        QAction* snapAct = menu.addAction(getThemeIcon(":/icons/snap_grid.svg"), "Magnet Pull (Snapping)");
         snapAct->setCheckable(true);
         snapAct->setChecked(m_view ? m_view->snapToGridEnabled() : true);
         connect(snapAct, &QAction::toggled, this, [this](bool on) {

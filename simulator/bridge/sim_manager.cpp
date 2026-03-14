@@ -3,6 +3,8 @@
 #include "../../schematic/items/smart_signal_item.h"
 #include <QDebug>
 #include <QTimer>
+#include <QtConcurrent>
+#include <QFutureWatcher>
 
 SimManager& SimManager::instance() {
     static SimManager inst;
@@ -41,34 +43,56 @@ void SimManager::runDCOP(QGraphicsScene* scene, NetManager* netMgr) {
 }
 
 void SimManager::runTransient(QGraphicsScene* scene, NetManager* netMgr, double tStop, double tStep) {
-    emit simulationStarted();
-    emit logMessage(QString("Building netlist for transient analysis (Stop: %1s, Step: %2s)...").arg(tStop).arg(tStep));
-
-    SimNetlist netlist = SimSchematicBridge::buildNetlist(scene, netMgr);
-    
-    SimAnalysisConfig config;
-    config.type = SimAnalysisType::Transient;
-    config.tStart = 0;
-    config.tStop = tStop;
-    config.tStep = tStep;
-    // Default GUI runs to bounded storage to avoid unbounded RAM growth on long traces.
-    config.transientStorageMode = SimTransientStorageMode::AutoDecimate;
-    config.transientMaxStoredPoints = 50000;
-    netlist.setAnalysis(config);
-
-    SimEngine engine;
-    SimResults results = engine.run(netlist);
-
-    if (results.waveforms.empty()) {
-        if (!results.fixSuggestions.empty()) {
-            emit logMessage(QString("Convergence hint: %1").arg(QString::fromStdString(results.fixSuggestions.front())));
-        }
-        emit errorOccurred("Transient simulation failed (no data generated).");
+    if (m_control) {
+        emit logMessage("A simulation is already running.");
         return;
     }
 
-    emit logMessage(QString("Simulation finished with %1 waveforms.").arg(results.waveforms.size()));
-    emit simulationFinished(results);
+    emit simulationStarted();
+    emit logMessage(QString("Building netlist for transient analysis (Stop: %1s, Step: %2s)...").arg(tStop).arg(tStep));
+
+    m_control = new SimControl();
+    m_paused = false;
+
+    // Offload to background thread (including netlist building)
+    QFuture<SimResults> future = QtConcurrent::run([scene, netMgr, tStop, tStep, this]() {
+        SimNetlist netlist = SimSchematicBridge::buildNetlist(scene, netMgr);
+        
+        SimAnalysisConfig config;
+        config.type = SimAnalysisType::Transient;
+        config.tStart = 0;
+        config.tStop = tStop;
+        config.tStep = tStep;
+        config.transientStorageMode = SimTransientStorageMode::AutoDecimate;
+        config.transientMaxStoredPoints = 50000;
+        netlist.setAnalysis(config);
+
+        SimEngine engine;
+        return engine.run(netlist, m_control);
+    });
+
+    auto* watcher = new QFutureWatcher<SimResults>(this);
+    connect(watcher, &QFutureWatcher<SimResults>::finished, this, [this, watcher]() {
+        SimResults results = watcher->result();
+        
+        delete m_control;
+        m_control = nullptr;
+        m_paused = false;
+        emit simulationPaused(false);
+
+        if (results.waveforms.empty()) {
+            if (!results.fixSuggestions.empty()) {
+                emit logMessage(QString("Convergence hint: %1").arg(QString::fromStdString(results.fixSuggestions.front())));
+            }
+            emit errorOccurred("Transient simulation failed or stopped.");
+        } else {
+            emit logMessage(QString("Simulation finished with %1 waveforms.").arg(results.waveforms.size()));
+            emit simulationFinished(results);
+        }
+        
+        watcher->deleteLater();
+    });
+    watcher->setFuture(future);
 }
 
 void SimManager::runAC(QGraphicsScene* scene, NetManager* netMgr, double fStart, double fStop, int points) {
@@ -232,6 +256,73 @@ void SimManager::onRealTimeTick() {
     }
 }
 
+QStringList SimManager::preflightCheck(QGraphicsScene* scene, NetManager* netMgr, SimNetlist& outNetlist) {
+    outNetlist = SimSchematicBridge::buildNetlist(scene, netMgr);
+    outNetlist.flatten();
+    
+    QStringList diag;
+    for (const auto& d : outNetlist.diagnostics()) {
+        QString qd = QString::fromStdString(d);
+        if (!qd.trimmed().isEmpty()) diag << qd;
+    }
+
+    // Heuristics: check for missing ground
+    bool hasGnd = false;
+    for (const auto& comp : outNetlist.components()) {
+        for (int node : comp.nodes) if (node == 0) { hasGnd = true; break; }
+        if (hasGnd) break;
+    }
+    if (!hasGnd && outNetlist.nodeCount() > 1) {
+        diag << "[error] No ground (node 0) found in circuit. Please add a GND symbol.";
+    }
+
+    return diag;
+}
+
+void SimManager::runWithNetlist(const SimNetlist& netlist) {
+    if (m_control) {
+        emit logMessage("A simulation is already running.");
+        return;
+    }
+
+    emit simulationStarted();
+    
+    m_control = new SimControl();
+    m_paused = false;
+
+    QFuture<SimResults> future = QtConcurrent::run([netlist, this]() {
+        SimEngine engine;
+        return engine.run(netlist, m_control);
+    });
+
+    auto* watcher = new QFutureWatcher<SimResults>(this);
+    connect(watcher, &QFutureWatcher<SimResults>::finished, this, [this, watcher]() {
+        SimResults results = watcher->result();
+        
+        delete m_control;
+        m_control = nullptr;
+        m_paused = false;
+        emit simulationPaused(false);
+
+        if (results.waveforms.empty() && results.nodeVoltages.empty()) {
+            if (!results.fixSuggestions.empty()) {
+                emit logMessage(QString("Convergence hint: %1").arg(QString::fromStdString(results.fixSuggestions.front())));
+            }
+            emit errorOccurred("Simulation failed or stopped.");
+        } else {
+            if (results.analysisType == SimAnalysisType::OP) {
+                emit logMessage("DCOP simulation successful.");
+            } else {
+                emit logMessage(QString("Simulation finished with %1 waveforms.").arg(results.waveforms.size()));
+            }
+            emit simulationFinished(results);
+        }
+        
+        watcher->deleteLater();
+    });
+    watcher->setFuture(future);
+}
+
 void SimManager::stopRealTime() {
     if (m_rtTimer) {
         m_rtTimer->stop();
@@ -262,5 +353,20 @@ void SimManager::onInteractiveStateChanged() {
 
 void SimManager::stopAll() {
     stopRealTime();
-    emit logMessage("Stop requested. Real-time simulation was stopped if active.");
+    if (m_control) {
+        m_control->stopRequested = true;
+        m_control->pauseRequested = false; // Unpause so it can see stop request
+        emit logMessage("Stopping active simulation...");
+    } else {
+        emit logMessage("Stop requested. Real-time simulation was stopped if active.");
+    }
+}
+
+void SimManager::pauseSimulation(bool pause) {
+    if (m_control) {
+        m_control->pauseRequested = pause;
+        m_paused = pause;
+        emit simulationPaused(pause);
+        emit logMessage(pause ? "Simulation paused." : "Simulation resumed.");
+    }
 }

@@ -64,7 +64,29 @@ void CapacitorModel::stampAC(SimComplexMNAMatrix& matrix, const SimNetlist&, con
     matrix.addG(n1, n1, y); matrix.addG(n2, n2, y);
     matrix.addG(n1, n2, -y); matrix.addG(n2, n1, -y);
 }
-double CapacitorModel::calculateLTE(const SimComponentInstance&, double, const std::vector<double>&, const std::vector<double>&, const std::vector<double>&, int, int&) { return 0; }
+double CapacitorModel::calculateLTE(const SimComponentInstance& inst, double h, const std::vector<double>& sol, const std::vector<double>& prevSol, const std::vector<double>& prev2Sol, int, int&, double relTol, double absTol) {
+    if (inst.nodes.size() < 2 || prev2Sol.empty()) return 0.0;
+    const int n1 = inst.nodes[0], n2 = inst.nodes[1];
+    
+    auto getV = [&](const std::vector<double>& s) {
+        double v1 = (n1 > 0) ? s[n1 - 1] : 0.0;
+        double v2 = (n2 > 0) ? s[n2 - 1] : 0.0;
+        return v1 - v2;
+    };
+
+    double vn = getV(sol);
+    double vn_1 = getV(prevSol);
+    double vn_2 = getV(prev2Sol);
+
+    // Truncation error in Volts
+    double lteRel = (1.0 / 12.0) * std::abs(vn - 2.0 * vn_1 + vn_2);
+    
+    // Scale tolerance based on local signal magnitude
+    double scale = std::max({1.0, std::abs(vn), std::abs(vn_1)});
+    double tol = absTol + relTol * scale;
+    
+    return lteRel / tol;
+}
 
 // --- Inductor Model ---
 void InductorModel::stamp(SimMNAMatrix& matrix, const SimNetlist&, const SimComponentInstance& inst, int& vSourceCounter, double) {
@@ -113,7 +135,22 @@ void InductorModel::stampAC(SimComplexMNAMatrix& matrix, const SimNetlist& netli
     matrix.addC(vIdx, n1, 1.0); matrix.addC(vIdx, n2, -1.0);
     matrix.addD(vIdx, vIdx, -z);
 }
-double InductorModel::calculateLTE(const SimComponentInstance&, double, const std::vector<double>&, const std::vector<double>&, const std::vector<double>&, int, int&) { return 0; }
+double InductorModel::calculateLTE(const SimComponentInstance& inst, double, const std::vector<double>& sol, const std::vector<double>& prevSol, const std::vector<double>& prev2Sol, int nodes, int& vSourceCounter, double relTol, double absTol) {
+    if (prev2Sol.empty()) { vSourceCounter++; return 0.0; }
+    const int vIdx = nodes - 1 + vSourceCounter++;
+    
+    if (vIdx < 0 || vIdx >= static_cast<int>(sol.size())) return 0.0;
+
+    double in = sol[vIdx];
+    double in_1 = prevSol[vIdx];
+    double in_2 = prev2Sol[vIdx];
+
+    double lteRel = (1.0 / 12.0) * std::abs(in - 2.0 * in_1 + in_2);
+    double scale = std::max({1.0, std::abs(in), std::abs(in_1)});
+    double tol = absTol + relTol * scale;
+
+    return lteRel / tol;
+}
 
 // --- Voltage Source Model ---
 void VoltageSourceModel::stamp(SimMNAMatrix& matrix, const SimNetlist&, const SimComponentInstance& inst, int& vSourceCounter, double sourceFactor) {
@@ -166,10 +203,23 @@ void VoltageSourceModel::stampTransient(SimMNAMatrix& matrix, const SimNetlist&,
             const double amp = inst.params.count("v_ampl") ? inst.params.at("v_ampl") : 1.0;
             const double freq = inst.params.count("v_freq") ? inst.params.at("v_freq") : 1000.0;
             const double delay = inst.params.count("v_delay") ? inst.params.at("v_delay") : 0.0;
+            const double theta = inst.params.count("v_theta") ? inst.params.at("v_theta") : 0.0;
             const double phaseDeg = inst.params.count("v_phase") ? inst.params.at("v_phase") : 0.0;
+            const double ncycles = inst.params.count("v_ncycles") ? inst.params.at("v_ncycles") : 0.0;
+            
             const double phase = phaseDeg * M_PI / 180.0;
             const double te = (t > delay) ? (t - delay) : 0.0;
-            val = off + amp * std::sin(2.0 * M_PI * freq * te + phase);
+            
+            // Damping (Theta)
+            double damping = 1.0;
+            if (theta != 0 && t > delay) damping = std::exp(-te * theta);
+            
+            val = off + amp * damping * std::sin(2.0 * M_PI * freq * te + phase);
+            
+            // NCYCLES support: source returns to offset after n cycles
+            if (ncycles > 0 && te > (ncycles / freq)) {
+                val = off;
+            }
         } else if (w == 2) { // PULSE
             const double v1 = inst.params.count("pulse_v1") ? inst.params.at("pulse_v1") : 0.0;
             const double v2 = inst.params.count("pulse_v2") ? inst.params.at("pulse_v2") : 5.0;
@@ -343,13 +393,24 @@ void CurrentSourceModel::stampTransient(SimMNAMatrix& matrix, const SimNetlist&,
         const int w = static_cast<int>(inst.params.at("wave_type"));
         if (w == 1) { // SIN
             const double off = inst.params.count("i_offset") ? inst.params.at("i_offset") : 0.0;
-            const double amp = inst.params.count("i_ampl") ? inst.params.at("i_ampl") : 1e-3;
+            const double amp = inst.params.count("i_ampl") ? inst.params.at("i_ampl") : 1.0; // Consistent default 1.0
             const double freq = inst.params.count("i_freq") ? inst.params.at("i_freq") : 1000.0;
             const double delay = inst.params.count("i_delay") ? inst.params.at("i_delay") : 0.0;
+            const double theta = inst.params.count("i_theta") ? inst.params.at("i_theta") : 0.0;
             const double phaseDeg = inst.params.count("i_phase") ? inst.params.at("i_phase") : 0.0;
+            const double ncycles = inst.params.count("i_ncycles") ? inst.params.at("i_ncycles") : 0.0;
+
             const double phase = phaseDeg * M_PI / 180.0;
             const double te = (t > delay) ? (t - delay) : 0.0;
-            val = off + amp * std::sin(2.0 * M_PI * freq * te + phase);
+
+            double damping = 1.0;
+            if (theta != 0 && t > delay) damping = std::exp(-te * theta);
+
+            val = off + amp * damping * std::sin(2.0 * M_PI * freq * te + phase);
+
+            if (ncycles > 0 && te > (ncycles / freq)) {
+                val = off;
+            }
         } else if (w == 2) { // PULSE
             const double i1 = inst.params.count("pulse_i1") ? inst.params.at("pulse_i1") : 0.0;
             const double i2 = inst.params.count("pulse_i2") ? inst.params.at("pulse_i2") : 1e-3;

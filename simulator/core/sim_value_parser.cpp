@@ -17,47 +17,39 @@ bool splitSuffix(const QString& suffixRaw, double& factor, QString& unit) {
     suffix.replace(QChar(0x2126), "ohm"); // ohm sign
 
     factor = 1.0;
-    unit.clear();
+    unit = suffix;
 
     if (suffix.isEmpty()) {
         return true;
     }
 
-    if (suffix == "meg") {
+    // SPICE standard prefixes. Order matters: 'meg' before 'm'.
+    if (suffix.startsWith("meg")) {
         factor = 1e6;
         return true;
     }
-
-    const struct Prefix {
-        const char* key;
-        double factor;
-    } prefixes[] = {
-        {"t", 1e12}, {"g", 1e9}, {"k", 1e3}, {"m", 1e-3},
-        {"u", 1e-6}, {"n", 1e-9}, {"p", 1e-12}, {"f", 1e-15},
-    };
-
-    for (const auto& p : prefixes) {
-        const QString key = QString::fromLatin1(p.key);
-        if (suffix == key) {
-            factor = p.factor;
-            return true;
-        }
-        if (suffix.startsWith(key)) {
-            const QString rest = suffix.mid(key.size());
-            if (!rest.isEmpty() && unitAllowed(rest)) {
-                factor = p.factor;
-                unit = rest;
-                return true;
-            }
-        }
-    }
-
-    if (unitAllowed(suffix)) {
-        unit = suffix;
+    if (suffix.startsWith("mil")) {
+        factor = 25.4e-6; // 0.001 inch
         return true;
     }
 
-    return false;
+    static const struct Prefix {
+        char key;
+        double factor;
+    } prefixes[] = {
+        {'t', 1e12}, {'g', 1e9}, {'k', 1e3}, {'m', 1e-3},
+        {'u', 1e-6}, {'n', 1e-9}, {'p', 1e-12}, {'f', 1e-15},
+    };
+
+    for (const auto& p : prefixes) {
+        if (suffix[0] == p.key) {
+            factor = p.factor;
+            return true;
+        }
+    }
+
+    // No prefix found, standard unit or just numeric trailing chars are ignored in SPICE
+    return true;
 }
 } // namespace
 

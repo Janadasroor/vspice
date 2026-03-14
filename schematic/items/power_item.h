@@ -16,7 +16,7 @@ public:
     PowerItem(QPointF pos = QPointF(), PowerType type = GND, QGraphicsItem *parent = nullptr);
 
     // SchematicItem interface
-    QString itemTypeName() const override { return "Power"; }
+    QString itemTypeName() const override;
     ItemType itemType() const override { return SchematicItem::PowerType; }
     QString referencePrefix() const override { return "#PWR"; } 
     void rebuildPrimitives() override { buildPrimitives(); }

@@ -114,6 +114,7 @@ private slots:
 private:
     void applyTheme();
     void setupUI();
+    QIcon getThemeIcon(const QString& path);
     void createMenuBar();
     void createToolBar();
     void rebuildPanelsMenu();

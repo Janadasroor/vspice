@@ -188,7 +188,7 @@ bool SchematicItem::fromJson(const QJsonObject& json) {
     m_tolerances.clear();
     if (json.contains("tolerances")) {
         QJsonObject tols = json["tolerances"].toObject();
-        for (auto it = tols.begin(); it != tols.end(); ++it) m_tolerances[it.key()] = it.value().toDouble();
+        for (auto it = tols.begin(); it != tols.end(); ++it) m_tolerances[it.key()] = it.value().toString();
     }
     loadPinPadMappingFromJson(json);
 
@@ -199,6 +199,7 @@ bool SchematicItem::fromJson(const QJsonObject& json) {
         m_valueLabelItem->setPos(json["valLabelX"].toDouble(), json["valLabelY"].toDouble());
     }
     
+    updateLabelText();
     update();
     return true;
 }

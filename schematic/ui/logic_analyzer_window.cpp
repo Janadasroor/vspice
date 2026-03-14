@@ -7,6 +7,7 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QInputDialog>
+#include <QCloseEvent>
 #include <algorithm>
 
 LogicAnalyzerWindow::LogicAnalyzerWindow(const QString& title, QWidget* parent)
@@ -145,4 +146,9 @@ void LogicAnalyzerWindow::updateData(const SimResults& results) {
 
 void LogicAnalyzerWindow::clear() {
     m_la->clear();
+}
+
+void LogicAnalyzerWindow::closeEvent(QCloseEvent* event) {
+    emit windowClosing(m_id);
+    QMainWindow::closeEvent(event);
 }

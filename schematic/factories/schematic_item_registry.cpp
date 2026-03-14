@@ -26,6 +26,7 @@
 #include "oscilloscope_item.h"
 #include "smart_signal_item.h"
 #include "instrument_probe_item.h"
+#include "schematic_spice_directive_item.h"
 
 using Flux::Model::SymbolDefinition;
 
@@ -217,40 +218,49 @@ void SchematicItemRegistry::registerBuiltInItems() {
     addLogicGate("Gate_NOT", "74HC04");
 
     // Register Power items
-    factory.registerItemType("Power", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
-        return new PowerItem(pos, PowerItem::GND, parent);
+    // Each lambda restores from properties (custom net names, position, etc.) via fromJson
+    auto makePowerItem = [](PowerItem::PowerType type, QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        auto* item = new PowerItem(pos, type, parent);
+        if (!properties.isEmpty()) item->fromJson(properties);
+        return item;
+    };
+
+    factory.registerItemType("Power", [makePowerItem](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        // Legacy fallback: read power_type int from old files saved with type="Power"
+        PowerItem::PowerType t = (PowerItem::PowerType)properties.value("power_type").toInt(PowerItem::GND);
+        return makePowerItem(t, pos, properties, parent);
     });
 
-    factory.registerItemType("GND", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
-        return new PowerItem(pos, PowerItem::GND, parent);
+    factory.registerItemType("GND", [makePowerItem](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        return makePowerItem(PowerItem::GND, pos, properties, parent);
     });
 
-    factory.registerItemType("VCC", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
-        return new PowerItem(pos, PowerItem::VCC, parent);
+    factory.registerItemType("VCC", [makePowerItem](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        return makePowerItem(PowerItem::VCC, pos, properties, parent);
     });
 
-    factory.registerItemType("VDD", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
-        return new PowerItem(pos, PowerItem::VDD, parent);
+    factory.registerItemType("VDD", [makePowerItem](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        return makePowerItem(PowerItem::VDD, pos, properties, parent);
     });
 
-    factory.registerItemType("VSS", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
-        return new PowerItem(pos, PowerItem::VSS, parent);
+    factory.registerItemType("VSS", [makePowerItem](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        return makePowerItem(PowerItem::VSS, pos, properties, parent);
     });
 
-    factory.registerItemType("VBAT", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
-        return new PowerItem(pos, PowerItem::VBAT, parent);
+    factory.registerItemType("VBAT", [makePowerItem](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        return makePowerItem(PowerItem::VBAT, pos, properties, parent);
     });
 
-    factory.registerItemType("3.3V", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
-        return new PowerItem(pos, PowerItem::THREE_V_THREE, parent);
+    factory.registerItemType("3.3V", [makePowerItem](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        return makePowerItem(PowerItem::THREE_V_THREE, pos, properties, parent);
     });
 
-    factory.registerItemType("5V", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
-        return new PowerItem(pos, PowerItem::FIVE_V, parent);
+    factory.registerItemType("5V", [makePowerItem](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        return makePowerItem(PowerItem::FIVE_V, pos, properties, parent);
     });
 
-    factory.registerItemType("12V", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
-        return new PowerItem(pos, PowerItem::TWELVE_V, parent);
+    factory.registerItemType("12V", [makePowerItem](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        return makePowerItem(PowerItem::TWELVE_V, pos, properties, parent);
     });
 
     factory.registerItemType("Net Label", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
@@ -282,6 +292,18 @@ void SchematicItemRegistry::registerBuiltInItems() {
         return item;
     });
 
+    factory.registerItemType("Voltage_Source_Behavioral", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        auto* item = new VoltageSourceItem(pos, "V=V(1)*2", VoltageSourceItem::Behavioral, parent);
+        if (!properties.isEmpty()) item->fromJson(properties);
+        return item;
+    });
+
+    factory.registerItemType("BV", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        auto* item = new VoltageSourceItem(pos, "V=V(1)*2", VoltageSourceItem::Behavioral, parent);
+        if (!properties.isEmpty()) item->fromJson(properties);
+        return item;
+    });
+
     factory.registerItemType("Voltage_Source_AC", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
         QString value = properties.value("value").toString("1V");
         auto* item = new VoltageSourceItem(pos, value, VoltageSourceItem::Sine, parent);
@@ -295,6 +317,10 @@ void SchematicItemRegistry::registerBuiltInItems() {
 
     factory.registerItemType("Text", [](QPointF pos, const QJsonObject&, QGraphicsItem* parent) -> SchematicItem* {
         return new SchematicTextItem("", pos, parent);
+    });
+
+    factory.registerItemType("Spice Directive", [](QPointF pos, const QJsonObject&, QGraphicsItem* parent) -> SchematicItem* {
+        return new SchematicSpiceDirectiveItem("", pos, parent);
     });
 
     factory.registerItemType("Switch", [](QPointF pos, const QJsonObject&, QGraphicsItem* parent) -> SchematicItem* {

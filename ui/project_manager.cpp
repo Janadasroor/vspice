@@ -48,6 +48,8 @@ ProjectManager::ProjectManager(QWidget* parent)
     applyKiCadStyle();
     setupUI();
 
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, &ProjectManager::updateThemeStyle);
+
     // Try to load last project or show empty
     updateRecentProjectsMenu();
 

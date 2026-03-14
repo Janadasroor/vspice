@@ -33,7 +33,6 @@
 #include "../tools/schematic_probe_tool.h"
 #include "../../simulator/core/sim_engine.h"
 #include "../ui/simulation_panel.h"
-#include "../ui/instrument_window.h"
 #include "../ui/logic_analyzer_window.h"
 #include "../ui/logic_editor_panel.h"
 #include "../items/smart_signal_item.h"
@@ -79,7 +78,6 @@ SchematicEditor::SchematicEditor(QWidget *parent)
       m_runSimMenuAction(nullptr),
       m_stopSimMenuAction(nullptr),
       m_runSimToolbarAction(nullptr),
-      m_stopSimToolbarAction(nullptr),
       m_coordLabel(nullptr),
       m_gridLabel(nullptr),
       m_layerLabel(nullptr),
@@ -123,6 +121,9 @@ SchematicEditor::SchematicEditor(QWidget *parent)
     createDrawingToolbar();
     connectSimulationSignals();
     updateSimulationUiState(false);
+    
+    // Theme and grid
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, &SchematicEditor::applyTheme);
     applyTheme();
 
     // Set default tool
@@ -140,10 +141,21 @@ SchematicEditor::SchematicEditor(QWidget *parent)
         connect(timer, &QTimer::timeout, this, &SchematicEditor::onSaveSchematic);
         timer->start(ConfigManager::instance().autoSaveInterval() * 60000);
     }
+
+    // Restore Session
+    QStringList openFiles = ConfigManager::instance().toolProperty("SchematicEditor", "openFiles").toStringList();
+    if (!openFiles.isEmpty()) {
+        for (const QString& path : openFiles) {
+            if (QFile::exists(path)) openFile(path);
+        }
+        int activeIdx = ConfigManager::instance().toolProperty("SchematicEditor", "activeTabIndex", 0).toInt();
+        if (activeIdx >= 0 && activeIdx < m_workspaceTabs->count()) {
+            m_workspaceTabs->setCurrentIndex(activeIdx);
+        }
+    }
 }
 
 SchematicEditor::~SchematicEditor() {
-    for (auto* win : m_instrumentWindows) delete win;
     for (auto* win : m_laWindows) delete win;
 }
 
@@ -163,6 +175,16 @@ void SchematicEditor::closeEvent(QCloseEvent* event) {
             return; // Don't save window state if we're not closing
         }
     }
+
+    // Save Session State
+    QStringList openFiles;
+    for (int i = 0; i < m_workspaceTabs->count(); ++i) {
+        QWidget* w = m_workspaceTabs->widget(i);
+        QString path = w->property("filePath").toString();
+        if (!path.isEmpty()) openFiles.append(path);
+    }
+    ConfigManager::instance().setToolProperty("SchematicEditor", "openFiles", openFiles);
+    ConfigManager::instance().setToolProperty("SchematicEditor", "activeTabIndex", m_workspaceTabs->currentIndex());
 
     // Save UI State
     ConfigManager::instance().saveWindowState("SchematicEditor", saveGeometry(), saveState());
@@ -229,7 +251,7 @@ void SchematicEditor::addSchematicTab(const QString& name) {
     });
     connect(view, &SchematicView::runLiveERC, this, &SchematicEditor::runLiveERC);
 
-    int idx = m_workspaceTabs->addTab(view, getThemeIcon(":/icons/file_flux_sch.png"), name);
+    int idx = m_workspaceTabs->addTab(view, getThemeIcon(":/icons/comp_ic.svg"), name);
     m_workspaceTabs->setCurrentIndex(idx);
 
     // Initial page frame for this new sheet
@@ -254,16 +276,28 @@ void SchematicEditor::addSchematicTab(const QString& name) {
 }
 
 void SchematicEditor::onTabChanged(int index) {
-    if (index < 0) return;
+    if (index < 0) {
+        m_view = nullptr;
+        m_scene = nullptr;
+        m_netManager = nullptr;
+        m_pageFrame = nullptr;
+        m_currentFilePath.clear();
+        updateBreadcrumbs();
+        refreshHierarchyPanel();
+        return;
+    }
     
     QWidget* current = m_workspaceTabs->widget(index);
     if (auto* view = qobject_cast<SchematicView*>(current)) {
         m_view = view;
         m_scene = view->scene();
         m_netManager = view->netManager();
+        m_currentFilePath = view->property("filePath").toString();
+        
         if (m_api) m_api->setScene(m_scene);
         
         // Find page frame in this scene
+        m_pageFrame = nullptr;
         for (auto* item : m_scene->items()) {
             if (auto* pf = dynamic_cast<SchematicPageItem*>(item)) {
                 m_pageFrame = pf;
@@ -274,6 +308,8 @@ void SchematicEditor::onTabChanged(int index) {
         if (m_logicEditorPanel) m_logicEditorPanel->setScene(m_scene, m_netManager);
         
         onSelectionChanged();
+        updateBreadcrumbs();
+        refreshHierarchyPanel();
         updateCoordinates(m_view->mapToScene(m_view->mapFromGlobal(QCursor::pos())));
     } else if (QString(current->metaObject()->className()) == "SymbolEditor") {
         // Contextually disable schematic docks/toolbars if needed
@@ -289,20 +325,82 @@ void SchematicEditor::closeTab(int index) {
         return; // Don't delete the simulation panel, just hide the tab
     }
 
-    // Don't close the last schematic if you want to keep one always open,
-    // or handle "no tabs" state.
-    m_workspaceTabs->removeTab(index);
-    w->deleteLater();
+    // LogicEditor guard: if we are closing the scene it's currently editing
+    if (auto* view = qobject_cast<SchematicView*>(w)) {
+        if (m_logicEditorPanel) {
+            // If the logic IDE is editing an item in this scene, we MUST flush it
+            m_logicEditorPanel->flushEdits();
+            // If the logic IDE's active scene is the one we're closing, null it out
+            if (m_scene == view->scene()) {
+                m_logicEditorPanel->setScene(nullptr, nullptr);
+            }
+        }
+        
+        // Explicitly clean up the scene and net manager to avoid memory leaks
+        // QGraphicsView does not own the scene by default.
+        QGraphicsScene* scene = view->scene();
+        NetManager* nm = view->netManager();
+        
+        m_workspaceTabs->removeTab(index);
+        
+        if (m_scene == scene) {
+            m_scene = nullptr;
+            m_view = nullptr;
+            m_netManager = nullptr;
+            m_pageFrame = nullptr;
+            m_currentFilePath.clear();
+        }
+
+        // Delay deletion slightly to ensure no pending events in the event loop refer to these
+        view->deleteLater();
+        if (scene) scene->deleteLater();
+        if (nm) nm->deleteLater();
+    } else {
+        m_workspaceTabs->removeTab(index);
+        w->deleteLater();
+    }
 
     if (m_workspaceTabs->count() == 0) {
         m_view = nullptr;
         m_scene = nullptr;
         m_netManager = nullptr;
         m_pageFrame = nullptr;
+        m_currentFilePath.clear();
+        updateBreadcrumbs();
+        refreshHierarchyPanel();
     }
 }
 void SchematicEditor::onTabCloseRequested(int index) {
     closeTab(index);
+}
+
+bool SchematicEditor::canReuseTab(int index) const {
+    if (index < 0 || index >= m_workspaceTabs->count()) return false;
+    
+    QWidget* w = m_workspaceTabs->widget(index);
+    auto* view = qobject_cast<SchematicView*>(w);
+    if (!view) return false;
+
+    // Is it the initial "Schematic 1"?
+    if (m_workspaceTabs->tabText(index) != "Schematic 1") return false;
+
+    // Does it have a file path?
+    if (!view->property("filePath").toString().isEmpty()) return false;
+
+    // Is the scene actually empty (except for the page frame)?
+    QGraphicsScene* scene = view->scene();
+    if (scene) {
+        // Find all items except the page frame
+        int itemCount = 0;
+        for (auto* item : scene->items()) {
+            if (!dynamic_cast<SchematicPageItem*>(item)) {
+                itemCount++;
+            }
+        }
+        if (itemCount > 0) return false;
+    }
+
+    return true;
 }
 
 // ─── View / Zoom Handlers ───────────────────────────────────────────────────
@@ -659,15 +757,11 @@ QStringList SchematicEditor::resolveConnectedInstrumentNets(SchematicItem* instr
 
 void SchematicEditor::onSimulationResultsReady(const SimResults& results) {
     if (!m_scene) return;
-    
+
     if (results.analysisType == SimAnalysisType::RealTime) {
-        // Update all open instruments with live data
-        for (auto* win : m_instrumentWindows.values()) win->updateData(results);
-        
         // Convert Std maps to QMap for SchematicItem interface
         QMap<QString, double> nodeVoltages;
-        for (const auto& [name, val] : results.nodeVoltages) nodeVoltages[name.c_str()] = val;
-        
+        for (const auto& [name, val] : results.nodeVoltages) nodeVoltages[name.c_str()] = val;        
         QMap<QString, double> currents;
         for (const auto& [name, val] : results.branchCurrents) currents[name.c_str()] = val;
 
@@ -685,33 +779,6 @@ void SchematicEditor::onSimulationResultsReady(const SimResults& results) {
 
     if (m_netManager) m_netManager->updateNets(m_scene);
 
-    // Ensure oscilloscope windows exist even when simulation is started from the
-    // 0. Proactively find/create instrument windows for any oscilloscopes on the sheet.
-    bool foundHardwareScope = false;
-    for (auto* item : m_scene->items()) {
-        auto* sItem = dynamic_cast<SchematicItem*>(item);
-        if (!sItem) continue;
-        const QString typeName = sItem->itemTypeName().toLower();
-        const QString ref = sItem->reference().toLower();
-        
-        if (!typeName.contains("oscilloscope") && !ref.startsWith("osc")) continue;
-
-        foundHardwareScope = true;
-        QString id = sItem->id().toString();
-        if (id.isEmpty()) id = QString("OSC_%1").arg(reinterpret_cast<quintptr>(sItem), 0, 16);
-
-        if (!m_instrumentWindows.contains(id)) {
-            auto* win = new InstrumentWindow("Oscilloscope - " + sItem->reference(), this);
-            win->setInstrumentId(id);
-            m_instrumentWindows[id] = win;
-        }
-
-        const QStringList nets = resolveConnectedInstrumentNets(sItem);
-        m_instrumentWindows[id]->setChannels(nets);
-        m_instrumentWindows[id]->show();
-        m_instrumentWindows[id]->raise();
-    }
-
     // --- Logic Analyzers ---
     for (auto* item : m_scene->items()) {
         auto* sItem = dynamic_cast<SchematicItem*>(item);
@@ -725,6 +792,9 @@ void SchematicEditor::onSimulationResultsReady(const SimResults& results) {
         if (!m_laWindows.contains(id)) {
             auto* win = new LogicAnalyzerWindow("Logic Analyzer - " + sItem->reference(), this);
             win->setInstrumentId(id);
+            connect(win, &LogicAnalyzerWindow::windowClosing, this, [this](const QString& windowId) {
+                m_laWindows.remove(windowId);
+            });
             m_laWindows[id] = win;
         }
 
@@ -732,23 +802,6 @@ void SchematicEditor::onSimulationResultsReady(const SimResults& results) {
         m_laWindows[id]->setChannels(nets);
         m_laWindows[id]->show();
         m_laWindows[id]->raise();
-    }
-
-    // Support system-probes viewer if no hardware scope is placed
-    QStringList probedNets;
-    for (auto* item : m_scene->items()) {
-        if (auto* m = dynamic_cast<SchematicWaveformMarker*>(item)) probedNets << m->netName();
-    }
-    if (!probedNets.isEmpty() && !foundHardwareScope) {
-        QString id = "SYSTEM_PROBE_SCOPE";
-        if (!m_instrumentWindows.contains(id)) {
-            auto* win = new InstrumentWindow("Waveform Viewer (Probes)", this);
-            win->setInstrumentId(id);
-            m_instrumentWindows[id] = win;
-        }
-        m_instrumentWindows[id]->setChannels(probedNets);
-        m_instrumentWindows[id]->show();
-        m_instrumentWindows[id]->raise();
     }
 
     // 1. Convert maps for easier propagation
@@ -785,12 +838,11 @@ void SchematicEditor::onSimulationResultsReady(const SimResults& results) {
     showSimulationResults(results);
 
     // 4. Update all active instrument windows
-    for (auto* win : m_instrumentWindows) {
-        win->updateData(results);
-    }
     for (auto* win : m_laWindows) {
         win->updateData(results);
     }
+
+    if (m_view) m_view->setProbingEnabled(true);
 }
 
 void SchematicEditor::onTimeTravelSnapshot(double t, const QMap<QString, double>& nodeVoltages, const QMap<QString, double>& currents) {
@@ -804,15 +856,9 @@ void SchematicEditor::onTimeTravelSnapshot(double t, const QMap<QString, double>
     }
     
     updateSimulationOverlays(nodeVoltages, currents);
-    
-    // Update all active instrument windows with the time cursor
-    for (auto* win : m_instrumentWindows) {
-        win->setTimeCursor(t);
-    }
-    
-    statusBar()->showMessage(QString("Time-Travel: %1 s").arg(t, 0, 'g', 4), 2000);
-}
 
+    statusBar()->showMessage(QString("Time-Travel: %1 s").arg(t, 0, 'g', 4), 2000);
+    }
 void SchematicEditor::runLiveERC(const QList<SchematicItem*>& items) {
     if (!m_scene || !m_netManager || !m_view || items.isEmpty()) return;
 
@@ -838,6 +884,13 @@ void SchematicEditor::onOverlayVisibilityChanged(bool showVoltage, bool showCurr
 
 void SchematicEditor::onClearSimulationOverlays() {
     clearSimulationOverlays();
+    
+    if (m_view) {
+        bool showByDock = (m_oscilloscopeDock && m_oscilloscopeDock->isVisible());
+        bool hasResults = (m_simulationPanel && m_simulationPanel->hasResults());
+        m_view->setProbingEnabled(showByDock || hasResults);
+    }
+    
     if (statusBar()) {
         statusBar()->showMessage("Simulation overlays cleared.", 3000);
     }
@@ -924,8 +977,7 @@ void SchematicEditor::updateSimulationOverlays(const QMap<QString, double>& node
 }
 
 void SchematicEditor::openSymbolEditorWindow(const QString& name) {
-    auto* editor = new SymbolEditor(nullptr); // Standalone window
-    editor->setAttribute(Qt::WA_DeleteOnClose);
+    auto* editor = new SymbolEditor(this);
     editor->setWindowTitle("Symbol Editor - " + name);
     
     // When a symbol is saved in the editor, we should refresh our library browser
@@ -936,9 +988,8 @@ void SchematicEditor::openSymbolEditorWindow(const QString& name) {
     // Support "Place in Schematic" directly from the editor
     connect(editor, &SymbolEditor::placeInSchematicRequested, this, &SchematicEditor::onPlaceSymbolInSchematic);
 
-    editor->show();
-    editor->raise();
-    editor->activateWindow();
+    int idx = m_workspaceTabs->addTab(editor, getThemeIcon(":/icons/and_gate.svg"), name.isEmpty() ? "Symbol Editor" : name);
+    m_workspaceTabs->setCurrentIndex(idx);
 }
 
 void SchematicEditor::addModelArchitectTab() {
@@ -955,7 +1006,7 @@ void SchematicEditor::addSimulationTab(const QString& name) {
         m_oscilloscopeDock->show();
     }
 
-    int idx = m_workspaceTabs->addTab(m_simulationPanel, getThemeIcon(":/icons/tool_run.svg"), name);
+    int idx = m_workspaceTabs->addTab(m_simulationPanel, getThemeIcon(":/icons/tool_oscilloscope.svg"), name);
     m_workspaceTabs->setCurrentIndex(idx);
 }
 void SchematicEditor::onToggleLeftSidebar() {
@@ -985,4 +1036,3 @@ void SchematicEditor::onToggleRightSidebar() {
     if (m_hierarchyDock) m_hierarchyDock->setVisible(!visible);
     if (m_ercDock) m_ercDock->setVisible(!visible);
 }
-

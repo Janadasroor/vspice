@@ -8,16 +8,15 @@
 #include "schematic_file_io.h"
 #include "../items/schematic_text_item.h"
 #include "../items/schematic_shape_item.h"
+#include "../items/schematic_spice_directive_item.h"
 #include "../items/schematic_sheet_item.h"
 #include "../items/power_item.h"
 #include "../items/voltage_source_item.h"
 #include "../items/net_label_item.h"
 #include "../items/oscilloscope_item.h"
-#include "../items/voltage_source_item.h"
 #include "../items/signal_generator_item.h"
 #include "../items/switch_item.h"
 #include "../items/led_item.h"
-#include "../items/voltage_source_item.h"
 #include "../items/smart_signal_item.h"
 #include "../ui/logic_editor_panel.h"
 #include "../ui/schematic_components_widget.h"
@@ -37,6 +36,7 @@
 #include "../dialogs/schematic_text_properties_dialog.h"
 #include "../dialogs/voltage_source_properties_dialog.h"
 #include "../dialogs/voltage_source_ltspice_dialog.h"
+#include "../dialogs/spice_directive_dialog.h"
 #include "../dialogs/signal_generator_properties_dialog.h"
 #include "../dialogs/oscilloscope_properties_dialog.h"
 #include "../dialogs/erc_rules_dialog.h"
@@ -59,6 +59,7 @@
 #include <QUuid>
 #include <QStatusBar>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QFileInfo>
 #include <QDir>
 #include <QFile>
@@ -671,7 +672,23 @@ void SchematicEditor::onItemDoubleClicked(SchematicItem* item) {
         }
     } else if (item->itemType() == SchematicItem::VoltageSourceType) {
         if (auto* vSrc = dynamic_cast<VoltageSourceItem*>(item)) {
-            VoltageSourceLTSpiceDialog dlg(vSrc, m_undoStack, m_scene, this);
+            if (vSrc->sourceType() == VoltageSourceItem::Behavioral) {
+                bool ok;
+                QString val = QInputDialog::getText(this, "Behavioral Voltage Source", 
+                                                   "Expression (e.g. V=V(in)*2):", QLineEdit::Normal, 
+                                                   vSrc->value(), &ok);
+                if (ok) {
+                    vSrc->setValue(val);
+                }
+            } else {
+                VoltageSourceLTSpiceDialog dlg(vSrc, m_undoStack, m_scene, this);
+                dlg.exec();
+            }
+            return;
+        }
+    } else if (item->itemType() == SchematicItem::SpiceDirectiveType) {
+        if (auto* spice = dynamic_cast<SchematicSpiceDirectiveItem*>(item)) {
+            SpiceDirectiveDialog dlg(spice, m_undoStack, m_scene, this);
             dlg.exec();
             return;
         }
@@ -935,19 +952,19 @@ void SchematicEditor::onPropertyChanged(const QString& name, const QVariant& val
             }
         } else if (name == "DC Voltage") {
             if (auto* vsrc = dynamic_cast<VoltageSourceItem*>(si)) {
-                oldValue = QString::number(vsrc->dcVoltage(), 'f', 2);
+                oldValue = vsrc->dcVoltage();
                 if (oldValue != value) changed = true;
                 if (changed) m_undoStack->push(new ChangePropertyCommand(m_scene, si, "DC Voltage", oldValue, value));
             }
         } else if (name == "AC Amplitude") {
             if (auto* vsrc = dynamic_cast<VoltageSourceItem*>(si)) {
-                oldValue = QString::number(vsrc->sineAmplitude(), 'f', 2);
+                oldValue = vsrc->sineAmplitude();
                 if (oldValue != value) changed = true;
                 if (changed) m_undoStack->push(new ChangePropertyCommand(m_scene, si, "AC Amplitude", oldValue, value));
             }
         } else if (name == "AC Frequency") {
             if (auto* vsrc = dynamic_cast<VoltageSourceItem*>(si)) {
-                oldValue = QString::number(vsrc->sineFrequency(), 'f', 2);
+                oldValue = vsrc->sineFrequency();
                 if (oldValue != value) changed = true;
                 if (changed) m_undoStack->push(new ChangePropertyCommand(m_scene, si, "AC Frequency", oldValue, value));
             }
@@ -959,7 +976,7 @@ void SchematicEditor::onPropertyChanged(const QString& name, const QVariant& val
             }
         } else if (name == "AC Offset") {
             if (auto* vsrc = dynamic_cast<VoltageSourceItem*>(si)) {
-                oldValue = QString::number(vsrc->sineOffset(), 'f', 2);
+                oldValue = vsrc->sineOffset();
                 if (oldValue != value) changed = true;
                 if (changed) m_undoStack->push(new ChangePropertyCommand(m_scene, si, "AC Offset", oldValue, value));
             }

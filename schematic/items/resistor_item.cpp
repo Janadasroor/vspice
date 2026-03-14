@@ -124,11 +124,25 @@ void ResistorItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *opti
 }
 
 QJsonObject ResistorItem::toJson() const {
+    // Start with model serialization (pos, rotation, value, reference, pins, etc.)
     QJsonObject json = m_model->toJson();
     json["type"] = itemTypeName();
     json["style"] = static_cast<int>(m_style);
     json["pinPadMapping"] = pinPadMappingToJson();
-    
+
+    // Merge base-class fields that the model doesn't know about
+    // (spiceModel, excludeFromSim/Pcb, paramExpressions, tolerances, isLocked, mirrored)
+    QJsonObject baseJson = SchematicItem::toJson();
+    const QStringList baseOnlyKeys = {
+        "spiceModel", "excludeFromSim", "excludeFromPcb",
+        "paramExpressions", "tolerances", "pinPadMapping",
+        "isLocked", "isMirroredX", "isMirroredY",
+        "manufacturer", "mpn", "description"
+    };
+    for (const QString& key : baseOnlyKeys) {
+        if (baseJson.contains(key)) json[key] = baseJson[key];
+    }
+
     if (m_refLabelItem) {
         json["refX"] = m_refLabelItem->pos().x();
         json["refY"] = m_refLabelItem->pos().y();
@@ -149,11 +163,31 @@ bool ResistorItem::fromJson(const QJsonObject& json) {
     m_model->fromJson(json);
     setId(m_model->id());
     setName(m_model->name());
-    setPos(m_model->pos());
+    setPos(m_model->pos().x(), m_model->pos().y());
     setReference(m_model->reference());
     setFootprint(m_model->footprint());
     loadPinPadMappingFromJson(json);
-    setRotation(m_model->rotation());
+    setRotation(json["rotation"].toDouble(m_model->rotation()));
+    
+    // Restore base-class fields
+    setSpiceModel(json["spiceModel"].toString());
+    setExcludeFromSimulation(json["excludeFromSim"].toBool(false));
+    setExcludeFromPcb(json["excludeFromPcb"].toBool(false));
+    setLocked(json["isLocked"].toBool(false));
+    setMirroredX(json["isMirroredX"].toBool(false));
+    setMirroredY(json["isMirroredY"].toBool(false));
+
+    m_paramExpressions.clear();
+    if (json.contains("paramExpressions")) {
+        QJsonObject exprs = json["paramExpressions"].toObject();
+        for (auto it = exprs.begin(); it != exprs.end(); ++it) m_paramExpressions[it.key()] = it.value().toString();
+    }
+
+    m_tolerances.clear();
+    if (json.contains("tolerances")) {
+        QJsonObject tols = json["tolerances"].toObject();
+        for (auto it = tols.begin(); it != tols.end(); ++it) m_tolerances[it.key()] = it.value().toString();
+    }
 
     if (json.contains("style")) {
         m_style = static_cast<ResistorStyle>(json["style"].toInt());
@@ -169,6 +203,7 @@ bool ResistorItem::fromJson(const QJsonObject& json) {
         setValueLabelPos(QPointF(json["valX"].toDouble(), json["valY"].toDouble()));
     }
     
+    updateLabelText();
     update();
     return true;
 }

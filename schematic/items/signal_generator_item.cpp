@@ -6,7 +6,7 @@
 #include <cmath>
 
 SignalGeneratorItem::SignalGeneratorItem(QPointF pos, QGraphicsItem *parent)
-    : SchematicItem(parent), m_waveform(Sine), m_freq(1000.0), m_amplitude(5.0), m_offset(0.0), m_acMagnitude(1.0), m_acPhase(0.0) {
+    : SchematicItem(parent), m_waveform(Sine), m_freq("1000"), m_amplitude("5.0"), m_offset("0.0"), m_acMagnitude("1.0"), m_acPhase("0.0") {
     setPos(pos);
     setFlags(QGraphicsItem::ItemIsSelectable | QGraphicsItem::ItemIsMovable);
     setReference("VGEN1");
@@ -60,7 +60,7 @@ void SignalGeneratorItem::paint(QPainter *painter, const QStyleOptionGraphicsIte
     // Text label
     painter->setFont(QFont("Inter", 6));
     painter->setPen(Qt::lightGray);
-    QString info = QString("%1Hz").arg(m_freq >= 1000 ? QString::number(m_freq/1000.0) + "k" : QString::number(m_freq));
+    QString info = m_freq + "Hz";
     painter->drawText(QRectF(-30, 20, 60, 15), Qt::AlignCenter, info);
 
     drawConnectionPointHighlights(painter);
@@ -97,11 +97,11 @@ QJsonObject SignalGeneratorItem::toJson() const {
 bool SignalGeneratorItem::fromJson(const QJsonObject& json) {
     SchematicItem::fromJson(json);
     if (json.contains("waveform")) m_waveform = static_cast<WaveformType>(json["waveform"].toInt());
-    if (json.contains("freq")) m_freq = json["freq"].toDouble();
-    if (json.contains("amplitude")) m_amplitude = json["amplitude"].toDouble();
-    if (json.contains("offset")) m_offset = json["offset"].toDouble();
-    if (json.contains("acMagnitude")) m_acMagnitude = json["acMagnitude"].toDouble();
-    if (json.contains("acPhase")) m_acPhase = json["acPhase"].toDouble();
+    if (json.contains("freq")) m_freq = json["freq"].toString("1000");
+    if (json.contains("amplitude")) m_amplitude = json["amplitude"].toString("5.0");
+    if (json.contains("offset")) m_offset = json["offset"].toString("0.0");
+    if (json.contains("acMagnitude")) m_acMagnitude = json["acMagnitude"].toString("1.0");
+    if (json.contains("acPhase")) m_acPhase = json["acPhase"].toString("0.0");
     updateSpiceValue();
     return true;
 }
@@ -119,30 +119,49 @@ SchematicItem* SignalGeneratorItem::clone() const {
 }
 
 void SignalGeneratorItem::setWaveform(WaveformType type) { m_waveform = type; updateSpiceValue(); update(); }
-void SignalGeneratorItem::setFrequency(double f) { m_freq = f; updateSpiceValue(); update(); }
-void SignalGeneratorItem::setAmplitude(double a) { m_amplitude = a; updateSpiceValue(); update(); }
-void SignalGeneratorItem::setOffset(double o) { m_offset = o; updateSpiceValue(); update(); }
-void SignalGeneratorItem::setAcMagnitude(double m) { m_acMagnitude = m; updateSpiceValue(); update(); }
-void SignalGeneratorItem::setAcPhase(double p) { m_acPhase = p; updateSpiceValue(); update(); }
+void SignalGeneratorItem::setFrequency(const QString& f) { m_freq = f; updateSpiceValue(); update(); }
+void SignalGeneratorItem::setAmplitude(const QString& a) { m_amplitude = a; updateSpiceValue(); update(); }
+void SignalGeneratorItem::setOffset(const QString& o) { m_offset = o; updateSpiceValue(); update(); }
+void SignalGeneratorItem::setAcMagnitude(const QString& m) { m_acMagnitude = m; updateSpiceValue(); update(); }
+void SignalGeneratorItem::setAcPhase(const QString& p) { m_acPhase = p; updateSpiceValue(); update(); }
 
 void SignalGeneratorItem::updateSpiceValue() {
     QString spice;
+    
+    // Helper to calculate derived periods if possible (only for numeric literals)
+    auto toDouble = [](const QString& s) -> double {
+        bool ok;
+        double v = s.toDouble(&ok);
+        return ok ? v : -1.0;
+    };
+
+    double fVal = toDouble(m_freq);
+    double aVal = toDouble(m_amplitude);
+    double oVal = toDouble(m_offset);
+
     if (m_waveform == Sine) {
         spice = QString("SINE(%1 %2 %3)").arg(m_offset).arg(m_amplitude).arg(m_freq);
-    } else if (m_waveform == Square) {
-        double per = 1.0 / m_freq;
-        spice = QString("PULSE(%1 %2 0 1n 1n %3 %4)").arg(m_offset - m_amplitude).arg(m_offset + m_amplitude).arg(per*0.5).arg(per);
-    } else if (m_waveform == Triangle) {
-        double per = 1.0 / m_freq;
-        spice = QString("PULSE(%1 %2 0 %3 %4 1n %5)").arg(m_offset - m_amplitude).arg(m_offset + m_amplitude).arg(per*0.5).arg(per*0.5).arg(per);
-    } else if (m_waveform == Pulse) {
-        double per = 1.0 / m_freq;
-        spice = QString("PULSE(%1 %2 0 1n 1n %3 %4)").arg(m_offset - m_amplitude).arg(m_offset + m_amplitude).arg(per*0.1).arg(per);
-    } else if (m_waveform == DC) {
-        spice = QString::number(m_offset);
+    } else if (fVal > 0 && aVal >= 0) {
+        double per = 1.0 / fVal;
+        if (m_waveform == Square) {
+            spice = QString("PULSE(%1 %2 0 1n 1n %3 %4)").arg(oVal - aVal).arg(oVal + aVal).arg(per*0.5).arg(per);
+        } else if (m_waveform == Triangle) {
+            spice = QString("PULSE(%1 %2 0 %3 %4 1n %5)").arg(oVal - aVal).arg(oVal + aVal).arg(per*0.5).arg(per*0.5).arg(per);
+        } else if (m_waveform == Pulse) {
+            spice = QString("PULSE(%1 %2 0 1n 1n %3 %4)").arg(oVal - aVal).arg(oVal + aVal).arg(per*0.1).arg(per);
+        }
+    } else {
+        // Fallback for symbolic frequency/amplitude in complex waveforms (not ideal but better than crash/wrong numbers)
+        // For Sine it works fine, for others it might need a more complex expression or just warn.
+        if (m_waveform == DC) {
+             spice = m_offset;
+        } else {
+             // Fallback to sine if symbolic and non-dc
+             spice = QString("SINE(%1 %2 %3)").arg(m_offset).arg(m_amplitude).arg(m_freq);
+        }
     }
 
-    if (m_acMagnitude > 0) {
+    if (m_acMagnitude != "0" && !m_acMagnitude.isEmpty()) {
         spice += QString(" AC %1 %2").arg(m_acMagnitude).arg(m_acPhase);
     }
     

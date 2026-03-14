@@ -187,6 +187,7 @@ QString PCBTheme::widgetStylesheet() const {
     
     // Dynamic values based on theme
     QString inputBg = isDark ? "#18181b" : "#ffffff";
+    QString inputText = isDark ? m_textColor.name() : "#1e293b"; // Ensure dark text in light theme
     QString itemHover = isDark ? "#3f3f46" : "#f1f5f9";
     QString itemSelected = isDark ? "#27272a" : "#eff6ff";
     QString headerBg = isDark ? "#27272a" : "#f8fafc";
@@ -201,7 +202,7 @@ QString PCBTheme::widgetStylesheet() const {
         "   color: %2;"
         "   font-family: 'Inter', 'Segoe UI', sans-serif;"
         "   selection-background-color: %5;"
-        "   selection-color: white;"
+        "   selection-color: %6;"
         "}"
         "QMainWindow {"
         "   background-color: %1;"
@@ -242,12 +243,12 @@ QString PCBTheme::widgetStylesheet() const {
         "   background: %4;"
         "   margin: 6px 8px;"
         "}"
-        "QLineEdit, QTextEdit {"
+        "QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {"
         "   background-color: %11;"
-        "   color: %2;"
+        "   color: %16;"
         "   border: 1px solid %4;"
         "   border-radius: 6px;"
-        "   padding: 8px 12px;"
+        "   padding: 6px 10px;"
         "}"
         "QLineEdit:focus, QTextEdit:focus {"
         "   border-color: %5;"
@@ -316,7 +317,8 @@ QString PCBTheme::widgetStylesheet() const {
      .arg(btnBg)                          // 12
      .arg(btnHover)                       // 13
      .arg(headerBg)                       // 14
-     .arg(scrollHandle);                  // 15
+     .arg(scrollHandle)                   // 15
+     .arg(inputText);                     // 16
 }
 
 QString PCBTheme::toolbarStylesheet() const {
@@ -416,8 +418,9 @@ void PCBTheme::applyToWidget(QWidget* widget) const {
     QPalette palette = widget->palette();
     palette.setColor(QPalette::Window, m_windowBackground);
     palette.setColor(QPalette::WindowText, m_textColor);
-    palette.setColor(QPalette::Base, m_panelBackground);
-    palette.setColor(QPalette::Text, m_textColor);
+    QColor inputBgColor = (m_type == Light) ? Qt::white : QColor(24, 24, 27);
+    palette.setColor(QPalette::Base, inputBgColor);
+    palette.setColor(QPalette::Text, (m_type == Light) ? QColor(30, 41, 59) : m_textColor);
     palette.setColor(QPalette::Highlight, m_accentColor);
     palette.setColor(QPalette::HighlightedText, Qt::white);
     
@@ -425,6 +428,7 @@ void PCBTheme::applyToWidget(QWidget* widget) const {
     QColor disabledColor(100, 100, 100);
     palette.setColor(QPalette::Disabled, QPalette::WindowText, disabledColor);
     palette.setColor(QPalette::Disabled, QPalette::Text, disabledColor);
+    palette.setColor(QPalette::Disabled, QPalette::Base, inputBgColor.darker(110));
     palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabledColor);
     palette.setColor(QPalette::Disabled, QPalette::Button, m_windowBackground.darker(120));
     
@@ -432,4 +436,31 @@ void PCBTheme::applyToWidget(QWidget* widget) const {
 
     // Main window level styles
     widget->setStyleSheet(widgetStylesheet());
+}
+
+void PCBTheme::applyToApplication() const {
+    if (!qApp) return;
+
+    // Apply palette for non-stylesheet colors globally
+    QPalette palette = qApp->palette();
+    palette.setColor(QPalette::Window, m_windowBackground);
+    palette.setColor(QPalette::WindowText, m_textColor);
+    QColor inputBgColor = (m_type == Light) ? Qt::white : QColor(24, 24, 27);
+    palette.setColor(QPalette::Base, inputBgColor);
+    palette.setColor(QPalette::Text, (m_type == Light) ? QColor(30, 41, 59) : m_textColor);
+    palette.setColor(QPalette::Highlight, m_accentColor);
+    palette.setColor(QPalette::HighlightedText, Qt::white);
+    
+    // Explicitly set disabled colors to muted grey
+    QColor disabledColor(100, 100, 100);
+    palette.setColor(QPalette::Disabled, QPalette::WindowText, disabledColor);
+    palette.setColor(QPalette::Disabled, QPalette::Text, disabledColor);
+    palette.setColor(QPalette::Disabled, QPalette::Base, inputBgColor.darker(110));
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabledColor);
+    palette.setColor(QPalette::Disabled, QPalette::Button, m_windowBackground.darker(120));
+    
+    qApp->setPalette(palette);
+
+    // Global stylesheet
+    qApp->setStyleSheet(widgetStylesheet());
 }

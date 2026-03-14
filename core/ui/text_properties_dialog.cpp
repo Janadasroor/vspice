@@ -63,3 +63,8 @@ void TextPropertiesDialog::onPickColor() {
         m_colorBtn->setStyleSheet(QString("background-color: %1; border: 1px solid #555;").arg(m_color.name()));
     }
 }
+
+void TextPropertiesDialog::setColor(const QColor& c) {
+    m_color = c;
+    m_colorBtn->setStyleSheet(QString("background-color: %1; border: 1px solid #555;").arg(m_color.name()));
+}

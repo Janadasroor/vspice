@@ -15,6 +15,9 @@
 #include <cctype>
 #include <unordered_map>
 
+#include <thread>
+#include <chrono>
+
 namespace {
 bool parseVoltageProbe(const std::string& signal, std::string& nodeOut) {
     if (signal.size() < 4) return false;
@@ -273,7 +276,7 @@ SimResults::Snapshot SimResults::interpolateAt(double t) const {
     return snap;
 }
 
-SimResults SimEngine::run(const SimNetlist& netlist) {
+SimResults SimEngine::run(const SimNetlist& netlist, SimControl* control) {
     FLUX_DIAG_SCOPE("SimEngine::run");
     SimNetlist flatNetlist = netlist;
     flatNetlist.flatten();
@@ -333,7 +336,7 @@ SimResults SimEngine::run(const SimNetlist& netlist) {
 
     SimResults results;
     if (flatNetlist.analysis().type == SimAnalysisType::OP) {
-        results = solveDCOP(flatNetlist);
+        results = solveDCOP(flatNetlist, control);
         appendEquationChannels(flatNetlist, results);
         results.analysisType = SimAnalysisType::OP;
         results.xAxisName = "index";
@@ -343,7 +346,7 @@ SimResults SimEngine::run(const SimNetlist& netlist) {
         switch (flatNetlist.analysis().type) {
             case SimAnalysisType::Transient:
             {
-                results = solveTransient(flatNetlist);
+                results = solveTransient(flatNetlist, control);
                 appendEquationChannels(flatNetlist, results);
                 results.analysisType = SimAnalysisType::Transient;
                 results.xAxisName = "time_s";
@@ -353,7 +356,7 @@ SimResults SimEngine::run(const SimNetlist& netlist) {
             }
             case SimAnalysisType::AC:
             {
-                results = solveAC(flatNetlist);
+                results = solveAC(flatNetlist, control);
                 appendEquationChannels(flatNetlist, results);
                 results.analysisType = SimAnalysisType::AC;
                 results.xAxisName = "frequency_hz";
@@ -363,7 +366,7 @@ SimResults SimEngine::run(const SimNetlist& netlist) {
             }
             case SimAnalysisType::MonteCarlo:
             {
-                results = solveMonteCarlo(flatNetlist);
+                results = solveMonteCarlo(flatNetlist, control);
                 appendEquationChannels(flatNetlist, results);
                 results.analysisType = SimAnalysisType::MonteCarlo;
                 results.xAxisName = "run";
@@ -373,7 +376,7 @@ SimResults SimEngine::run(const SimNetlist& netlist) {
             }
             case SimAnalysisType::Sensitivity:
             {
-                results = solveSensitivity(flatNetlist);
+                results = solveSensitivity(flatNetlist, control);
                 appendEquationChannels(flatNetlist, results);
                 results.analysisType = SimAnalysisType::Sensitivity;
                 results.xAxisName = "component";
@@ -382,7 +385,7 @@ SimResults SimEngine::run(const SimNetlist& netlist) {
             }
             case SimAnalysisType::ParametricSweep:
             {
-                results = solveParametricSweep(flatNetlist);
+                results = solveParametricSweep(flatNetlist, control);
                 appendEquationChannels(flatNetlist, results);
                 results.analysisType = SimAnalysisType::ParametricSweep;
                 results.xAxisName = "sweep_point";
@@ -392,7 +395,7 @@ SimResults SimEngine::run(const SimNetlist& netlist) {
             }
             case SimAnalysisType::Noise:
             {
-                results = solveNoise(flatNetlist);
+                results = solveNoise(flatNetlist, control);
                 appendEquationChannels(flatNetlist, results);
                 results.analysisType = SimAnalysisType::Noise;
                 results.xAxisName = "frequency_hz";
@@ -401,7 +404,7 @@ SimResults SimEngine::run(const SimNetlist& netlist) {
             }
             case SimAnalysisType::Distortion:
             {
-                results = solveDistortion(flatNetlist);
+                results = solveDistortion(flatNetlist, control);
                 appendEquationChannels(flatNetlist, results);
                 results.analysisType = SimAnalysisType::Distortion;
                 results.xAxisName = "harmonic";
@@ -410,7 +413,7 @@ SimResults SimEngine::run(const SimNetlist& netlist) {
             }
             case SimAnalysisType::Optimization:
             {
-                results = solveOptimization(flatNetlist);
+                results = solveOptimization(flatNetlist, control);
                 appendEquationChannels(flatNetlist, results);
                 results.analysisType = SimAnalysisType::Optimization;
                 results.xAxisName = "evaluation";
@@ -419,7 +422,7 @@ SimResults SimEngine::run(const SimNetlist& netlist) {
             }
             case SimAnalysisType::FFT:
             {
-                results = solveFFT(flatNetlist);
+                results = solveFFT(flatNetlist, control);
                 results.analysisType = SimAnalysisType::FFT;
                 results.xAxisName = "frequency_hz";
                 results.yAxisName = "magnitude_db";
@@ -437,7 +440,7 @@ SimResults SimEngine::run(const SimNetlist& netlist) {
     return results;
 }
 
-SimResults SimEngine::solveDCOP(const SimNetlist& netlist) {
+SimResults SimEngine::solveDCOP(const SimNetlist& netlist, SimControl* control) {
     SimResults results;
     int nodes = netlist.nodeCount();
     
@@ -702,7 +705,7 @@ bool SimEngine::attemptConvergence(const SimNetlist& netlist, std::vector<double
     return false;
 }
 
-SimResults SimEngine::solveTransient(const SimNetlist& netlist) {
+SimResults SimEngine::solveTransient(const SimNetlist& netlist, SimControl* control) {
     SimResults results;
     int nodes = netlist.nodeCount();
     auto config = netlist.analysis();
@@ -710,19 +713,54 @@ SimResults SimEngine::solveTransient(const SimNetlist& netlist) {
     // 1. Initial condition: optionally reuse DC OP as .tran starting point.
     SimResults dcOp;
     if (config.transientUseOperatingPointInit) {
-        dcOp = solveDCOP(netlist);
+        dcOp = solveDCOP(netlist, control);
     }
 
     const double simDuration = std::max(1e-15, config.tStop - config.tStart);
     const double baseStep = std::max(1e-15, config.tStep);
     const double hMin = (config.transientMinStep > 0.0) ? config.transientMinStep : std::max(1e-15, baseStep * 1e-7);
     
-    // cap hMax more strictly. If baseStep is provided, we should generally not exceed it by much.
-    // LTspice style: hMax defaults to tStep if not specified.
-    const double hMax = (config.transientMaxStep > 0.0) ? config.transientMaxStep : baseStep;
+    // Determine hMax: user-configured or derived from source frequency.
+    // Like LTspice, default to tStep but never exceed 1/50th of the fastest sinusoidal period.
+    double hMax = (config.transientMaxStep > 0.0) ? config.transientMaxStep : baseStep;
+    {
+        // Scan all components for sinusoidal sources so we can cap the step.
+        double fastestFreq = 0.0;
+        for (const auto& comp : netlist.components()) {
+            if (comp.type != SimComponentType::VoltageSource && comp.type != SimComponentType::CurrentSource) continue;
+
+            // Frequency scan for SIN sources
+            auto wtIt = comp.params.find("wave_type");
+            if (wtIt != comp.params.end() && std::abs(wtIt->second - 1.0) < 0.5) {
+                // SINE: check v_freq or i_freq
+                auto fIt = comp.params.find("v_freq");
+                if (fIt == comp.params.end()) fIt = comp.params.find("i_freq");
+                if (fIt != comp.params.end() && fIt->second > 0.0) {
+                    fastestFreq = std::max(fastestFreq, fIt->second);
+                }
+            }
+            
+            // Frequency scan for Carrier/Modulation frequencies in other types
+            for (const char* fKey : {"am_carrier_freq", "am_mod_freq", "fm_carrier_freq", "fm_mod_freq", "sffm_carrier_freq", "sffm_signal_freq"}) {
+                auto it = comp.params.find(fKey);
+                if (it != comp.params.end() && it->second > 0.0) {
+                    fastestFreq = std::max(fastestFreq, it->second);
+                }
+            }
+        }
+        if (fastestFreq > 0.0) {
+            // At least 50 points per cycle for a clean sine — matches LTspice default
+            const double periodStep = 1.0 / (fastestFreq * 50.0);
+            hMax = std::min(hMax, periodStep);
+        }
+    }
 
     double t = config.tStart;
     double h = std::clamp(baseStep, hMin, hMax);
+    if (t == 0.0) {
+        // Cold start: use a tiny initial step to settle derivatives (like LTE and Gmin)
+        h = std::max(hMin, h / 100.0);
+    }
     int rejectStreak = 0;
     
     int vSourceCount = 0;
@@ -877,6 +915,12 @@ SimResults SimEngine::solveTransient(const SimNetlist& netlist) {
     SimMNAMatrix matrix;
     matrix.resize(nodes, vSourceCount);
     while (t < config.tStop) {
+        if (control) {
+            if (control->stopRequested) break;
+            while (control->pauseRequested && !control->stopRequested) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+        }
         if (t + h > config.tStop) h = config.tStop - t;
         bool mixedSignalEventCapped = false;
 
@@ -967,11 +1011,9 @@ SimResults SimEngine::solveTransient(const SimNetlist& netlist) {
             for (const auto& comp : netlist.components()) {
                 auto* model = SimComponentFactory::getModel(comp.type);
                 if (!model) continue;
-                const double lte = model->calculateLTE(comp, h, currentSolution, prevSolution, prev2Solution, nodes, vIdxLTE);
-                if (lte <= 0.0) continue;
-                const double tol = config.absTol + config.relTol;
-                if (tol > 0.0) {
-                    maxErrorFactor = std::max(maxErrorFactor, lte / tol);
+                const double factor = model->calculateLTE(comp, h, currentSolution, prevSolution, prev2Solution, nodes, vIdxLTE, config.relTol, config.absTol);
+                if (factor > 0.0) {
+                    maxErrorFactor = std::max(maxErrorFactor, factor);
                 }
             }
         }
@@ -1096,7 +1138,7 @@ SimResults SimEngine::solveTransient(const SimNetlist& netlist) {
     return results;
 }
 
-SimResults SimEngine::solveAC(const SimNetlist& netlist) {
+SimResults SimEngine::solveAC(const SimNetlist& netlist, SimControl* control) {
     SimResults results;
     int nodes = netlist.nodeCount();
     auto config = netlist.analysis();
@@ -1149,7 +1191,7 @@ SimResults SimEngine::solveAC(const SimNetlist& netlist) {
     return results;
 }
 
-SimResults SimEngine::solveMonteCarlo(const SimNetlist& netlist) {
+SimResults SimEngine::solveMonteCarlo(const SimNetlist& netlist, SimControl* control) {
     SimResults aggregateResults;
     auto config = netlist.analysis();
     
@@ -1220,14 +1262,14 @@ SimResults SimEngine::solveMonteCarlo(const SimNetlist& netlist) {
     return aggregateResults;
 }
 
-SimResults SimEngine::solveSensitivity(const SimNetlist& netlist) {
+SimResults SimEngine::solveSensitivity(const SimNetlist& netlist, SimControl* control) {
     SimResults results;
     auto config = netlist.analysis();
     std::string target = config.sensitivityTargetSignal;
     if (target.empty()) return results;
 
     // 1. Initial baseline analysis
-    SimResults baseline = solveDCOP(netlist);
+    SimResults baseline = solveDCOP(netlist, control);
     double baselineVal = 0;
 
     // Parse target (e.g. V(N2))
@@ -1259,7 +1301,7 @@ SimResults SimEngine::solveSensitivity(const SimNetlist& netlist) {
                     double delta = std::abs(original) * epsilon + 1e-9;
                     pComp.params[param] += delta;
 
-                    SimResults pertResults = solveDCOP(perturbed);
+                    SimResults pertResults = solveDCOP(perturbed, control);
                     double pertVal = 0;
                     if (target.find("V(") == 0) {
                         std::string nodeName = target.substr(2, target.size() - 3);
@@ -1298,7 +1340,7 @@ int SimEngine::assignIndices(SimNetlist& netlist) {
     return vIdx;
 }
 
-SimResults SimEngine::solveParametricSweep(const SimNetlist& netlist) {
+SimResults SimEngine::solveParametricSweep(const SimNetlist& netlist, SimControl* control) {
     SimResults aggregateResults;
     auto config = netlist.analysis();
     
@@ -1395,7 +1437,7 @@ SimResults SimEngine::solveParametricSweep(const SimNetlist& netlist) {
     return aggregateResults;
 }
 
-SimResults SimEngine::solveNoise(const SimNetlist& netlist) {
+SimResults SimEngine::solveNoise(const SimNetlist& netlist, SimControl* control) {
     SimResults results;
     const auto cfg = netlist.analysis();
     const double kBoltzmann = 1.380649e-23;
@@ -1484,7 +1526,7 @@ SimResults SimEngine::solveNoise(const SimNetlist& netlist) {
     return results;
 }
 
-SimResults SimEngine::solveDistortion(const SimNetlist& netlist) {
+SimResults SimEngine::solveDistortion(const SimNetlist& netlist, SimControl* control) {
     SimResults results;
     auto cfg = netlist.analysis();
 
@@ -1502,7 +1544,7 @@ SimResults SimEngine::solveDistortion(const SimNetlist& netlist) {
     tcfg.tStop = static_cast<double>(skipCycles + cycles) * period;
     transientNetlist.setAnalysis(tcfg);
 
-    const SimResults tr = solveTransient(transientNetlist);
+    const SimResults tr = solveTransient(transientNetlist, control);
     if (tr.waveforms.empty()) return results;
 
     std::string targetName = cfg.thdTargetSignal;
@@ -1585,7 +1627,7 @@ SimResults SimEngine::solveDistortion(const SimNetlist& netlist) {
     return results;
 }
 
-SimResults SimEngine::solveOptimization(const SimNetlist& netlist) {
+SimResults SimEngine::solveOptimization(const SimNetlist& netlist, SimControl* control) {
     SimResults results;
     const auto cfg = netlist.analysis();
     if (cfg.optimizationParams.empty() || cfg.optimizationTargetSignal.empty()) {
@@ -1826,7 +1868,7 @@ SimResults SimEngine::solveOptimization(const SimNetlist& netlist) {
     return results;
 }
 
-SimResults SimEngine::solveFFT(const SimNetlist& netlist) {
+SimResults SimEngine::solveFFT(const SimNetlist& netlist, SimControl* control) {
     const auto cfg = netlist.analysis();
     
     // 1. Run standard transient simulation first
@@ -1834,7 +1876,7 @@ SimResults SimEngine::solveFFT(const SimNetlist& netlist) {
     SimAnalysisConfig tranCfg = cfg;
     tranCfg.type = SimAnalysisType::Transient;
     tranNet.setAnalysis(tranCfg);
-    SimResults tranResults = solveTransient(tranNet);
+    SimResults tranResults = solveTransient(tranNet, control);
 
     SimResults fftResults;
     fftResults.analysisType = SimAnalysisType::FFT;

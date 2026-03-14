@@ -106,6 +106,7 @@ std::vector<std::string> SimModelParser::split(const std::string& s) {
 
 bool SimModelParser::parseModelLine(
     SimNetlist& netlist,
+    std::map<std::string, SimModel>& outModels,
     const std::string& line,
     int lineNumber,
     const std::string& sourceName,
@@ -155,7 +156,7 @@ bool SimModelParser::parseModelLine(
         }
     }
 
-    netlist.addModel(model);
+    outModels[model.name] = model;
     return true;
 }
 
@@ -264,7 +265,8 @@ bool SimModelParser::parseLibrary(
                 double parsed = 0.0;
                 if (key.empty()) continue;
                 if (parseNumeric(value, parsed)) {
-                    netlist.setParameter(key, parsed);
+                    if (inSubckt) currentSub.parameters[key] = parsed;
+                    else netlist.setParameter(key, parsed);
                 } else {
                     addDiag(diagnostics, Severity::Warning, ll.lineNo, options.sourceName, "invalid .param numeric value '" + token + "'", tLine);
                 }
@@ -323,6 +325,35 @@ bool SimModelParser::parseLibrary(
                 case 'D': inst.type = SimComponentType::Diode; nodeCount = 2; break;
                 case 'Q': inst.type = SimComponentType::BJT_NPN; nodeCount = 3; break;
                 case 'M': inst.type = SimComponentType::MOSFET_NMOS; nodeCount = 4; break;
+                case 'V': inst.type = SimComponentType::VoltageSource; nodeCount = 2; break;
+                case 'I': inst.type = SimComponentType::CurrentSource; nodeCount = 2; break;
+                case 'E': inst.type = SimComponentType::VCVS; nodeCount = 4; break;
+                case 'G': inst.type = SimComponentType::VCCS; nodeCount = 4; break;
+                case 'F': inst.type = SimComponentType::CCCS; nodeCount = 2; break;
+                case 'H': inst.type = SimComponentType::CCVS; nodeCount = 2; break;
+                case 'S': inst.type = SimComponentType::Switch; nodeCount = 4; break;
+                case 'B': inst.type = SimComponentType::B_VoltageSource; nodeCount = 2; break;
+                case 'A': {
+                    // XSPICE: Logic gates. Find the type at the end of node list.
+                    inst.type = SimComponentType::LOGIC_AND; // Default
+                    nodeCount = 0;
+                    for (size_t i = 1; i < tokens.size(); ++i) {
+                        if (tokens[i].find('=') != std::string::npos) break;
+                        std::string up = tokens[i];
+                        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                        if (up == "AND")  { inst.type = SimComponentType::LOGIC_AND; break; }
+                        if (up == "OR")   { inst.type = SimComponentType::LOGIC_OR; break; }
+                        if (up == "XOR")  { inst.type = SimComponentType::LOGIC_XOR; break; }
+                        if (up == "NAND") { inst.type = SimComponentType::LOGIC_NAND; break; }
+                        if (up == "NOR")  { inst.type = SimComponentType::LOGIC_NOR; break; }
+                        if (up == "NOT")  { inst.type = SimComponentType::LOGIC_NOT; break; }
+                        if (up == "BUF")  { inst.type = SimComponentType::LOGIC_OR; break; } // Map BUF to OR
+                        if (up == "SCHMITT") { inst.type = SimComponentType::LOGIC_OR; break; }
+                        if (up == "DFLOP") { inst.type = SimComponentType::LOGIC_XOR; break; } // Placeholder
+                        nodeCount++;
+                    }
+                    break;
+                }
                 case 'X': isSubcktCall = true; break;
                 default:
                     addDiag(diagnostics, Severity::Warning, ll.lineNo, options.sourceName, "unsupported subcircuit primitive '" + inst.name + "'", tLine);
@@ -373,6 +404,14 @@ bool SimModelParser::parseLibrary(
                                 }
                             } else if (typeChar == 'D' || typeChar == 'Q' || typeChar == 'M') {
                                 inst.modelName = token;
+                            } else if (typeChar == 'V' || typeChar == 'I') {
+                                std::string key = (typeChar == 'V') ? "voltage" : "current";
+                                double v = 0.0;
+                                if (parseNumeric(token, v)) inst.params[key] = v;
+                                else inst.paramExpressions[key] = token; // SIN(...) etc
+                            } else if (typeChar == 'E' || typeChar == 'G') {
+                                double g = 0.0;
+                                if (parseNumeric(token, g)) inst.params["gain"] = g;
                             }
                         }
                         continue;
@@ -384,7 +423,6 @@ bool SimModelParser::parseLibrary(
 
                     // Support tol=... dist=... lot=...
                     if (key == "tol") {
-                        // Assuming this applies to the last primary parameter for now or a generic 'value'
                         std::string target = (typeChar == 'R') ? "resistance" : (typeChar == 'C' ? "capacitance" : "inductance");
                         double t = 0.0;
                         if (parseNumeric(val, t)) inst.tolerances[target].value = t;
@@ -406,6 +444,9 @@ bool SimModelParser::parseLibrary(
                         double parsed = 0.0;
                         if (parseNumeric(val, parsed)) {
                             inst.params[key] = parsed;
+                        } else {
+                            // Store non-numeric (like table=...) as expression/string
+                            inst.paramExpressions[key] = val;
                         }
                     }
                 }
@@ -416,8 +457,18 @@ bool SimModelParser::parseLibrary(
         }
 
         if (startsWithNoCase(card, ".model")) {
-            if (!parseModelLine(netlist, tLine, ll.lineNo, options.sourceName, diagnostics)) {
-                hadErrors = true;
+            if (inSubckt) {
+                if (!parseModelLine(netlist, currentSub.models, tLine, ll.lineNo, options.sourceName, diagnostics)) {
+                    hadErrors = true;
+                }
+            } else {
+                std::map<std::string, SimModel> dummy; // Not ideal, but parseModelLine usually adds to netlist.
+                // Re-obtaining current Netlist models as a map reference isn't direct via API,
+                // so let's adjust the call to pass netlist.models() if we can.
+                // Actually, I'll just use a local temporary and add it.
+                if (!parseModelLine(netlist, netlist.mutableModels(), tLine, ll.lineNo, options.sourceName, diagnostics)) {
+                    hadErrors = true;
+                }
             }
             continue;
         }

@@ -1,20 +1,21 @@
-#include "schematic_erase_tool.h"
+#include "schematic_scissors_tool.h"
 #include "schematic_view.h"
 #include "schematic_item.h"
 #include "schematic_commands.h"
 #include <QGraphicsScene>
 #include <QUndoStack>
 
-SchematicEraseTool::SchematicEraseTool(QObject* parent)
-    : SchematicTool("Erase", parent) {
+SchematicScissorsTool::SchematicScissorsTool(QObject* parent)
+    : SchematicTool("Scissors", parent) {
 }
 
-QCursor SchematicEraseTool::cursor() const {
-    QPixmap pix(":/icons/tool_erase.svg");
-    return QCursor(pix.scaled(24, 24, Qt::KeepAspectRatio), 0, 24); 
+QCursor SchematicScissorsTool::cursor() const {
+    QPixmap pix(":/icons/tool_scissors.svg");
+    // Standard large cursor size (32x32). Tip is at (25, 9).
+    return QCursor(pix.scaled(32, 32, Qt::KeepAspectRatio, Qt::SmoothTransformation), 25, 9); 
 }
 
-void SchematicEraseTool::mousePressEvent(QMouseEvent* event) {
+void SchematicScissorsTool::mousePressEvent(QMouseEvent* event) {
     if (!view() || !view()->scene()) return;
 
     if (event->button() == Qt::LeftButton) {

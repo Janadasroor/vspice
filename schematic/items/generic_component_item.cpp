@@ -58,8 +58,10 @@ GenericComponentItem::~GenericComponentItem() {
 }
 
 QJsonObject GenericComponentItem::toJson() const {
-    QJsonObject json;
-    json["type"] = m_symbol.name(); 
+    // Start with all base class fields (spiceModel, excludeFromSim/Pcb, paramExpressions,
+    // tolerances, isLocked, isMirroredX/Y, refLabel/valLabel positions, etc.)
+    QJsonObject json = SchematicItem::toJson();
+    json["type"] = m_symbol.name();
     json["id"] = m_id.toString();
     json["reference"] = reference();
     json["footprint"] = footprint();
@@ -72,6 +74,7 @@ QJsonObject GenericComponentItem::toJson() const {
     json["y"] = pos().y();
     json["rotation"] = rotation();
     
+    // Label offsets (using different keys from base to avoid overwriting)
     if (m_refLabelItem) {
         json["refX"] = m_refLabelItem->pos().x();
         json["refY"] = m_refLabelItem->pos().y();
@@ -100,6 +103,24 @@ bool GenericComponentItem::fromJson(const QJsonObject& json) {
     if (json.contains("description")) setDescription(json["description"].toString());
     if (json.contains("value")) m_value = json["value"].toString();
     if (json.contains("name")) m_name = json["name"].toString();
+    if (json.contains("spiceModel")) m_spiceModel = json["spiceModel"].toString();
+    m_excludeFromSimulation = json["excludeFromSim"].toBool(false);
+    m_excludeFromPcb = json["excludeFromPcb"].toBool(false);
+    m_isLocked = json["isLocked"].toBool(false);
+    m_isMirroredX = json["isMirroredX"].toBool(false);
+    m_isMirroredY = json["isMirroredY"].toBool(false);
+
+    // Restore param expressions and tolerances
+    m_paramExpressions.clear();
+    if (json.contains("paramExpressions")) {
+        QJsonObject exprs = json["paramExpressions"].toObject();
+        for (auto it = exprs.begin(); it != exprs.end(); ++it) m_paramExpressions[it.key()] = it.value().toString();
+    }
+    m_tolerances.clear();
+    if (json.contains("tolerances")) {
+        QJsonObject tols = json["tolerances"].toObject();
+        for (auto it = tols.begin(); it != tols.end(); ++it) m_tolerances[it.key()] = it.value().toString();
+    }
 
     if (m_symbol.isPowerSymbol()) {
         setExcludeFromPcb(true);
@@ -127,6 +148,7 @@ bool GenericComponentItem::fromJson(const QJsonObject& json) {
     }
     loadPinPadMappingFromJson(json);
     
+    updateLabelText();
     return true;
 }
 

@@ -69,7 +69,11 @@ double inferSupplyVoltageFromName(const QString& name) {
     return 0.0;
 }
 
-void parseVoltageSourceWaveform(const QString& raw, SimComponentInstance& inst) {
+void parseSourceWaveform(const QString& raw, SimComponentInstance& inst) {
+    const bool isCurrent = (inst.type == SimComponentType::CurrentSource || inst.type == SimComponentType::B_CurrentSource);
+    const std::string mainKey = isCurrent ? "current" : "voltage";
+    const char pChar = isCurrent ? 'i' : 'v';
+    const QString pStr = QString(pChar);
     const QString spec = raw.trimmed();
     if (spec.isEmpty()) return;
 
@@ -77,145 +81,197 @@ void parseVoltageSourceWaveform(const QString& raw, SimComponentInstance& inst) 
         QRegularExpression re(pattern, QRegularExpression::CaseInsensitiveOption);
         auto m = re.match(spec);
         if (!m.hasMatch()) return {};
-        return m.captured(1).split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+        // Split by both spaces and commas for robust parsing
+        return m.captured(1).split(QRegularExpression("[\\s,]+"), Qt::SkipEmptyParts);
     };
 
-    // DC value, supports "DC 5", "5", "5V"
+    // 1. AC parsing from the tail (e.g., "5V AC 1 0" or "SINE(...) AC 1")
     {
-        QRegularExpression dcRe("^\\s*dc\\s+([^\\s]+)", QRegularExpression::CaseInsensitiveOption);
+        // Support "AC 1", "AC 1.0 90", etc.
+        QRegularExpression acRe("\\bAC\\s+([^\\s,]+)(?:[\\s,]+([^\\s,]+))?", QRegularExpression::CaseInsensitiveOption);
+        auto m = acRe.match(spec);
+        if (m.hasMatch()) {
+            double mag = 1.0, phase = 0.0;
+            if (SimValueParser::parseSpiceNumber(m.captured(1), mag)) inst.params["ac_mag"] = mag;
+            if (!m.captured(2).isEmpty()) {
+                if (SimValueParser::parseSpiceNumber(m.captured(2), phase)) inst.params["ac_phase"] = phase;
+            }
+        }
+    }
+
+    // 2. DC value parsing
+    {
+        QRegularExpression dcRe("^\\s*dc\\s+([^\\s,]+)", QRegularExpression::CaseInsensitiveOption);
         auto m = dcRe.match(spec);
         if (m.hasMatch()) {
             double dcVal = 0.0;
             if (SimValueParser::parseSpiceNumber(m.captured(1), dcVal)) {
-                inst.params["voltage"] = dcVal;
+                inst.params[mainKey] = dcVal;
             }
         }
     }
 
-    if (!inst.params.count("voltage")) {
+    if (!inst.params.count(mainKey)) {
         double rawVal = 0.0;
-        if (SimValueParser::parseSpiceNumber(spec, rawVal)) {
-            inst.params["voltage"] = rawVal;
+        // Check if the whole string is just a number (like "5" or "5V") or expression
+        if (spec.startsWith("{") && spec.endsWith("}")) {
+            inst.paramExpressions[mainKey] = spec.toStdString();
+        } else {
+            // Try to parse the first token as a DC value if it's not a function name
+            QString first = spec.split(QRegularExpression("[\\s,]+")).first();
+            if (!first.contains("(") && SimValueParser::parseSpiceNumber(first, rawVal)) {
+                inst.params[mainKey] = rawVal;
+            }
         }
     }
 
-    // SIN(offset amplitude freq delay phase)
+    // Helper: generic expression-aware token parser
+    auto wParam = [&](const QStringList& t, int idx, const std::string& key, double fallback) {
+        if (idx >= t.size()) { inst.params[key] = fallback; return; }
+        const QString tok = t[idx].trimmed();
+        if (tok.startsWith("{") && tok.endsWith("}")) {
+            inst.paramExpressions[key] = tok.toStdString();
+        } else {
+            double v = 0.0;
+            inst.params[key] = SimValueParser::parseSpiceNumber(tok, v) ? v : fallback;
+        }
+    };
+
+    // 3. Waveform Functions
+
+    // SINE(VO VA FREQ TD THETA PHI NCYCLES)
     {
         const QStringList t = cap("sine\\s*\\(([^\\)]*)\\)");
         if (!t.isEmpty()) {
             inst.params["wave_type"] = 1.0;
-            double v = 0.0;
-            inst.params["v_offset"] = (t.size() > 0 && SimValueParser::parseSpiceNumber(t[0], v)) ? v : 0.0;
-            inst.params["v_ampl"] = (t.size() > 1 && SimValueParser::parseSpiceNumber(t[1], v)) ? v : 1.0;
-            inst.params["v_freq"] = (t.size() > 2 && SimValueParser::parseSpiceNumber(t[2], v)) ? v : 1000.0;
-            inst.params["v_delay"] = (t.size() > 3 && SimValueParser::parseSpiceNumber(t[3], v)) ? v : 0.0;
-            inst.params["v_phase"] = (t.size() > 4 && SimValueParser::parseSpiceNumber(t[4], v)) ? v : 0.0;
-            if (!inst.params.count("voltage")) inst.params["voltage"] = inst.params["v_offset"];
+            wParam(t, 0, (pStr + "_offset").toStdString(), 0.0);
+            wParam(t, 1, (pStr + "_ampl").toStdString(),   isCurrent ? 1e-3 : 1.0);
+            wParam(t, 2, (pStr + "_freq").toStdString(),   1000.0);
+            wParam(t, 3, (pStr + "_delay").toStdString(),  0.0);
+            wParam(t, 4, (pStr + "_theta").toStdString(),  0.0);
+            wParam(t, 5, (pStr + "_phase").toStdString(),  0.0); // Phi in degrees
+            wParam(t, 6, (pStr + "_ncycles").toStdString(), 0.0);
+
+            if (!inst.params.count(mainKey)) {
+                std::string offKey = (pStr + "_offset").toStdString();
+                if (inst.paramExpressions.count(offKey))
+                    inst.paramExpressions[mainKey] = inst.paramExpressions[offKey];
+                else
+                    inst.params[mainKey] = inst.params.count(offKey) ? inst.params[offKey] : 0.0;
+            }
             return;
         }
     }
 
-    // PULSE(v1 v2 td tr tf pw per)
+    // PULSE(V1 V2 TD TR TF PW PER)
     {
         const QStringList t = cap("pulse\\s*\\(([^\\)]*)\\)");
         if (!t.isEmpty()) {
             inst.params["wave_type"] = 2.0;
-            double v = 0.0;
-            inst.params["pulse_v1"] = (t.size() > 0 && SimValueParser::parseSpiceNumber(t[0], v)) ? v : 0.0;
-            inst.params["pulse_v2"] = (t.size() > 1 && SimValueParser::parseSpiceNumber(t[1], v)) ? v : 5.0;
-            inst.params["pulse_td"] = (t.size() > 2 && SimValueParser::parseSpiceNumber(t[2], v)) ? v : 0.0;
-            inst.params["pulse_tr"] = (t.size() > 3 && SimValueParser::parseSpiceNumber(t[3], v)) ? v : 1e-9;
-            inst.params["pulse_tf"] = (t.size() > 4 && SimValueParser::parseSpiceNumber(t[4], v)) ? v : 1e-9;
-            inst.params["pulse_pw"] = (t.size() > 5 && SimValueParser::parseSpiceNumber(t[5], v)) ? v : 1e-3;
-            inst.params["pulse_per"] = (t.size() > 6 && SimValueParser::parseSpiceNumber(t[6], v)) ? v : 2e-3;
-            if (!inst.params.count("voltage")) inst.params["voltage"] = inst.params["pulse_v1"];
+            wParam(t, 0, (pStr + "pulse_v1").replace("vp", "p").toStdString(),  0.0); // pulse_v1 or pulse_i1
+            wParam(t, 1, (pStr + "pulse_v2").replace("vp", "p").toStdString(),  isCurrent ? 1e-3 : 5.0);
+            wParam(t, 2, "pulse_td",  0.0);
+            wParam(t, 3, "pulse_tr",  1e-9);
+            wParam(t, 4, "pulse_tf",  1e-9);
+            wParam(t, 5, "pulse_pw",  1e-3);
+            wParam(t, 6, "pulse_per", 2e-3);
+            std::string v1Key = (pStr + "pulse_v1").replace("vp", "p").toStdString();
+            if (!inst.params.count(mainKey))
+                inst.params[mainKey] = inst.params.count(v1Key) ? inst.params[v1Key] : 0.0;
             return;
         }
     }
 
-    // EXP(v1 v2 td1 tau1 td2 tau2)
+    // EXP(V1 V2 TD1 TAU1 TD2 TAU2)
     {
         const QStringList t = cap("exp\\s*\\(([^\\)]*)\\)");
         if (!t.isEmpty()) {
             inst.params["wave_type"] = 3.0;
-            double v = 0.0;
-            inst.params["exp_v1"] = (t.size() > 0 && SimValueParser::parseSpiceNumber(t[0], v)) ? v : 0.0;
-            inst.params["exp_v2"] = (t.size() > 1 && SimValueParser::parseSpiceNumber(t[1], v)) ? v : 5.0;
-            inst.params["exp_td1"] = (t.size() > 2 && SimValueParser::parseSpiceNumber(t[2], v)) ? v : 0.0;
-            inst.params["exp_tau1"] = (t.size() > 3 && SimValueParser::parseSpiceNumber(t[3], v)) ? v : 1e-4;
-            inst.params["exp_td2"] = (t.size() > 4 && SimValueParser::parseSpiceNumber(t[4], v)) ? v : 1e-3;
-            inst.params["exp_tau2"] = (t.size() > 5 && SimValueParser::parseSpiceNumber(t[5], v)) ? v : 1e-4;
-            if (!inst.params.count("voltage")) inst.params["voltage"] = inst.params["exp_v1"];
+            wParam(t, 0, (pStr + "exp_v1").replace("ve", "e").toStdString(),   0.0);
+            wParam(t, 1, (pStr + "exp_v2").replace("ve", "e").toStdString(),   isCurrent ? 1e-3 : 5.0);
+            wParam(t, 2, "exp_td1",  0.0);
+            wParam(t, 3, "exp_tau1", 1e-4);
+            wParam(t, 4, "exp_td2",  1e-3);
+            wParam(t, 5, "exp_tau2", 1e-4);
+            std::string v1Key = (pStr + "exp_v1").replace("ve", "e").toStdString();
+            if (!inst.params.count(mainKey))
+                inst.params[mainKey] = inst.params.count(v1Key) ? inst.params[v1Key] : 0.0;
             return;
         }
     }
 
-    // SFFM(vo va fc mdi fs)
+    // SFFM(VO VA FC MDI FS)
     {
         const QStringList t = cap("sffm\\s*\\(([^\\)]*)\\)");
         if (!t.isEmpty()) {
             inst.params["wave_type"] = 4.0;
-            double v = 0.0;
-            inst.params["sffm_offset"] = (t.size() > 0 && SimValueParser::parseSpiceNumber(t[0], v)) ? v : 0.0;
-            inst.params["sffm_ampl"] = (t.size() > 1 && SimValueParser::parseSpiceNumber(t[1], v)) ? v : 1.0;
-            inst.params["sffm_carrier_freq"] = (t.size() > 2 && SimValueParser::parseSpiceNumber(t[2], v)) ? v : 1000.0;
-            inst.params["sffm_mod_index"] = (t.size() > 3 && SimValueParser::parseSpiceNumber(t[3], v)) ? v : 1.0;
-            inst.params["sffm_signal_freq"] = (t.size() > 4 && SimValueParser::parseSpiceNumber(t[4], v)) ? v : 100.0;
-            if (!inst.params.count("voltage")) inst.params["voltage"] = inst.params["sffm_offset"];
+            wParam(t, 0, (pStr + "sffm_offset").replace("os", "s").toStdString(),       0.0);
+            wParam(t, 1, (pStr + "sffm_ampl").replace("as", "s").toStdString(),         isCurrent ? 1e-3 : 1.0);
+            wParam(t, 2, "sffm_carrier_freq",  1000.0);
+            wParam(t, 3, "sffm_mod_index",    1.0);
+            wParam(t, 4, "sffm_signal_freq",  100.0);
+            std::string offKey = (pStr + "sffm_offset").replace("os", "s").toStdString();
+            if (!inst.params.count(mainKey))
+                inst.params[mainKey] = inst.params.count(offKey) ? inst.params[offKey] : 0.0;
             return;
         }
     }
 
-    // PWL(t1 v1 t2 v2 ...)
+    // PWL(T1 V1 T2 V2 ...)
     {
         const QStringList t = cap("pwl\\s*\\(([^\\)]*)\\)");
-        if (t.size() >= 4 && (t.size() % 2 == 0)) {
+        if (t.size() >= 2) {
             inst.params["wave_type"] = 5.0;
             const int pairs = t.size() / 2;
             inst.params["pwl_n"] = static_cast<double>(pairs);
-            double parsed = 0.0;
             for (int i = 0; i < pairs; ++i) {
-                const QString tKey = QString("pwl_t%1").arg(i);
-                const QString vKey = QString("pwl_v%1").arg(i);
-                inst.params[tKey.toStdString()] = SimValueParser::parseSpiceNumber(t[2 * i], parsed) ? parsed : 0.0;
-                inst.params[vKey.toStdString()] = SimValueParser::parseSpiceNumber(t[2 * i + 1], parsed) ? parsed : 0.0;
+                QString tKey = QString("pwl_t%1").arg(i);
+                QString vKey = QString("pwl_%1%2").arg(pChar).arg(i);
+                wParam(t, 2 * i, tKey.toStdString(), 0.0);
+                wParam(t, 2 * i + 1, vKey.toStdString(), 0.0);
             }
-            if (!inst.params.count("voltage")) inst.params["voltage"] = inst.params["pwl_v0"];
+            std::string v0Key = QString("pwl_%10").arg(pChar).toStdString();
+            if (!inst.params.count(mainKey)) inst.params[mainKey] = inst.params[v0Key];
             return;
         }
     }
 
-    // AM(sa oc fm fc td)
+    // AM(SA OC FM FC TD)
     {
         const QStringList t = cap("am\\s*\\(([^\\)]*)\\)");
         if (!t.isEmpty()) {
             inst.params["wave_type"] = 6.0;
-            double v = 0.0;
-            inst.params["am_scale"] = (t.size() > 0 && SimValueParser::parseSpiceNumber(t[0], v)) ? v : 1.0;
-            inst.params["am_offset_coeff"] = (t.size() > 1 && SimValueParser::parseSpiceNumber(t[1], v)) ? v : 1.0;
-            inst.params["am_mod_freq"] = (t.size() > 2 && SimValueParser::parseSpiceNumber(t[2], v)) ? v : 1000.0;
-            inst.params["am_carrier_freq"] = (t.size() > 3 && SimValueParser::parseSpiceNumber(t[3], v)) ? v : 10000.0;
-            inst.params["am_delay"] = (t.size() > 4 && SimValueParser::parseSpiceNumber(t[4], v)) ? v : 0.0;
+            wParam(t, 0, "am_scale",        1.0);
+            wParam(t, 1, "am_offset_coeff", 1.0);
+            wParam(t, 2, "am_mod_freq",     1000.0);
+            wParam(t, 3, "am_carrier_freq", 10000.0);
+            wParam(t, 4, "am_delay",        0.0);
             if (!inst.params.count("voltage")) inst.params["voltage"] = 0.0;
             return;
         }
     }
 
-    // FM(vo va fc fd fm)
+    // FM(VO VA FC FD FM)
     {
         const QStringList t = cap("fm\\s*\\(([^\\)]*)\\)");
         if (!t.isEmpty()) {
             inst.params["wave_type"] = 7.0;
-            double v = 0.0;
-            inst.params["fm_offset"] = (t.size() > 0 && SimValueParser::parseSpiceNumber(t[0], v)) ? v : 0.0;
-            inst.params["fm_ampl"] = (t.size() > 1 && SimValueParser::parseSpiceNumber(t[1], v)) ? v : 1.0;
-            inst.params["fm_carrier_freq"] = (t.size() > 2 && SimValueParser::parseSpiceNumber(t[2], v)) ? v : 10000.0;
-            inst.params["fm_freq_dev"] = (t.size() > 3 && SimValueParser::parseSpiceNumber(t[3], v)) ? v : 2000.0;
-            inst.params["fm_mod_freq"] = (t.size() > 4 && SimValueParser::parseSpiceNumber(t[4], v)) ? v : 1000.0;
-            if (!inst.params.count("voltage")) inst.params["voltage"] = inst.params["fm_offset"];
+            wParam(t, 0, (pStr + "fm_offset").replace("of", "f").toStdString(),       0.0);
+            wParam(t, 1, (pStr + "fm_ampl").replace("af", "f").toStdString(),         isCurrent ? 1e-3 : 1.0);
+            wParam(t, 2, "fm_carrier_freq", 10000.0);
+            wParam(t, 3, "fm_freq_dev",     2000.0);
+            wParam(t, 4, "fm_mod_freq",     1000.0);
+            std::string offKey = (pStr + "fm_offset").replace("of", "f").toStdString();
+            if (!inst.params.count(mainKey))
+                inst.params[mainKey] = inst.params.count(offKey) ? inst.params[offKey] : 0.0;
             return;
         }
     }
+}
+
+static bool isExpression(const QString& s) {
+    QString t = s.trimmed();
+    return t.startsWith("{") && t.endsWith("}");
 }
 
 struct MappingResult {
@@ -319,7 +375,11 @@ MappingResult mapComponentToSimType(const ECOComponent& comp) {
             return r;
         case SchematicItem::VoltageSourceType:
             r.supported = true;
-            r.type = SimComponentType::VoltageSource;
+            if (comp.value.trimmed().startsWith("V=", Qt::CaseInsensitive)) {
+                r.type = SimComponentType::B_VoltageSource;
+            } else {
+                r.type = SimComponentType::VoltageSource;
+            }
             return r;
         case SchematicItem::TransformerType:
             r.supported = true;
@@ -384,6 +444,11 @@ MappingResult mapComponentToSimType(const ECOComponent& comp) {
                 else if (comp.value.contains("NMOS", Qt::CaseInsensitive)) r.type = SimComponentType::MOSFET_NMOS;
                 else if (comp.value.contains("PMOS", Qt::CaseInsensitive)) r.type = SimComponentType::MOSFET_PMOS;
                 else r.type = SimComponentType::BJT_NPN;
+                return r;
+            }
+            if (comp.typeName == "Voltage_Source_Behavioral" || comp.typeName == "Behavioral Voltage Source") {
+                r.supported = true;
+                r.type = SimComponentType::B_VoltageSource;
                 return r;
             }
             if (comp.typeName == "Gate_AND") {
@@ -589,11 +654,28 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
     
     // 3. Identify and register nodes
     for (const auto& net : nets) {
-        if (isGroundNet(net.name)) {
-            // Mapping handled by findNode or explicit 0 mapping
-            continue; 
-        }
         netlist.addNode(net.name.toStdString());
+    }
+
+    // --- NEW: Process SPICE Directives (.param, .model, etc.) from the scene ---
+    for (auto* item : scene->items()) {
+        if (auto* si = dynamic_cast<SchematicItem*>(item)) {
+            if (si->itemType() == SchematicItem::SpiceDirectiveType) {
+                QString text = si->value();
+                if (text.isEmpty()) continue;
+                
+                SimModelParseOptions opts;
+                opts.sourceName = "Schematic Directive";
+                std::vector<SimParseDiagnostic> diags;
+                SimModelParser::parseLibrary(netlist, text.toStdString(), opts, &diags);
+                
+                for (const auto& d : diags) {
+                    if (d.severity == SimParseDiagnosticSeverity::Error) {
+                        qWarning() << "Simulator: directive error:" << QString::fromStdString(d.message);
+                    }
+                }
+            }
+        }
     }
 
     // Load optional project-local model libraries before mapping components.
@@ -614,7 +696,13 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
             inst.paramExpressions[it.key().toStdString()] = it.value().toStdString();
         }
         for (auto it = comp.tolerances.begin(); it != comp.tolerances.end(); ++it) {
-            inst.tolerances[it.key().toStdString()] = { it.value(), ToleranceDistribution::Uniform }; // Default to uniform for now
+            double tVal = 0.0;
+            if (SimValueParser::parseSpiceNumber(it.value(), tVal)) {
+                SimTolerance st;
+                st.value = tVal;
+                st.distribution = ToleranceDistribution::Uniform;
+                inst.tolerances[it.key().toStdString()] = st;
+            }
         }
 
         MappingResult map = mapComponentToSimType(comp);
@@ -627,6 +715,22 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
         }
         inst.type = map.type;
         
+        // --- Support brace expressions in basic component values ---
+        if (inst.type == SimComponentType::Resistor || inst.type == SimComponentType::Capacitor || inst.type == SimComponentType::Inductor) {
+            if (isExpression(comp.value)) {
+                std::string key = (inst.type == SimComponentType::Resistor) ? "resistance" :
+                                 (inst.type == SimComponentType::Capacitor) ? "capacitance" : "inductance";
+                inst.paramExpressions[key] = comp.value.trimmed().toStdString();
+            } else {
+                double val = 0.0;
+                if (SimValueParser::parseSpiceNumber(comp.value, val)) {
+                    std::string key = (inst.type == SimComponentType::Resistor) ? "resistance" :
+                                     (inst.type == SimComponentType::Capacitor) ? "capacitance" : "inductance";
+                    inst.params[key] = val;
+                }
+            }
+        }
+
         // --- Special Expansion: Potentiometer ---
         if (comp.typeName == "Potentiometer") {
             // Find nodes for pins 1, 2, 3
@@ -645,8 +749,8 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
             if (nA != -1 && nW != -1 && nB != -1) {
                 double rUpper = 5000.0;
                 double rLower = 5000.0;
-                if (comp.paramExpressions.contains("r_upper")) rUpper = comp.paramExpressions["r_upper"].toDouble();
-                if (comp.paramExpressions.contains("r_lower")) rLower = comp.paramExpressions["r_lower"].toDouble();
+                if (comp.paramExpressions.contains("r_upper")) rUpper = parseValue(comp.paramExpressions["r_upper"]);
+                if (comp.paramExpressions.contains("r_lower")) rLower = parseValue(comp.paramExpressions["r_lower"]);
 
                 SimComponentInstance r1;
                 r1.name = inst.name + "_UPPER";
@@ -825,13 +929,17 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
 
         // Parse value
         if (inst.type == SimComponentType::B_VoltageSource || inst.type == SimComponentType::B_CurrentSource) {
-            inst.modelName = comp.value.toStdString(); // Store expression in modelName
+            QString expr = comp.value.trimmed();
+            if (expr.startsWith("V=", Qt::CaseInsensitive) || expr.startsWith("I=", Qt::CaseInsensitive)) {
+                expr = expr.mid(2).trimmed();
+            }
+            inst.modelName = expr.toStdString(); // Store expression in modelName
         } else if (inst.type == SimComponentType::SubcircuitInstance) {
             // Subcircuit parameters can be added in future from IC value/options.
         } else {
             double val = parseValue(comp.value);
-            if (inst.type == SimComponentType::VoltageSource) {
-                parseVoltageSourceWaveform(comp.value, inst);
+            if (inst.type == SimComponentType::VoltageSource || inst.type == SimComponentType::CurrentSource) {
+                parseSourceWaveform(comp.value, inst);
             }
             if (inst.type == SimComponentType::VoltageSource && val == 0.0) {
                 // Power labels may carry names (VCC/12V) instead of plain numbers.
@@ -930,6 +1038,10 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
             }
         }
     }
+
+    // --- NEW: Finalize Netlist (Flatten subcircuits and Resolve parameter expressions) ---
+    netlist.flatten();
+    netlist.evaluateExpressions();
 
     return netlist;
 }

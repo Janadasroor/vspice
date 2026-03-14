@@ -17,16 +17,16 @@ SignalGeneratorPropertiesDialog::SignalGeneratorPropertiesDialog(SignalGenerator
     waveField.choices = {"Sine", "Square", "Triangle", "Pulse", "DC"};
     sourceTab.fields.append(waveField);
 
-    sourceTab.fields.append({"freq", "Frequency", PropertyField::EngineeringValue, 1000.0, {}, "Hz"});
-    sourceTab.fields.append({"amp", "Amplitude", PropertyField::Double, 5.0, {}, "V"});
-    sourceTab.fields.append({"offset", "DC Offset", PropertyField::Double, 0.0, {}, "V"});
+    sourceTab.fields.append({"freq", "Frequency", PropertyField::EngineeringValue, item->frequency(), {}, "Hz"});
+    sourceTab.fields.append({"amp", "Amplitude", PropertyField::EngineeringValue, item->amplitude(), {}, "V"});
+    sourceTab.fields.append({"offset", "DC Offset", PropertyField::EngineeringValue, item->offset(), {}, "V"});
     
     addTab(sourceTab);
 
     PropertyTab acTab;
     acTab.title = "AC Analysis";
-    acTab.fields.append({"ac_mag", "AC Magnitude", PropertyField::Double, 1.0, {}, "V"});
-    acTab.fields.append({"ac_phase", "AC Phase", PropertyField::Double, 0.0, {}, "°"});
+    acTab.fields.append({"ac_mag", "AC Magnitude", PropertyField::EngineeringValue, item->acMagnitude(), {}, "V"});
+    acTab.fields.append({"ac_phase", "AC Phase", PropertyField::EngineeringValue, item->acPhase(), {}, "°"});
     addTab(acTab);
 
     PropertyTab simTab;
@@ -52,12 +52,6 @@ SignalGeneratorPropertiesDialog::SignalGeneratorPropertiesDialog(SignalGenerator
         item->waveform() == SignalGeneratorItem::Triangle ? "Triangle" : 
         item->waveform() == SignalGeneratorItem::Pulse ? "Pulse" : "DC");
     
-    setPropertyValue("freq", QString::number(item->frequency()));
-    setPropertyValue("amp", item->amplitude());
-    setPropertyValue("offset", item->offset());
-    setPropertyValue("ac_mag", item->acMagnitude());
-    setPropertyValue("ac_phase", item->acPhase());
-    
     setPropertyValue("sim_type", "None");
 }
 
@@ -80,13 +74,10 @@ void SignalGeneratorPropertiesDialog::applyPreview() {
     else if (waveStr == "Pulse") wave = SignalGeneratorItem::Pulse;
     else if (waveStr == "DC") wave = SignalGeneratorItem::DC;
 
-    double freq = 1000.0;
-    SimValueParser::parseSpiceNumber(getPropertyValue("freq").toString(), freq);
-    
     m_item->setWaveform(wave);
-    m_item->setFrequency(freq);
-    m_item->setAmplitude(getPropertyValue("amp").toDouble());
-    m_item->setOffset(getPropertyValue("offset").toDouble());
-    m_item->setAcMagnitude(getPropertyValue("ac_mag").toDouble());
-    m_item->setAcPhase(getPropertyValue("ac_phase").toDouble());
+    m_item->setFrequency(getPropertyValue("freq").toString());
+    m_item->setAmplitude(getPropertyValue("amp").toString());
+    m_item->setOffset(getPropertyValue("offset").toString());
+    m_item->setAcMagnitude(getPropertyValue("ac_mag").toString());
+    m_item->setAcPhase(getPropertyValue("ac_phase").toString());
 }

@@ -127,6 +127,7 @@ QJsonObject NetLabelItem::toJson() const {
     json["id"] = id().toString();
     json["x"] = pos().x();
     json["y"] = pos().y();
+    json["rotation"] = rotation();
     json["label"] = value();
     json["scope"] = (int)m_scope;
     json["netClass"] = m_netClassName;
@@ -136,6 +137,7 @@ QJsonObject NetLabelItem::toJson() const {
 bool NetLabelItem::fromJson(const QJsonObject& json) {
     setId(QUuid::fromString(json["id"].toString()));
     setPos(json["x"].toDouble(), json["y"].toDouble());
+    setRotation(json["rotation"].toDouble(0.0));
     setValue(json["label"].toString());
     m_scope = (LabelScope)json["scope"].toInt();
     m_netClassName = json["netClass"].toString();

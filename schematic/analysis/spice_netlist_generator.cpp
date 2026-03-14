@@ -4,6 +4,7 @@
 #include "../io/netlist_generator.h"
 #include "../../symbols/symbol_library.h"
 #include "../../symbols/models/symbol_definition.h"
+#include "../items/schematic_spice_directive_item.h"
 #include <QGraphicsScene>
 #include <QSet>
 #include <QMap>
@@ -52,6 +53,23 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
     QString netlist;
     netlist += "* Viora EDA Automated Hierarchical SPICE Netlist\n";
     netlist += "* Generated on " + QDateTime::currentDateTime().toString() + "\n\n";
+
+    // 0. Append SPICE Directives from schematic at the TOP 
+    // This ensures .params and .model are defined before use
+    netlist += "* Custom SPICE Directives\n";
+    for (QGraphicsItem* item : scene->items()) {
+        if (auto* si = dynamic_cast<SchematicItem*>(item)) {
+            if (si->itemType() == SchematicItem::SpiceDirectiveType) {
+                if (auto* dir = dynamic_cast<SchematicSpiceDirectiveItem*>(si)) {
+                    QString cmd = dir->text().trimmed();
+                    if (!cmd.isEmpty()) {
+                        netlist += cmd + "\n";
+                    }
+                }
+            }
+        }
+    }
+    netlist += "\n";
 
     // 1. Get Flattened ECO Package (Components)
     ECOPackage pkg = NetlistGenerator::generateECOPackage(scene, projectDir, nullptr);
@@ -105,7 +123,10 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         else if (type == SchematicItem::InductorType) line = "L" + ref;
         else if (type == SchematicItem::DiodeType) line = "D" + ref;
         else if (type == SchematicItem::TransistorType) line = "Q" + ref;
-        else if (type == SchematicItem::VoltageSourceType) line = "V" + ref;
+        else if (type == SchematicItem::VoltageSourceType) {
+            if (comp.value.trimmed().startsWith("V=", Qt::CaseInsensitive)) line = "B" + ref;
+            else line = "V" + ref;
+        }
         else line = "X" + ref; // Subcircuit or generic
 
         // Map pins to nodes
@@ -186,7 +207,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         netlist += QString("V_%1 %1 0 DC %2\n").arg(spiceNet, voltage);
     }
 
-    // Add simulation command
+    // 5. Simulation command
     netlist += "\n";
     switch (params.type) {
         case Transient:

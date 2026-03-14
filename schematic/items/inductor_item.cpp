@@ -40,6 +40,7 @@ void InductorItem::buildPrimitives() {
 void InductorItem::setValue(const QString& value) {
     if (m_value != value) {
         m_value = value;
+        updateLabelText();
         buildPrimitives();
         update();
     }
@@ -114,6 +115,7 @@ bool InductorItem::fromJson(const QJsonObject& json) {
     if (json.contains("valX")) {
         setValueLabelPos(QPointF(json["valX"].toDouble(), json["valY"].toDouble()));
     }
+    updateLabelText();
     update();
     return true;
 }
