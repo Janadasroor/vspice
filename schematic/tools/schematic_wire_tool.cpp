@@ -613,7 +613,7 @@ QList<QPointF> SchematicWireTool::buildRoutePoints(const QPointF& start, const Q
         break;
     }
 
-    // Manhattan mode: try smart routing first, fall back to simple L-shape
+    // Manhattan mode: always use clean L-shape (Proteus-style)
     const bool forceH = modifiers.testFlag(Qt::ControlModifier);
     const bool forceV = modifiers.testFlag(Qt::AltModifier);
     
@@ -621,6 +621,10 @@ QList<QPointF> SchematicWireTool::buildRoutePoints(const QPointF& start, const Q
         // Forced direction — use simple Manhattan without pathfinding
         const bool hFirst = forceH ? true : false;
         QPointF corner = hFirst ? QPointF(target.x(), start.y()) : QPointF(start.x(), target.y());
+        if (view()) {
+            QPointF snapped = view()->snapToGrid(corner);
+            corner = hFirst ? QPointF(snapped.x(), start.y()) : QPointF(start.x(), snapped.y());
+        }
         QList<QPointF> points{start};
         if (corner != start && corner != target) {
             points.append(corner);
@@ -629,7 +633,7 @@ QList<QPointF> SchematicWireTool::buildRoutePoints(const QPointF& start, const Q
         return points;
     }
 
-    return buildSmartRoute(start, target);
+    return buildManhattanRoute(start, target);
 }
 
 QList<QPointF> SchematicWireTool::buildSmartRoute(const QPointF& start, const QPointF& target) const {
@@ -650,6 +654,10 @@ QList<QPointF> SchematicWireTool::buildSmartRoute(const QPointF& start, const QP
 
 QList<QPointF> SchematicWireTool::buildManhattanRoute(const QPointF& start, const QPointF& target) const {
     QPointF corner = m_hFirst ? QPointF(target.x(), start.y()) : QPointF(start.x(), target.y());
+    if (view()) {
+        QPointF snapped = view()->snapToGrid(corner);
+        corner = m_hFirst ? QPointF(snapped.x(), start.y()) : QPointF(start.x(), snapped.y());
+    }
     QList<QPointF> points{start};
     if (corner != start && corner != target) {
         points.append(corner);

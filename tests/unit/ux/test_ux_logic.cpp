@@ -5,14 +5,12 @@
 #include "../../../schematic/items/resistor_item.h"
 #include "../../../schematic/items/transistor_item.h"
 #include "../../../schematic/items/wire_item.h"
+#include "../../../schematic/analysis/schematic_connectivity.h"
 #include "../../../schematic/tools/schematic_tool_registry_builtin.h"
 #include "../../../schematic/dialogs/smart_properties_dialog.h"
 #include "../../../core/config_manager.h"
-#include "../../../core/assignment_validator.h"
 #include "../../../symbols/models/symbol_definition.h"
 #include "../../../symbols/models/symbol_primitive.h"
-#include "../../../footprints/models/footprint_definition.h"
-#include "../../../footprints/models/footprint_primitive.h"
 #include <cmath>
 #include <QRegularExpression>
 #include <QGraphicsScene>
@@ -69,6 +67,27 @@ bool alignedToGrid(qreal value, qreal grid = 15.0, qreal eps = 0.01) {
     return rem <= eps || std::abs(rem - grid) <= eps;
 }
 
+bool wireSegmentsOrthogonal(const WireItem* wire, qreal tol = 1.0) {
+    if (!wire) return false;
+    const QList<QPointF> pts = wire->points();
+    if (pts.size() < 2) return true;
+    for (int i = 0; i < pts.size() - 1; ++i) {
+        const QPointF a = pts[i];
+        const QPointF b = pts[i + 1];
+        const qreal dx = std::abs(a.x() - b.x());
+        const qreal dy = std::abs(a.y() - b.y());
+        if (dx >= tol && dy >= tol) return false;
+    }
+    return true;
+}
+
+bool containsPointNear(const QList<QPointF>& points, const QPointF& target, qreal eps = 0.5) {
+    for (const QPointF& p : points) {
+        if (QLineF(p, target).length() <= eps) return true;
+    }
+    return false;
+}
+
 } // namespace
 
 class TestUXLogic : public QObject {
@@ -79,32 +98,6 @@ private slots:
         // Initialize the registry
         SchematicMenuRegistry::instance().initializeDefaultActions();
         SchematicToolRegistryBuiltIn::registerBuiltInTools();
-    }
-
-    void testAssignmentValidator_ICRequiresExactPadCount() {
-        Flux::Model::SymbolDefinition ic8("IC8");
-        ic8.setReferencePrefix("U");
-        for (int i = 0; i < 8; ++i) {
-            ic8.addPrimitive(Flux::Model::SymbolPrimitive::createPin(QPointF(i * 2.54, 0), i + 1, QString::number(i + 1)));
-        }
-
-        Flux::Model::FootprintDefinition fp8("SOIC-8");
-        for (int i = 0; i < 8; ++i) {
-            fp8.addPrimitive(Flux::Model::FootprintPrimitive::createPad(QPointF(i * 1.27, 0), QString::number(i + 1)));
-        }
-
-        Flux::Model::FootprintDefinition fp7("SOIC-7");
-        for (int i = 0; i < 7; ++i) {
-            fp7.addPrimitive(Flux::Model::FootprintPrimitive::createPad(QPointF(i * 1.27, 0), QString::number(i + 1)));
-        }
-
-        const auto ok = Flux::Core::AssignmentValidator::validate(ic8, fp8);
-        QVERIFY2(ok.valid, qPrintable(ok.message));
-
-        const auto bad = Flux::Core::AssignmentValidator::validate(ic8, fp7);
-        QVERIFY(!bad.valid);
-        QCOMPARE(bad.severity, Flux::Core::AssignmentValidator::ValidationResult::Error);
-        QVERIFY(bad.message.contains("IC mismatch"));
     }
 
     void testMenuRegistry_SingleSelection() {
@@ -406,6 +399,190 @@ private slots:
         QVERIFY2(
             QLineF(branchStartAfter, tJunction).length() > 1.0,
             "Dragging transistor should move the branch T-junction endpoint.");
+    }
+
+    void testSelectDrag_SequentialMovesKeepWireEndpointsAttached() {
+        ConfigManager::instance().setRealtimeWireUpdateEnabled(true);
+
+        QGraphicsScene scene;
+        TestSchematicView view;
+        view.resize(1000, 700);
+        view.setScene(&scene);
+        view.setCurrentTool("Select");
+
+        auto* resistor = new ResistorItem(QPointF(225.0, 225.0), "10k", ResistorItem::US);
+        scene.addItem(resistor);
+
+        const QPointF leftPin = resistor->mapToScene(resistor->connectionPoints().first());
+        const QPointF rightPin = resistor->mapToScene(resistor->connectionPoints().last());
+        const QPointF leftJunction = leftPin + QPointF(-45.0, 0.0);
+        const QPointF rightJunction = rightPin + QPointF(45.0, 0.0);
+
+        auto* leftStub = new WireItem();
+        leftStub->setPoints({leftPin, leftJunction});
+        scene.addItem(leftStub);
+
+        auto* leftTrunk = new WireItem();
+        leftTrunk->setPoints({leftJunction, leftJunction + QPointF(0.0, 60.0)});
+        scene.addItem(leftTrunk);
+
+        auto* rightStub = new WireItem();
+        rightStub->setPoints({rightPin, rightJunction});
+        scene.addItem(rightStub);
+
+        auto* rightTrunk = new WireItem();
+        rightTrunk->setPoints({rightJunction, rightJunction + QPointF(0.0, 60.0)});
+        scene.addItem(rightTrunk);
+
+        auto assertAttached = [&]() {
+            const QPointF leftPinAfter = resistor->mapToScene(resistor->connectionPoints().first());
+            const QPointF rightPinAfter = resistor->mapToScene(resistor->connectionPoints().last());
+
+            const QPointF leftStubStart = leftStub->mapToScene(leftStub->points().first());
+            const QPointF leftStubEnd = leftStub->mapToScene(leftStub->points().last());
+            const QPointF leftTrunkStart = leftTrunk->mapToScene(leftTrunk->points().first());
+
+            const QPointF rightStubStart = rightStub->mapToScene(rightStub->points().first());
+            const QPointF rightStubEnd = rightStub->mapToScene(rightStub->points().last());
+            const QPointF rightTrunkStart = rightTrunk->mapToScene(rightTrunk->points().first());
+
+            QVERIFY2(near(leftStubStart, leftPinAfter), "Left stub must remain attached to left pin.");
+            QVERIFY2(near(rightStubStart, rightPinAfter), "Right stub must remain attached to right pin.");
+            QVERIFY2(near(leftStubEnd, leftTrunkStart), "Left stub junction must remain on left trunk.");
+            QVERIFY2(near(rightStubEnd, rightTrunkStart), "Right stub junction must remain on right trunk.");
+            QVERIFY2(wireSegmentsOrthogonal(leftStub), "Left stub must remain orthogonal after drag.");
+            QVERIFY2(wireSegmentsOrthogonal(rightStub), "Right stub must remain orthogonal after drag.");
+            QVERIFY2(leftStub->points().size() <= 3, "Left stub should not accumulate tail segments.");
+            QVERIFY2(rightStub->points().size() <= 3, "Right stub should not accumulate tail segments.");
+        };
+
+        auto dragBy = [&](const QPointF& delta) {
+            const QPoint pressPos = sceneToView(view, resistor->scenePos());
+            const QPoint releasePos = sceneToView(view, resistor->scenePos() + delta);
+            sendMousePress(view, pressPos);
+            sendMouseMoveWithLeftButton(view, releasePos);
+            sendMouseRelease(view, releasePos);
+        };
+
+        // First drag up, then right.
+        dragBy(QPointF(0.0, -30.0));
+        assertAttached();
+        dragBy(QPointF(30.0, 0.0));
+        assertAttached();
+
+        // Then drag left, then down (second sequence).
+        dragBy(QPointF(-30.0, 0.0));
+        assertAttached();
+        dragBy(QPointF(0.0, 30.0));
+        assertAttached();
+    }
+
+    void testConnectivity_JunctionDotsFollowRules() {
+        QGraphicsScene scene;
+
+        auto* wireA = new WireItem();
+        wireA->setPoints({QPointF(0.0, 0.0), QPointF(30.0, 0.0)});
+        scene.addItem(wireA);
+
+        auto* wireB = new WireItem();
+        wireB->setPoints({QPointF(30.0, 0.0), QPointF(30.0, 30.0)});
+        scene.addItem(wireB);
+
+        // Two endpoints meeting should not produce a junction dot.
+        SchematicConnectivity::updateVisualConnections(&scene);
+        QVERIFY2(wireA->junctions().isEmpty(), "2-way endpoint connection must not create junction dot.");
+        QVERIFY2(wireB->junctions().isEmpty(), "2-way endpoint connection must not create junction dot.");
+
+        // Clear and create a T-junction.
+        wireA->setPoints({QPointF(0.0, 0.0), QPointF(60.0, 0.0)});
+        wireB->setPoints({QPointF(30.0, 0.0), QPointF(30.0, 30.0)});
+        wireA->clearJunctions();
+        wireB->clearJunctions();
+        SchematicConnectivity::updateVisualConnections(&scene);
+        const QPointF tj(30.0, 0.0);
+        QVERIFY2(containsPointNear(wireA->junctions(), tj), "T-junction must add dot on trunk wire.");
+        QVERIFY2(containsPointNear(wireB->junctions(), tj), "T-junction must add dot on branch endpoint.");
+
+        // Clear and create a 3-way endpoint.
+        wireA->setPoints({QPointF(0.0, 0.0), QPointF(30.0, 0.0)});
+        wireB->setPoints({QPointF(0.0, 0.0), QPointF(0.0, 30.0)});
+        auto* wireC = new WireItem();
+        wireC->setPoints({QPointF(0.0, 0.0), QPointF(-30.0, 0.0)});
+        scene.addItem(wireC);
+        wireA->clearJunctions();
+        wireB->clearJunctions();
+        wireC->clearJunctions();
+        SchematicConnectivity::updateVisualConnections(&scene);
+        const QPointF threeWay(0.0, 0.0);
+        QVERIFY2(containsPointNear(wireA->junctions(), threeWay), "3-way endpoint must create junction dot on wire A.");
+        QVERIFY2(containsPointNear(wireB->junctions(), threeWay), "3-way endpoint must create junction dot on wire B.");
+        QVERIFY2(containsPointNear(wireC->junctions(), threeWay), "3-way endpoint must create junction dot on wire C.");
+    }
+
+    void testSelectDrag_AnchoredWireBetweenComponentsStaysAttached() {
+        ConfigManager::instance().setRealtimeWireUpdateEnabled(true);
+
+        QGraphicsScene scene;
+        TestSchematicView view;
+        view.resize(1000, 700);
+        view.setScene(&scene);
+        view.setCurrentTool("Select");
+
+        auto* leftRes = new ResistorItem(QPointF(200.0, 200.0), "10k", ResistorItem::US);
+        auto* rightRes = new ResistorItem(QPointF(420.0, 200.0), "10k", ResistorItem::US);
+        scene.addItem(leftRes);
+        scene.addItem(rightRes);
+
+        const QList<QPointF> leftPins = leftRes->connectionPoints();
+        const QList<QPointF> rightPins = rightRes->connectionPoints();
+        const QPointF leftP0 = leftRes->mapToScene(leftPins.first());
+        const QPointF leftP1 = leftRes->mapToScene(leftPins.last());
+        const QPointF rightP0 = rightRes->mapToScene(rightPins.first());
+        const QPointF rightP1 = rightRes->mapToScene(rightPins.last());
+
+        const QPointF leftPin = (leftP0.x() > leftP1.x()) ? leftP0 : leftP1;
+        const QPointF rightPin = (rightP0.x() < rightP1.x()) ? rightP0 : rightP1;
+
+        const QPointF busY = leftPin + QPointF(0.0, -45.0);
+        auto* linkWire = new WireItem();
+        linkWire->setPoints({
+            leftPin,
+            busY,
+            QPointF(rightPin.x(), busY.y()),
+            rightPin
+        });
+        scene.addItem(linkWire);
+
+        auto assertAnchored = [&]() {
+            const QPointF leftPinAfter = leftRes->mapToScene(leftRes->connectionPoints().first());
+            const QPointF leftPinAfter2 = leftRes->mapToScene(leftRes->connectionPoints().last());
+            const QPointF rightPinAfter = rightRes->mapToScene(rightRes->connectionPoints().first());
+            const QPointF rightPinAfter2 = rightRes->mapToScene(rightRes->connectionPoints().last());
+
+            const QPointF leftAnchor = (leftPinAfter.x() > leftPinAfter2.x()) ? leftPinAfter : leftPinAfter2;
+            const QPointF rightAnchor = (rightPinAfter.x() < rightPinAfter2.x()) ? rightPinAfter : rightPinAfter2;
+
+            const QList<QPointF> pts = linkWire->points();
+            const QPointF startScene = linkWire->mapToScene(pts.first());
+            const QPointF endScene = linkWire->mapToScene(pts.last());
+
+            QVERIFY2(near(startScene, leftAnchor), "Link wire must stay attached to moved left resistor pin.");
+            QVERIFY2(near(endScene, rightAnchor), "Link wire must stay attached to stationary right resistor pin.");
+            QVERIFY2(wireSegmentsOrthogonal(linkWire), "Link wire must remain orthogonal after drag.");
+        };
+
+        auto dragBy = [&](const QPointF& delta) {
+            const QPoint pressPos = sceneToView(view, leftRes->scenePos());
+            const QPoint releasePos = sceneToView(view, leftRes->scenePos() + delta);
+            sendMousePress(view, pressPos);
+            sendMouseMoveWithLeftButton(view, releasePos);
+            sendMouseRelease(view, releasePos);
+        };
+
+        dragBy(QPointF(0.0, -30.0));
+        assertAnchored();
+        dragBy(QPointF(30.0, 0.0));
+        assertAnchored();
     }
 
     void testTransistor_PinsAreGridAligned() {

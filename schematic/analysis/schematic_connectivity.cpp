@@ -48,14 +48,16 @@ void SchematicConnectivity::updateVisualConnections(QGraphicsScene* scene) {
         }
     }
 
-    QMap<QString, int> connectionCounts; 
+    QMap<QString, int> connectionCounts;
 
     // Count endpoints across all conductive segments (wire + bus).
     for (SchematicItem* item : conductiveItems) {
         const QList<QPointF> pts = item->connectionPoints();
         if (pts.size() < 2) continue;
-        connectionCounts[NetlistEngine::pointKey(pts.first())]++;
-        connectionCounts[NetlistEngine::pointKey(pts.last())]++;
+        const QString kStart = NetlistEngine::pointKey(pts.first());
+        const QString kEnd = NetlistEngine::pointKey(pts.last());
+        connectionCounts[kStart]++;
+        connectionCounts[kEnd]++;
     }
 
     auto addJunction = [](SchematicItem* item, const QPointF& p) {
@@ -105,6 +107,7 @@ void SchematicConnectivity::updateVisualConnections(QGraphicsScene* scene) {
             }
         }
     }
+
 
     // 3. Add jump-overs
     for (WireItem* wire : allWires) {

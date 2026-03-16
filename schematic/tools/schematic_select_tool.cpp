@@ -43,6 +43,47 @@ SchematicItem* preferredPickItem(SchematicView* view, const QPointF& scenePos, c
         Qt::DescendingOrder,
         view->transform());
 
+    // 1) If we're on a component pin, prefer the component (so pin interactions still work).
+    for (QGraphicsItem* hit : hits) {
+        SchematicItem* sItem = nearestSchematicItem(hit);
+        if (!sItem || sItem->itemType() == SchematicItem::WireType) continue;
+        const QList<QPointF> pins = sItem->connectionPoints();
+        for (const QPointF& pinLocal : pins) {
+            const QPointF pinScene = sItem->mapToScene(pinLocal);
+            if (QLineF(scenePos, pinScene).length() <= kAttachTolerance) {
+                return sItem;
+            }
+        }
+    }
+
+    // 2) If we're near a wire segment, prefer the wire (helps selection near components).
+    WireItem* bestWire = nullptr;
+    qreal bestDist = std::numeric_limits<qreal>::max();
+    for (QGraphicsItem* hit : hits) {
+        auto* wire = dynamic_cast<WireItem*>(hit);
+        if (!wire) continue;
+        const QList<QPointF> pts = wire->points();
+        if (pts.size() < 2) continue;
+        for (int i = 0; i < pts.size() - 1; ++i) {
+            const QPointF a = wire->mapToScene(pts[i]);
+            const QPointF b = wire->mapToScene(pts[i + 1]);
+            const QPointF vec = b - a;
+            const qreal lenSq = vec.x() * vec.x() + vec.y() * vec.y();
+            if (lenSq <= 0.0) continue;
+            qreal u = ((scenePos.x() - a.x()) * vec.x() + (scenePos.y() - a.y()) * vec.y()) / lenSq;
+            u = std::clamp(u, 0.0, 1.0);
+            const QPointF proj = a + u * vec;
+            const qreal d = QLineF(scenePos, proj).length();
+            if (d < bestDist) {
+                bestDist = d;
+                bestWire = wire;
+            }
+        }
+    }
+    if (bestWire && bestDist <= kSegmentTolerance + 1.5) {
+        return bestWire;
+    }
+
     SchematicItem* bestSubItem = nullptr;
     for (QGraphicsItem* hit : hits) {
         SchematicItem* sItem = nearestSchematicItem(hit);
@@ -84,7 +125,10 @@ bool hasWireAtScenePos(SchematicView* view, const QPointF& scenePos, qreal radiu
     return false;
 }
 
-bool hasExternalConnectionAtPoint(SchematicView* view, WireItem* ownerWire, const QPointF& pointScene) {
+bool hasExternalConnectionAtPoint(SchematicView* view,
+                                  WireItem* ownerWire,
+                                  const QPointF& pointScene,
+                                  SchematicItem* ignoreItem = nullptr) {
     if (!view || !view->scene() || !ownerWire) return false;
 
     const QList<QGraphicsItem*> nearby = view->scene()->items(
@@ -95,7 +139,7 @@ bool hasExternalConnectionAtPoint(SchematicView* view, WireItem* ownerWire, cons
         view->transform());
 
     for (QGraphicsItem* item : nearby) {
-        if (!item || item == ownerWire) continue;
+        if (!item || item == ownerWire || item == ignoreItem) continue;
 
         if (WireItem* otherWire = dynamic_cast<WireItem*>(item)) {
             const QList<QPointF> pts = otherWire->points();
@@ -117,7 +161,42 @@ bool hasExternalConnectionAtPoint(SchematicView* view, WireItem* ownerWire, cons
         }
 
         SchematicItem* otherItem = dynamic_cast<SchematicItem*>(item);
-        if (!otherItem || otherItem == ownerWire) continue;
+        if (!otherItem || otherItem == ownerWire || otherItem == ignoreItem) continue;
+        const QList<QPointF> pins = otherItem->connectionPoints();
+        for (const QPointF& pinLocal : pins) {
+            if (QLineF(pointScene, otherItem->mapToScene(pinLocal)).length() <= kAttachTolerance) {
+                return true;
+            }
+        }
+    }
+
+    // Fallback: scan all schematic items for pin proximity in case the pin lies
+    // outside the item's shape (common for symbol pin dots).
+    const QList<QGraphicsItem*> allItems = view->scene()->items();
+    for (QGraphicsItem* item : allItems) {
+        if (!item || item == ownerWire || item == ignoreItem) continue;
+
+        if (WireItem* otherWire = dynamic_cast<WireItem*>(item)) {
+            const QList<QPointF> pts = otherWire->points();
+            if (pts.size() < 2) continue;
+
+            if (QLineF(pointScene, otherWire->mapToScene(pts.first())).length() <= kAttachTolerance ||
+                QLineF(pointScene, otherWire->mapToScene(pts.last())).length() <= kAttachTolerance) {
+                return true;
+            }
+
+            for (int i = 0; i < pts.size() - 1; ++i) {
+                const QPointF a = otherWire->mapToScene(pts[i]);
+                const QPointF b = otherWire->mapToScene(pts[i + 1]);
+                if (pointLiesOnSegment(pointScene, a, b, kSegmentTolerance)) {
+                    return true;
+                }
+            }
+            continue;
+        }
+
+        SchematicItem* otherItem = dynamic_cast<SchematicItem*>(item);
+        if (!otherItem || otherItem == ownerWire || otherItem == ignoreItem) continue;
         const QList<QPointF> pins = otherItem->connectionPoints();
         for (const QPointF& pinLocal : pins) {
             if (QLineF(pointScene, otherItem->mapToScene(pinLocal)).length() <= kAttachTolerance) {
@@ -127,6 +206,175 @@ bool hasExternalConnectionAtPoint(SchematicView* view, WireItem* ownerWire, cons
     }
 
     return false;
+}
+
+bool findExternalAnchorOnWire(SchematicView* view,
+                              WireItem* wire,
+                              int excludeIndex,
+                              SchematicItem* ignoreItem,
+                              QPointF& anchorSceneOut) {
+    if (!view || !wire) return false;
+    const QList<QPointF> pts = wire->points();
+    if (pts.size() < 2) return false;
+
+    auto isAnchor = [&](int idx) {
+        if (idx < 0 || idx >= pts.size()) return false;
+        if (idx == excludeIndex) return false;
+        const QPointF scenePos = wire->mapToScene(pts[idx]);
+        return hasExternalConnectionAtPoint(view, wire, scenePos, ignoreItem);
+    };
+
+    if (excludeIndex == 0) {
+        for (int i = pts.size() - 1; i >= 1; --i) {
+            if (isAnchor(i)) {
+                anchorSceneOut = wire->mapToScene(pts[i]);
+                return true;
+            }
+        }
+    } else if (excludeIndex == pts.size() - 1) {
+        for (int i = 0; i <= pts.size() - 2; ++i) {
+            if (isAnchor(i)) {
+                anchorSceneOut = wire->mapToScene(pts[i]);
+                return true;
+            }
+        }
+    } else {
+        for (int i = 0; i < pts.size(); ++i) {
+            if (isAnchor(i)) {
+                anchorSceneOut = wire->mapToScene(pts[i]);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool isOrthogonalWire(const QList<QPointF>& pts) {
+    if (pts.size() < 2) return true;
+    for (int i = 0; i < pts.size() - 1; ++i) {
+        const QPointF& a = pts[i];
+        const QPointF& b = pts[i + 1];
+        const bool h = qAbs(a.y() - b.y()) < 1.0;
+        const bool v = qAbs(a.x() - b.x()) < 1.0;
+        if (!h && !v) return false;
+    }
+    return true;
+}
+
+bool isMostlyOrthogonalWire(const QList<QPointF>& pts, qreal tol = 1.5) {
+    if (pts.size() < 2) return true;
+    for (int i = 0; i < pts.size() - 1; ++i) {
+        const QPointF& a = pts[i];
+        const QPointF& b = pts[i + 1];
+        const qreal dx = qAbs(a.x() - b.x());
+        const qreal dy = qAbs(a.y() - b.y());
+        if (dx < tol || dy < tol) continue;
+        return false;
+    }
+    return true;
+}
+
+QList<QPointF> rebuildSimpleOrthogonal(const QList<QPointF>& currentPts,
+                                       const QList<QPointF>& originalPts,
+                                       SchematicView* view) {
+    if (currentPts.size() < 2) return currentPts;
+    if (originalPts.size() < 2) return currentPts;
+
+    const QPointF start = currentPts.first();
+    const QPointF end = currentPts.last();
+
+    auto segmentOrientation = [](const QPointF& a, const QPointF& b) {
+        const qreal dx = qAbs(a.x() - b.x());
+        const qreal dy = qAbs(a.y() - b.y());
+        if (dy < 1.0) return 1; // Horizontal
+        if (dx < 1.0) return 2; // Vertical
+        return 0; // Unknown
+    };
+
+    const int startOri = segmentOrientation(originalPts[0], originalPts[1]);
+    const int endOri = segmentOrientation(originalPts[originalPts.size() - 1],
+                                          originalPts[originalPts.size() - 2]);
+
+    const qreal startDelta = QLineF(start, originalPts[0]).length();
+    const qreal endDelta = QLineF(end, originalPts[originalPts.size() - 1]).length();
+    const bool movedStart = startDelta >= endDelta;
+
+    // Decide orientation based on original endpoint orientation and which end moved.
+    bool hFirst = true;
+    bool hFirstSet = false;
+
+    if (startOri != 0 && endOri != 0 && startOri != endOri) {
+        // Use start orientation to satisfy both ends.
+        hFirst = (startOri == 1);
+        hFirstSet = true;
+    }
+
+    if (!hFirstSet) {
+        if (movedStart && startOri != 0) {
+            hFirst = (startOri == 1);
+            hFirstSet = true;
+        } else if (!movedStart && endOri != 0) {
+            // End orientation is horizontal when hFirst is false.
+            hFirst = (endOri == 2);
+            hFirstSet = true;
+        }
+    }
+
+    if (!hFirstSet) {
+        // Fallback to original first-segment orientation.
+        const QPointF o0 = originalPts[0];
+        const QPointF o1 = originalPts[1];
+        const qreal odx = qAbs(o0.x() - o1.x());
+        const qreal ody = qAbs(o0.y() - o1.y());
+        hFirst = !(ody > odx);
+    }
+
+    // Straight line if aligned.
+    if (qAbs(start.x() - end.x()) < 1.0 || qAbs(start.y() - end.y()) < 1.0) {
+        return {start, end};
+    }
+
+    QPointF corner = hFirst ? QPointF(end.x(), start.y()) : QPointF(start.x(), end.y());
+    if (view) {
+        QPointF snapped = view->snapToGrid(corner);
+        corner = hFirst ? QPointF(snapped.x(), start.y()) : QPointF(start.x(), snapped.y());
+    }
+    return {start, corner, end};
+}
+
+void forceOrthogonal(QList<QPointF>& pts, qreal tol = 1.5) {
+    if (pts.size() < 2) return;
+    for (int i = 0; i < pts.size() - 1; ++i) {
+        QPointF& a = pts[i];
+        QPointF& b = pts[i + 1];
+        const qreal dx = qAbs(a.x() - b.x());
+        const qreal dy = qAbs(a.y() - b.y());
+        if (dx < tol) {
+            b.setX(a.x());
+        } else if (dy < tol) {
+            b.setY(a.y());
+        } else {
+            if (dx > dy) b.setY(a.y());
+            else b.setX(a.x());
+        }
+    }
+}
+
+void orthogonalizeFromOriginal(QList<QPointF>& pts, const QList<QPointF>& original) {
+    const int n = std::min(pts.size(), original.size());
+    if (n < 2) return;
+    for (int i = 0; i < n - 1; ++i) {
+        const QPointF& oa = original[i];
+        const QPointF& ob = original[i + 1];
+        const bool h = qAbs(oa.y() - ob.y()) < 1.0;
+        const bool v = qAbs(oa.x() - ob.x()) < 1.0;
+        if (h) {
+            pts[i + 1].setY(pts[i].y());
+        } else if (v) {
+            pts[i + 1].setX(pts[i].x());
+        }
+    }
 }
 
 QList<QPointF> moveAttachedWireEndpoint(
@@ -168,11 +416,12 @@ QList<QPointF> moveAttachedWireEndpoint(
             }
         }
 
-        if (fixedIdx == -1 || bestDist > kAttachTolerance) {
+        if (fixedIdx == -1) {
             fixedIdx = nIdx;
         }
 
-        const QPointF fixedPoint = pts[fixedIdx];
+        // Always honor the external anchor position, even if the current points drifted.
+        const QPointF fixedPoint = fixedHintLocal;
         QPointF elbow = fixedPoint;
         if (isHorizontal) {
             elbow.setY(p.y());
@@ -552,7 +801,9 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
                                     isH = qAbs(wPts[idx].y() - wPts[nextIdx].y()) < 1.0;
                                     isV = qAbs(wPts[idx].x() - wPts[nextIdx].x()) < 1.0;
                                     neighborScene = wire->mapToScene(wPts[nextIdx]);
-                                    neighborAnchored = hasExternalConnectionAtPoint(view(), wire, neighborScene);
+                                    QPointF anchorScene;
+                                    neighborAnchored = findExternalAnchorOnWire(view(), wire, idx, sItem, anchorScene);
+                                    if (neighborAnchored) neighborScene = anchorScene;
                                 }
                                 m_attachedWires.append(
                                     {wire, idx == 0, sItem, i, isH, isV, neighborScene, neighborAnchored});
@@ -582,7 +833,9 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
                                         isH = qAbs(wPts[idx].y() - wPts[nextIdx].y()) < 1.0;
                                         isV = qAbs(wPts[idx].x() - wPts[nextIdx].x()) < 1.0;
                                         neighborScene = wire->mapToScene(wPts[nextIdx]);
-                                        neighborAnchored = hasExternalConnectionAtPoint(view(), wire, neighborScene);
+                                        QPointF anchorScene;
+                                        neighborAnchored = findExternalAnchorOnWire(view(), wire, idx, otherSItem, anchorScene);
+                                        if (neighborAnchored) neighborScene = anchorScene;
                                     }
                                     m_attachedWires.append(
                                         {wire, idx == 0, otherSItem, j, isH, isV, neighborScene, neighborAnchored});
@@ -609,7 +862,9 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
                                             isH = qAbs(selPts[si].y() - selPts[nextIdx].y()) < 1.0;
                                             isV = qAbs(selPts[si].x() - selPts[nextIdx].x()) < 1.0;
                                             neighborScene = selWire->mapToScene(selPts[nextIdx]);
-                                            neighborAnchored = hasExternalConnectionAtPoint(view(), selWire, neighborScene);
+                                            QPointF anchorScene;
+                                            neighborAnchored = findExternalAnchorOnWire(view(), selWire, si, nullptr, anchorScene);
+                                            if (neighborAnchored) neighborScene = anchorScene;
                                         }
                                         m_attachedWires.append(
                                             {selWire, si == 0, otherWire, oi, isH, isV, neighborScene, neighborAnchored});
@@ -630,7 +885,9 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
                                             isH = qAbs(otherPts[oi].y() - otherPts[nextIdx].y()) < 1.0;
                                             isV = qAbs(otherPts[oi].x() - otherPts[nextIdx].x()) < 1.0;
                                             neighborScene = otherWire->mapToScene(otherPts[nextIdx]);
-                                            neighborAnchored = hasExternalConnectionAtPoint(view(), otherWire, neighborScene);
+                                            QPointF anchorScene;
+                                            neighborAnchored = findExternalAnchorOnWire(view(), otherWire, oi, nullptr, anchorScene);
+                                            if (neighborAnchored) neighborScene = anchorScene;
                                         }
                                         m_attachedWires.append(
                                             {otherWire, oi == 0, selWire, si, isH, isV, neighborScene, neighborAnchored});
@@ -758,6 +1015,12 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
                         }
                     }
 
+                    if (m_initialWirePoints.contains(m_vertexWire)) {
+                        const QList<QPointF>& orig = m_initialWirePoints.value(m_vertexWire);
+                        if (isOrthogonalWire(orig)) {
+                            orthogonalizeFromOriginal(points, orig);
+                        }
+                    }
                     m_vertexWire->setPoints(points);
                 }
             }
@@ -852,6 +1115,12 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
                     }
 
                     if (rebuilt.size() >= 2) {
+                        if (m_initialWirePoints.contains(m_segmentWire)) {
+                            const QList<QPointF>& orig = m_initialWirePoints.value(m_segmentWire);
+                            if (isOrthogonalWire(orig)) {
+                                orthogonalizeFromOriginal(rebuilt, orig);
+                            }
+                        }
                         m_segmentWire->setPoints(rebuilt);
                     } else {
                         m_segmentWire->setPoints(points);
@@ -915,6 +1184,14 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
                     aw.neighborExternallyAnchored,
                     aw.initialNeighborPos
                 );
+                if (m_initialWirePoints.contains(aw.wire)) {
+                    const QList<QPointF>& orig = m_initialWirePoints.value(aw.wire);
+                    if (isOrthogonalWire(orig)) {
+                        orthogonalizeFromOriginal(pts, orig);
+                    } else if (isMostlyOrthogonalWire(pts)) {
+                        forceOrthogonal(pts);
+                    }
+                }
                 aw.wire->setPoints(pts);
             }
         }
@@ -987,6 +1264,14 @@ void SchematicSelectTool::mouseReleaseEvent(QMouseEvent* event) {
                         aw.neighborExternallyAnchored,
                         aw.initialNeighborPos
                     );
+                    if (m_initialWirePoints.contains(aw.wire)) {
+                        const QList<QPointF>& orig = m_initialWirePoints.value(aw.wire);
+                        if (isOrthogonalWire(orig)) {
+                            orthogonalizeFromOriginal(pts, orig);
+                        } else if (isMostlyOrthogonalWire(pts)) {
+                            forceOrthogonal(pts);
+                        }
+                    }
                     aw.wire->setPoints(pts);
                 }
             }
@@ -1064,6 +1349,42 @@ void SchematicSelectTool::mouseReleaseEvent(QMouseEvent* event) {
             QList<QPointF> updatedPoints =
                 SchematicWireUtils::maintainOrthogonality(attachedPts, targetIndex, newLocalPos);
             tj.attachedWire->setPoints(updatedPoints);
+        }
+
+        // Final orthogonal cleanup for wires that were originally orthogonal.
+        for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
+            WireItem* wire = it.key();
+            if (!wire) continue;
+            const QList<QPointF>& orig = it.value();
+            if (isOrthogonalWire(orig) || isMostlyOrthogonalWire(orig)) {
+                QList<QPointF> curr = wire->points();
+                if (orig.size() <= 3) {
+                    curr = rebuildSimpleOrthogonal(curr, orig, view());
+                }
+                forceOrthogonal(curr);
+                wire->setPoints(curr);
+            }
+        }
+
+        // Re-snap attached wire endpoints to their pins after cleanup.
+        if (!m_attachedWires.isEmpty()) {
+            for (const AttachedWire& aw : m_attachedWires) {
+                if (!aw.wire || !aw.anchor) continue;
+                if (aw.anchor->itemType() == SchematicItem::WireType) continue;
+                const QList<QPointF> pins = aw.anchor->connectionPoints();
+                if (aw.anchorPointIndex < 0 || aw.anchorPointIndex >= pins.size()) continue;
+                const QPointF pinScene = aw.anchor->mapToScene(pins[aw.anchorPointIndex]);
+                QList<QPointF> pts = moveAttachedWireEndpoint(
+                    aw.wire,
+                    aw.isStartPoint,
+                    pinScene,
+                    aw.isHorizontal,
+                    aw.isVertical,
+                    aw.neighborExternallyAnchored,
+                    aw.initialNeighborPos
+                );
+                aw.wire->setPoints(pts);
+            }
         }
 
         for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
