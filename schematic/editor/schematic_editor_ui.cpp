@@ -500,6 +500,7 @@ void SchematicEditor::createToolBar() {
     fileMenu->addAction(createComponentIcon("Save"), "Save Schematic", this, &SchematicEditor::onSaveSchematic, QKeySequence::Save);
     fileMenu->addSeparator();
     fileMenu->addAction(createComponentIcon("New Symbol"), "Create New Symbol", this, &SchematicEditor::onOpenSymbolEditor);
+    fileMenu->addAction(createComponentIcon("New Symbol"), "Create New Symbol from Schematic", this, &SchematicEditor::onCreateSymbolFromSchematic);
     fileMenu->addSeparator();
     QMenu* exportMenu = fileMenu->addMenu("Export");
     exportMenu->addAction("Export as PDF", this, &SchematicEditor::onExportPDF);
@@ -991,14 +992,14 @@ void SchematicEditor::createToolBar() {
     addSchTool("Voltage Probe", "Voltage Probe", "tool_voltage_probe", "Shift+K");
     addSchTool("Current Probe", "Current Probe", "tool_current_probe", "Alt+K");
     addSchTool("Power Probe", "Power Probe", "tool_power_probe", "Ctrl+Shift+P");
-    addSchTool("Spice Directive", "SPICE Directive (.op)", "tool_spice_directive", "S");
+    addSchTool("Spice Directive", "SPICE Directive (.op)", "tool_spice_directive", "P");
     addSchTool("BV", "Arbitrary Behavioral Source", "comp_bv", "B");
     addSchTool("Scissors", "Delete (Scissors Tool)", "tool_scissors", "F5");
     addSchTool("Zoom Area", "Zoom to Area", "tool_zoom_area", "Z");
     addSchTool("Wire", "Place Wire", "tool_wire", "W");
     addSchTool("Bus", "Place Bus", "tool_bus", "Shift+B");
     addSchTool("Bus Entry", "Place Bus Entry", "tool_bus_entry", "");
-    addSchTool("Net Label", "Place Net Label (Local)", "tool_net_label", "L");
+    addSchTool("Net Label", "Place Net Label (Local)", "tool_net_label", "N");
     addSchTool("Global Label", "Place Global Label", "tool_global_label", "Ctrl+L");
     addSchTool("Hierarchical Port", "Place Hierarchical Port", "tool_hierarchical_port", "H");
     addSchTool("Sheet", "Place Hierarchical Sheet", "tool_sheet", "Shift+S");
@@ -1023,6 +1024,7 @@ void SchematicEditor::createToolBar() {
 
     // Fast Components
     addSchTool("Resistor", "Place Resistor", "comp_resistor", "R");
+    addSchTool("Inductor", "Place Inductor", "comp_inductor", "L");
     addSchTool("Capacitor", "Place Capacitor", "comp_capacitor", "C");
     addSchTool("Diode", "Place Diode", "comp_diode", "D");
     addSchTool("Transistor", "Place Transistor", "comp_transistor", "Q");
@@ -1034,6 +1036,7 @@ void SchematicEditor::createToolBar() {
     addSchTool("Gate_NAND", "Place NAND Gate", "comp_ic");
     addSchTool("Gate_NOR", "Place NOR Gate", "comp_ic");
     addSchTool("Gate_NOT", "Place NOT Gate", "comp_ic");
+    addSchTool("Switch", "Place Switch", "comp_switch", "S");
 
     // Set default tool
     if (m_toolActions.contains("Select")) {
@@ -1448,7 +1451,8 @@ void SchematicEditor::createDockWidgets() {
 
     // === Oscilloscope Dock ===
     m_oscilloscopeDock = new QDockWidget("Analog Oscilloscope", this);
-    m_oscilloscopeDock->setObjectName("OscilloscopeDock");
+    // Leave objectName empty so QMainWindow save/restore ignores this dock.
+    m_oscilloscopeDock->setObjectName(QString());
     m_oscilloscopeDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
     m_oscilloscopeDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
 
@@ -1843,25 +1847,22 @@ void SchematicEditor::onRunSimulation() {
 
     m_netManager->updateNets(m_scene);
 
-    // Open Simulation Tab if not already open
-    bool foundTab = false;
+    // Keep results in the oscilloscope dock only (no Simulation Results tab)
     for (int i = 0; i < m_workspaceTabs->count(); ++i) {
         if (auto* panel = qobject_cast<SimulationPanel*>(m_workspaceTabs->widget(i))) {
             m_simulationPanel = panel;
-            m_workspaceTabs->setCurrentIndex(i);
-            
-            if (m_oscilloscopeDock) {
-                m_oscilloscopeDock->setWidget(m_simulationPanel->getOscilloscopeContainer());
-                m_oscilloscopeDock->setFloating(false);
-                m_oscilloscopeDock->show();
-            }
-            
-            foundTab = true;
+            m_workspaceTabs->removeTab(i);
             break;
         }
     }
-    if (!foundTab) {
-        addSimulationTab("Simulation Results");
+    if (m_oscilloscopeDock && m_simulationPanel) {
+        m_oscilloscopeDock->setWidget(m_simulationPanel->getOscilloscopeContainer());
+        m_oscilloscopeDock->setFloating(false);
+        m_oscilloscopeDock->show();
+    }
+
+    if (m_simulationPanel) {
+        m_simulationPanel->setTargetScene(m_scene, m_netManager, m_projectDir, true);
     }
     
     // Ensure all logic analyzer windows are ready.
@@ -1890,6 +1891,11 @@ void SchematicEditor::onRunSimulation() {
         m_laWindows[id]->activateWindow();
     }
 
+    // Clear previous results so failed runs don't show stale data
+    if (m_simulationPanel) {
+        m_simulationPanel->clearResults();
+    }
+
     // Route probes and hardware oscilloscopes to the bottom dock simulation panel
     QStringList probedNets;
     for (auto* item : m_scene->items()) {
@@ -1916,30 +1922,32 @@ void SchematicEditor::onRunSimulation() {
     QStringList diagnostics = SimManager::instance().preflightCheck(m_scene, m_netManager, netlist);
 
     // Apply simulation config to the pre-built netlist
+    SimAnalysisConfig config;
     if (m_simConfig.type == SimAnalysisType::Transient) {
-        SimAnalysisConfig config;
         config.type = SimAnalysisType::Transient;
         config.tStart = 0;
         config.tStop = m_simConfig.stop;
         config.tStep = m_simConfig.step;
         config.transientStorageMode = SimTransientStorageMode::AutoDecimate;
         config.transientMaxStoredPoints = 50000;
-        netlist.setAnalysis(config);
     } else if (m_simConfig.type == SimAnalysisType::OP) {
-        SimAnalysisConfig config;
         config.type = SimAnalysisType::OP;
-        netlist.setAnalysis(config);
     } else if (m_simConfig.type == SimAnalysisType::AC) {
-        SimAnalysisConfig config;
         config.type = SimAnalysisType::AC;
         config.fStart = m_simConfig.fStart;
         config.fStop = m_simConfig.fStop;
         config.fPoints = m_simConfig.pts;
-        netlist.setAnalysis(config);
     }
+    netlist.setAnalysis(config);
 
-    if (!diagnostics.isEmpty()) {
-        SimulationDebuggerDialog dlg(diagnostics, this);
+    QStringList warnOrError;
+    for (const auto& d : diagnostics) {
+        if (d.contains("[warn]", Qt::CaseInsensitive) || d.contains("[error]", Qt::CaseInsensitive)) {
+            warnOrError << d;
+        }
+    }
+    if (!warnOrError.isEmpty()) {
+        SimulationDebuggerDialog dlg(warnOrError, this);
         if (dlg.exec() != QDialog::Accepted) {
             m_simulationRunning = false;
             updateSimulationUiState(false, "Simulation aborted by user.");
@@ -1947,8 +1955,8 @@ void SchematicEditor::onRunSimulation() {
         }
     }
 
-    // 2. Trigger Engine with the pre-built netlist
-    SimManager::instance().runWithNetlist(netlist);
+    // 2. Trigger Engine via Ngspice backend (direct SimNetlist execution is not supported).
+    SimManager::instance().runNgspiceSimulation(m_scene, m_netManager, config);
 }
 
 void SchematicEditor::onPauseSimulation() {

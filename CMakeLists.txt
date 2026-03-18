@@ -11,8 +11,8 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets PrintSupport Sql OpenGLWidgets Charts Svg Network Multimedia Concurrent Test)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets PrintSupport Sql OpenGLWidgets Charts Svg Network Multimedia Concurrent Test)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets PrintSupport Sql OpenGLWidgets Charts Svg Network Multimedia Concurrent Test Qml)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets PrintSupport Sql OpenGLWidgets Charts Svg Network Multimedia Concurrent Test Qml)
 
 # --- NGSPICE Support ---
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
@@ -45,6 +45,28 @@ add_subdirectory(ui)
 add_subdirectory(simulator)
 add_subdirectory(python)
 add_subdirectory(tests)
+
+# CLI tool
+qt_add_executable(vio_cmd
+    cli/main.cpp
+    resources/resources.qrc
+)
+
+target_link_libraries(vio_cmd PRIVATE
+    FluxSchematicUI
+    FluxSchematicCore
+    FluxSymbols
+    FluxCore
+    FluxSimulator
+)
+
+if(NGSPICE_FOUND)
+    target_link_libraries(vio_cmd PRIVATE ${NGSPICE_LIBRARIES})
+    target_include_directories(vio_cmd PRIVATE ${NGSPICE_INCLUDE_DIRS})
+endif()
+
+vioraeda_configure_app_target(vio_cmd)
+set_target_properties(vio_cmd PROPERTIES OUTPUT_NAME "vio-cmd")
 
 # Main executable
 qt_add_executable(viospice

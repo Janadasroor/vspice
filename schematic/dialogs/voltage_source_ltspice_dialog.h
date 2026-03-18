@@ -8,6 +8,9 @@
 #include <QStackedWidget>
 #include <QCheckBox>
 #include <QPushButton>
+#include <QPlainTextEdit>
+#include <QCompleter>
+#include <QDoubleSpinBox>
 #include <QUndoStack>
 #include <QGraphicsScene>
 #include "../items/voltage_source_item.h"
@@ -43,6 +46,7 @@ private:
     QRadioButton* m_pwlRadio;
     QRadioButton* m_customRadio;
     QRadioButton* m_pwlFileRadio;
+    QRadioButton* m_behavioralRadio;
 
     QStackedWidget* m_paramStack;
 
@@ -87,6 +91,17 @@ private:
 
     // PWL File Params
     QLineEdit* m_pwlFile;
+
+    // Behavioral Params
+    QPlainTextEdit* m_behavioralExpr;
+    QLabel* m_behavioralStatus;
+    QLabel* m_behavioralPreview;
+    QDoubleSpinBox* m_previewValue;
+    QDoubleSpinBox* m_previewTime;
+    QPushButton* m_insertNodeBtn;
+    QCompleter* m_behavioralCompleter;
+
+    bool eventFilter(QObject* obj, QEvent* event) override;
 
     // DC Value
     QLineEdit* m_dcValue;

@@ -4,7 +4,7 @@
 #include <QMainWindow>
 #include <QStringList>
 #include "virtual_instruments.h"
-#include "../../simulator/core/sim_engine.h"
+#include "../../simulator/core/sim_results.h"
 
 class QDoubleSpinBox;
 

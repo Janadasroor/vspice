@@ -48,6 +48,7 @@ private:
     // Libraries
     QTextEdit* m_symbolPathsEdit;
     QTextEdit* m_modelPathsEdit;
+    QTextEdit* m_libraryRootsEdit;
 
     QListWidget* m_navMenu;
     QStackedWidget* m_pagesStack;

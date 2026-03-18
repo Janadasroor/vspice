@@ -75,7 +75,7 @@ const SimSubcircuit* ModelLibraryManager::findSubcircuit(const QString& name) co
 }
 
 void ModelLibraryManager::scanDirectory(const QString& path) {
-    QDirIterator it(path, QStringList() << "*.lib" << "*.mod" << "*.sub" << "*.sp" << "*.inc", 
+    QDirIterator it(path, QStringList() << "*.lib" << "*.mod" << "*.sub" << "*.sp" << "*.inc" << "*.cmp",
                     QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {
         loadLibraryFile(it.next());

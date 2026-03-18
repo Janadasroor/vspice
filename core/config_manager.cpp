@@ -1,4 +1,5 @@
 #include "config_manager.h"
+#include <QDir>
 
 ConfigManager& ConfigManager::instance() {
     static ConfigManager instance;
@@ -26,11 +27,50 @@ void ConfigManager::setGeminiApiKey(const QString& key) {
     m_settings.sync();
 }
 
-QStringList ConfigManager::symbolPaths() const { return m_symbolPaths; }
+QString ConfigManager::octopartApiKey() const { return m_settings.value("api/octopartKey").toString(); }
+void ConfigManager::setOctopartApiKey(const QString& key) {
+    m_settings.setValue("api/octopartKey", key);
+    m_settings.sync();
+}
+
+namespace {
+QStringList uniquePaths(const QStringList& in) {
+    QStringList out;
+    for (const QString& p : in) {
+        const QString trimmed = p.trimmed();
+        if (trimmed.isEmpty()) continue;
+        if (!out.contains(trimmed)) out.append(trimmed);
+    }
+    return out;
+}
+}
+
+QStringList ConfigManager::symbolPaths() const {
+    QStringList paths = m_symbolPaths;
+    for (const QString& root : m_libraryRoots) {
+        if (root.trimmed().isEmpty()) continue;
+        paths.append(QDir(root).filePath("sym"));
+    }
+    return uniquePaths(paths);
+}
+QStringList ConfigManager::rawSymbolPaths() const { return m_symbolPaths; }
 void ConfigManager::setSymbolPaths(const QStringList& paths) { m_symbolPaths = paths; }
 
-QStringList ConfigManager::modelPaths() const { return m_modelPaths; }
+QStringList ConfigManager::modelPaths() const {
+    QStringList paths = m_modelPaths;
+    for (const QString& root : m_libraryRoots) {
+        if (root.trimmed().isEmpty()) continue;
+        paths.append(QDir(root).filePath("sub"));
+        paths.append(QDir(root).filePath("cmp"));
+        paths.append(QDir(root).filePath("lib"));
+    }
+    return uniquePaths(paths);
+}
+QStringList ConfigManager::rawModelPaths() const { return m_modelPaths; }
 void ConfigManager::setModelPaths(const QStringList& paths) { m_modelPaths = paths; }
+
+QStringList ConfigManager::libraryRoots() const { return m_libraryRoots; }
+void ConfigManager::setLibraryRoots(const QStringList& roots) { m_libraryRoots = roots; }
 
 // Simulator Settings
 QString ConfigManager::defaultSolver() const { return m_defaultSolver; }
@@ -92,6 +132,7 @@ void ConfigManager::save() {
     m_settings.setValue("api/geminiKey", m_geminiApiKey);
     m_settings.setValue("libraries/symbols", m_symbolPaths);
     m_settings.setValue("libraries/models", m_modelPaths);
+    m_settings.setValue("libraries/roots", m_libraryRoots);
     m_settings.setValue("editor/snapToGrid", m_snapToGrid);
     m_settings.setValue("editor/autoFocusOnCrossProbe", m_autoFocusOnCrossProbe);
     m_settings.setValue("editor/realtimeWireUpdate", m_realtimeWireUpdate);
@@ -114,6 +155,7 @@ void ConfigManager::load() {
     m_geminiApiKey = m_settings.value("api/geminiKey", "").toString();
     m_symbolPaths = m_settings.value("libraries/symbols").toStringList();
     m_modelPaths = m_settings.value("libraries/models").toStringList();
+    m_libraryRoots = m_settings.value("libraries/roots").toStringList();
     m_snapToGrid = m_settings.value("editor/snapToGrid", true).toBool();
     m_autoFocusOnCrossProbe = m_settings.value("editor/autoFocusOnCrossProbe", false).toBool();
     m_realtimeWireUpdate = m_settings.value("editor/realtimeWireUpdate", true).toBool();
@@ -125,4 +167,15 @@ void ConfigManager::load() {
     m_vntol = m_settings.value("simulator/vntol", 1e-6).toDouble();
     m_gmin = m_settings.value("simulator/gmin", 1e-12).toDouble();
     m_maxIterations = m_settings.value("simulator/maxIterations", 100).toInt();
+
+    // Seed default library root on first run if none are configured.
+    if (m_libraryRoots.isEmpty() && m_symbolPaths.isEmpty() && m_modelPaths.isEmpty()) {
+        const QString base = QDir::homePath() + "/ViospiceLib";
+        QDir().mkpath(QDir(base).filePath("sym"));
+        QDir().mkpath(QDir(base).filePath("sub"));
+        QDir().mkpath(QDir(base).filePath("cmp"));
+        QDir().mkpath(QDir(base).filePath("lib"));
+        m_libraryRoots << base;
+        save();
+    }
 }

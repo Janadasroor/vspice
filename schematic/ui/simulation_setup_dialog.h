@@ -7,7 +7,7 @@
 #include <QCheckBox>
 #include <QFormLayout>
 #include <QJsonObject>
-#include "../../simulator/core/sim_engine.h"
+#include "../../simulator/core/sim_results.h"
 
 class SimulationSetupDialog : public QDialog {
     Q_OBJECT
@@ -24,7 +24,6 @@ public:
         int pts = 100;
         int rtIntervalMs = 50;
         double rtStep = 1e-3;
-        bool native = true;
 
         QJsonObject toJson() const;
         static Config fromJson(const QJsonObject& obj);
@@ -43,7 +42,6 @@ private:
     QLineEdit* m_param1;
     QLineEdit* m_param2;
     QLineEdit* m_param3;
-    QCheckBox* m_nativeCheck;
 };
 
 #endif // SIMULATION_SETUP_DIALOG_H

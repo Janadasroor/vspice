@@ -41,6 +41,7 @@ private slots:
     void openSymbolEditor();
     void openCalculatorTools();
     void openPluginsManager();
+    void openSpiceModelManager();
     void onSettings();
     void onToggleSidebar();
     void showAbout();

@@ -31,13 +31,14 @@
 #include "../items/simulation_overlay_item.h"
 #include "../items/schematic_waveform_marker.h"
 #include "../tools/schematic_probe_tool.h"
-#include "../../simulator/core/sim_engine.h"
+#include "../../simulator/core/sim_results.h"
 #include "../ui/simulation_panel.h"
 #include "../ui/logic_analyzer_window.h"
 #include "../ui/logic_editor_panel.h"
 #include "../items/smart_signal_item.h"
 
 #include <QApplication>
+#include <QFileInfo>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGraphicsRectItem>
@@ -121,6 +122,14 @@ SchematicEditor::SchematicEditor(QWidget *parent)
     createDrawingToolbar();
     connectSimulationSignals();
     updateSimulationUiState(false);
+
+    // Restore UI State after docks/toolbars are created
+    {
+        QByteArray geom = ConfigManager::instance().windowGeometry("SchematicEditor");
+        QByteArray state = ConfigManager::instance().windowState("SchematicEditor");
+        if (!geom.isEmpty()) restoreGeometry(geom);
+        if (!state.isEmpty()) restoreState(state);
+    }
     
     // Theme and grid
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, &SchematicEditor::applyTheme);
@@ -202,11 +211,7 @@ void SchematicEditor::setupCanvas() {
 
     m_layoutOptimizer = new SchematicLayoutOptimizer(this);
 
-    // Restore UI State
-    QByteArray geom = ConfigManager::instance().windowGeometry("SchematicEditor");
-    QByteArray state = ConfigManager::instance().windowState("SchematicEditor");
-    if (!geom.isEmpty()) restoreGeometry(geom);
-    if (!state.isEmpty()) restoreState(state);
+    // UI state restore moved to constructor after docks/toolbars are created
 }
 
 void SchematicEditor::addSchematicTab(const QString& name) {
@@ -302,6 +307,10 @@ void SchematicEditor::onTabChanged(int index) {
         m_scene = view->scene();
         m_netManager = view->netManager();
         m_currentFilePath = view->property("filePath").toString();
+
+        if (m_simulationPanel) {
+            m_simulationPanel->setTargetScene(m_scene, m_netManager, m_projectDir, true);
+        }
         
         if (m_api) m_api->setScene(m_scene);
         
@@ -987,9 +996,20 @@ void SchematicEditor::updateSimulationOverlays(const QMap<QString, double>& node
     }
 }
 
-void SchematicEditor::openSymbolEditorWindow(const QString& name) {
-    auto* editor = new SymbolEditor(this);
+void SchematicEditor::openSymbolEditorWindow(const QString& name, const SymbolDefinition& preBuiltDef) {
+    SymbolEditor* editor;
+    if (preBuiltDef.isValid()) {
+        editor = new SymbolEditor(preBuiltDef, nullptr);
+    } else {
+        editor = new SymbolEditor(nullptr);
+    }
+    editor->setAttribute(Qt::WA_DeleteOnClose);
     editor->setWindowTitle("Symbol Editor - " + name);
+    QString projectKey = m_projectDir;
+    if (projectKey.isEmpty() && !m_currentFilePath.isEmpty()) {
+        projectKey = QFileInfo(m_currentFilePath).absolutePath();
+    }
+    editor->setProjectKey(projectKey);
     
     // When a symbol is saved in the editor, we should refresh our library browser
     connect(editor, &SymbolEditor::symbolSaved, this, [this](const SymbolDefinition&) {
@@ -998,9 +1018,7 @@ void SchematicEditor::openSymbolEditorWindow(const QString& name) {
 
     // Support "Place in Schematic" directly from the editor
     connect(editor, &SymbolEditor::placeInSchematicRequested, this, &SchematicEditor::onPlaceSymbolInSchematic);
-
-    int idx = m_workspaceTabs->addTab(editor, getThemeIcon(":/icons/and_gate.svg"), name.isEmpty() ? "Symbol Editor" : name);
-    m_workspaceTabs->setCurrentIndex(idx);
+    editor->show();
 }
 
 void SchematicEditor::addModelArchitectTab() {
@@ -1033,12 +1051,14 @@ void SchematicEditor::onToggleLeftSidebar() {
     if (m_geminiDock) m_geminiDock->setVisible(!visible);
     if (m_scriptDock) m_scriptDock->setVisible(!visible);
     if (m_hierarchyDock) m_hierarchyDock->setVisible(!visible);
+    ConfigManager::instance().saveWindowState("SchematicEditor", saveGeometry(), saveState());
 }
 
 void SchematicEditor::onToggleBottomPanel() {
     if (m_oscilloscopeDock) {
         m_oscilloscopeDock->setVisible(!m_oscilloscopeDock->isVisible());
     }
+    ConfigManager::instance().saveWindowState("SchematicEditor", saveGeometry(), saveState());
 }
 
 void SchematicEditor::onToggleRightSidebar() {
@@ -1046,4 +1066,5 @@ void SchematicEditor::onToggleRightSidebar() {
     if (m_ercDock && m_ercDock->isVisible()) visible = true;
 
     if (m_ercDock) m_ercDock->setVisible(!visible);
+    ConfigManager::instance().saveWindowState("SchematicEditor", saveGeometry(), saveState());
 }

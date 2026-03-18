@@ -5,8 +5,90 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QPushButton>
+#include <QPlainTextEdit>
 #include <QFileDialog>
+#include <QCompleter>
+#include <QStringListModel>
+#include <QKeyEvent>
+#include <QJSEngine>
+#include <QInputDialog>
+#include <QAbstractItemView>
+#include <QSyntaxHighlighter>
+#include <QTextDocument>
+#include "../analysis/net_manager.h"
 #include "../editor/schematic_commands.h"
+
+namespace {
+QString normalizeBehavioralExpr(QString expr) {
+    expr = expr.trimmed();
+    if (expr.isEmpty()) return "V=0";
+    if (!expr.startsWith("V=", Qt::CaseInsensitive)) expr.prepend("V=");
+    return expr;
+}
+
+QString validateBehavioralExpr(const QString& expr) {
+    const QString v = expr.trimmed();
+    if (v.isEmpty()) return "Expression is empty. Using V=0.";
+    int depth = 0;
+    for (const QChar& c : v) {
+        if (c == '(') depth++;
+        else if (c == ')') depth--;
+        if (depth < 0) break;
+    }
+    if (depth != 0) return "Unbalanced parentheses.";
+    if (!v.startsWith("V=", Qt::CaseInsensitive)) return "Missing 'V=' prefix. It will be added.";
+    return QString();
+}
+}
+
+class BehavioralHighlighter : public QSyntaxHighlighter {
+public:
+    explicit BehavioralHighlighter(QTextDocument* doc) : QSyntaxHighlighter(doc) {
+        m_numberFormat.setForeground(QColor("#1f6feb"));
+        m_funcFormat.setForeground(QColor("#7e57c2"));
+        m_funcFormat.setFontWeight(QFont::DemiBold);
+        m_varFormat.setForeground(QColor("#d97706"));
+        m_varFormat.setFontWeight(QFont::DemiBold);
+        m_opFormat.setForeground(QColor("#555555"));
+
+        m_funcPatterns = {
+            QRegularExpression("\\b(if|table|abs|sin|cos|tan|sqrt|exp|log|min|max|pow|limit)\\s*\\(", QRegularExpression::CaseInsensitiveOption)
+        };
+        m_varPatterns = {
+            QRegularExpression("\\bV\\s*\\(", QRegularExpression::CaseInsensitiveOption),
+            QRegularExpression("\\bI\\s*\\(", QRegularExpression::CaseInsensitiveOption),
+            QRegularExpression("\\btime\\b", QRegularExpression::CaseInsensitiveOption)
+        };
+        m_numberPattern = QRegularExpression("[-+]?(?:\\d*\\.\\d+|\\d+)(?:[eE][-+]?\\d+)?");
+        m_opPattern = QRegularExpression("[\\+\\-\\*/\\^=<>]");
+    }
+
+protected:
+    void highlightBlock(const QString& text) override {
+        auto apply = [&](const QRegularExpression& re, const QTextCharFormat& fmt) {
+            auto it = re.globalMatch(text);
+            while (it.hasNext()) {
+                auto m = it.next();
+                setFormat(m.capturedStart(), m.capturedLength(), fmt);
+            }
+        };
+
+        for (const auto& re : m_funcPatterns) apply(re, m_funcFormat);
+        for (const auto& re : m_varPatterns) apply(re, m_varFormat);
+        apply(m_numberPattern, m_numberFormat);
+        apply(m_opPattern, m_opFormat);
+    }
+
+private:
+    QTextCharFormat m_numberFormat;
+    QTextCharFormat m_funcFormat;
+    QTextCharFormat m_varFormat;
+    QTextCharFormat m_opFormat;
+    QList<QRegularExpression> m_funcPatterns;
+    QList<QRegularExpression> m_varPatterns;
+    QRegularExpression m_numberPattern;
+    QRegularExpression m_opPattern;
+};
 
 VoltageSourceLTSpiceDialog::VoltageSourceLTSpiceDialog(VoltageSourceItem* item, QUndoStack* undoStack, QGraphicsScene* scene, const QString& projectDir, QWidget* parent)
     : QDialog(parent), m_item(item), m_undoStack(undoStack), m_scene(scene), m_projectDir(projectDir) {
@@ -30,6 +112,7 @@ void VoltageSourceLTSpiceDialog::setupUi() {
     m_expRadio = new QRadioButton("EXP(V1 V2 Td1 Tau1 Td2 Tau2)");
     m_sffmRadio = new QRadioButton("SFFM(Voff Vamp Fcar MDI Fsig)");
     m_pwlRadio = new QRadioButton("PWL(t1 v1 t2 v2...)");
+    m_behavioralRadio = new QRadioButton("Behavioral (BV: V=expression)");
     m_customRadio = new QRadioButton("CUSTOM (Draw)");
     m_pwlFileRadio = new QRadioButton("PWL FILE:");
 
@@ -39,6 +122,7 @@ void VoltageSourceLTSpiceDialog::setupUi() {
     functionsLayout->addWidget(m_expRadio);
     functionsLayout->addWidget(m_sffmRadio);
     functionsLayout->addWidget(m_pwlRadio);
+    functionsLayout->addWidget(m_behavioralRadio);
     functionsLayout->addWidget(m_customRadio);
     
     auto* pwlFileLayout = new QHBoxLayout();
@@ -117,6 +201,62 @@ void VoltageSourceLTSpiceDialog::setupUi() {
     pwlLayout->addWidget(m_pwlRepeat);
     m_paramStack->addWidget(pwlPage);
 
+    // 6: Behavioral (BV)
+    auto* behavioralPage = new QWidget();
+    auto* behavioralLayout = new QVBoxLayout(behavioralPage);
+    behavioralLayout->addWidget(new QLabel("Expression (use V=...):"));
+    m_behavioralExpr = new QPlainTextEdit();
+    m_behavioralExpr->setPlaceholderText("V=V(in)*2");
+    m_behavioralExpr->setMinimumHeight(90);
+    behavioralLayout->addWidget(m_behavioralExpr);
+    new BehavioralHighlighter(m_behavioralExpr->document());
+
+    auto* presetRow = new QHBoxLayout();
+    auto* preset1 = new QPushButton("V=V(in)");
+    auto* preset2 = new QPushButton("V=V(in)*2");
+    auto* preset3 = new QPushButton("V=if(V(in)>0,1,0)");
+    auto* preset4 = new QPushButton("V=table(time, 0 0 1m 1)");
+    presetRow->addWidget(preset1);
+    presetRow->addWidget(preset2);
+    presetRow->addWidget(preset3);
+    presetRow->addWidget(preset4);
+    behavioralLayout->addLayout(presetRow);
+
+    m_behavioralStatus = new QLabel();
+    m_behavioralStatus->setStyleSheet("color: #cc0000; font-size: 11px;");
+    behavioralLayout->addWidget(m_behavioralStatus);
+
+    auto* helperRow = new QHBoxLayout();
+    m_insertNodeBtn = new QPushButton("Insert Node...");
+    helperRow->addWidget(m_insertNodeBtn);
+    helperRow->addStretch();
+    behavioralLayout->addLayout(helperRow);
+
+    auto* previewRow = new QHBoxLayout();
+    previewRow->addWidget(new QLabel("Preview V:"));
+    m_previewValue = new QDoubleSpinBox();
+    m_previewValue->setRange(-1e6, 1e6);
+    m_previewValue->setDecimals(4);
+    m_previewValue->setValue(1.0);
+    previewRow->addWidget(m_previewValue);
+    previewRow->addWidget(new QLabel("time:"));
+    m_previewTime = new QDoubleSpinBox();
+    m_previewTime->setRange(-1e6, 1e6);
+    m_previewTime->setDecimals(6);
+    m_previewTime->setValue(0.0);
+    previewRow->addWidget(m_previewTime);
+    behavioralLayout->addLayout(previewRow);
+
+    m_behavioralPreview = new QLabel();
+    m_behavioralPreview->setStyleSheet("color: #333333; font-size: 11px;");
+    behavioralLayout->addWidget(m_behavioralPreview);
+
+    auto* help = new QLabel("Tips: use V(node), I(Vsrc), time, if(), table(), abs(), sin().");
+    help->setStyleSheet("color: #666666; font-size: 11px;");
+    behavioralLayout->addWidget(help);
+
+    m_paramStack->addWidget(behavioralPage);
+
     functionsLayout->addWidget(m_paramStack);
     
     m_functionVisible = new QCheckBox("Make this information visible on schematic:");
@@ -173,12 +313,156 @@ void VoltageSourceLTSpiceDialog::setupUi() {
     connect(m_expRadio, &QRadioButton::toggled, this, &VoltageSourceLTSpiceDialog::onFunctionChanged);
     connect(m_sffmRadio, &QRadioButton::toggled, this, &VoltageSourceLTSpiceDialog::onFunctionChanged);
     connect(m_pwlRadio, &QRadioButton::toggled, this, &VoltageSourceLTSpiceDialog::onFunctionChanged);
+    connect(m_behavioralRadio, &QRadioButton::toggled, this, &VoltageSourceLTSpiceDialog::onFunctionChanged);
     connect(m_customRadio, &QRadioButton::toggled, this, &VoltageSourceLTSpiceDialog::onFunctionChanged);
     connect(m_pwlFileRadio, &QRadioButton::toggled, this, &VoltageSourceLTSpiceDialog::onFunctionChanged);
 
     connect(okBtn, &QPushButton::clicked, this, &VoltageSourceLTSpiceDialog::onAccepted);
     connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
     connect(m_pwlDrawBtn, &QPushButton::clicked, this, &VoltageSourceLTSpiceDialog::onCustomDraw);
+
+    m_behavioralCompleter = new QCompleter(this);
+    m_behavioralCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+    m_behavioralCompleter->setCompletionMode(QCompleter::PopupCompletion);
+    m_behavioralCompleter->setWidget(m_behavioralExpr);
+    m_behavioralExpr->installEventFilter(this);
+
+    connect(m_behavioralCompleter, qOverload<const QString &>(&QCompleter::activated), this, [this](const QString& completion) {
+        if (!m_behavioralExpr) return;
+        QTextCursor tc = m_behavioralExpr->textCursor();
+        tc.select(QTextCursor::WordUnderCursor);
+        tc.removeSelectedText();
+        tc.insertText(completion);
+        m_behavioralExpr->setTextCursor(tc);
+    });
+
+    auto updateCompleter = [this]() {
+        QStringList words = {
+            "V(", "I(", "time", "if(", "table(", "abs(", "sin(", "cos(", "tan(", "sqrt(", "exp(", "log(",
+            "min(", "max(", "pow(", "limit(", "u", "n", "p", "k", "Meg"
+        };
+        if (m_scene) {
+            NetManager nm;
+            nm.updateNets(m_scene);
+            auto nets = nm.netNames();
+            for (const QString& n : nets) {
+                if (!n.trimmed().isEmpty()) words << QString("V(%1)").arg(n);
+            }
+        }
+        words.removeDuplicates();
+        words.sort();
+        auto* model = new QStringListModel(words, m_behavioralCompleter);
+        m_behavioralCompleter->setModel(model);
+    };
+    updateCompleter();
+
+    auto updateBehavioralUi = [this]() {
+        const QString expr = m_behavioralExpr->toPlainText();
+        const QString msg = validateBehavioralExpr(expr);
+        if (msg.isEmpty()) {
+            m_behavioralStatus->setText("Expression looks good.");
+            m_behavioralStatus->setStyleSheet("color: #008800; font-size: 11px;");
+        } else {
+            m_behavioralStatus->setText(msg);
+            if (msg.contains("Unbalanced")) {
+                m_behavioralStatus->setStyleSheet("color: #cc0000; font-size: 11px;");
+            } else {
+                m_behavioralStatus->setStyleSheet("color: #996600; font-size: 11px;");
+            }
+        }
+
+        int errorPos = -1;
+        QVector<int> stack;
+        for (int i = 0; i < expr.size(); ++i) {
+            const QChar c = expr.at(i);
+            if (c == '(') stack.push_back(i);
+            else if (c == ')') {
+                if (stack.isEmpty()) { errorPos = i; break; }
+                stack.removeLast();
+            }
+        }
+        if (errorPos < 0 && !stack.isEmpty()) errorPos = stack.first();
+
+        QList<QTextEdit::ExtraSelection> extras;
+        if (errorPos >= 0) {
+            QTextEdit::ExtraSelection sel;
+            QTextCursor cursor(m_behavioralExpr->document());
+            cursor.setPosition(errorPos);
+            cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+            sel.cursor = cursor;
+            QTextCharFormat fmt;
+            fmt.setUnderlineColor(QColor("#cc0000"));
+            fmt.setUnderlineStyle(QTextCharFormat::SingleUnderline);
+            sel.format = fmt;
+            extras << sel;
+            m_behavioralExpr->setToolTip(QString("Unbalanced parenthesis at position %1").arg(errorPos + 1));
+        } else {
+            m_behavioralExpr->setToolTip("");
+        }
+        m_behavioralExpr->setExtraSelections(extras);
+
+        QString preview = "Preview: ";
+        QString normalized = normalizeBehavioralExpr(expr);
+        QString evalExpr = normalized;
+        evalExpr.remove(0, 2); // strip V=
+        if (evalExpr.contains("if(", Qt::CaseInsensitive) || evalExpr.contains("table(", Qt::CaseInsensitive)) {
+            m_behavioralPreview->setText(preview + "not available for if()/table().");
+            return;
+        }
+
+        QRegularExpression reV("V\\s*\\([^\\)]*\\)", QRegularExpression::CaseInsensitiveOption);
+        QRegularExpression reI("I\\s*\\([^\\)]*\\)", QRegularExpression::CaseInsensitiveOption);
+        evalExpr = evalExpr.replace(reV, QString::number(m_previewValue->value(), 'g', 8));
+        evalExpr = evalExpr.replace(reI, QString::number(m_previewValue->value(), 'g', 8));
+        evalExpr.replace(QRegularExpression("\\btime\\b", QRegularExpression::CaseInsensitiveOption),
+                         QString::number(m_previewTime->value(), 'g', 8));
+
+        evalExpr.replace("abs(", "Math.abs(");
+        evalExpr.replace("sin(", "Math.sin(");
+        evalExpr.replace("cos(", "Math.cos(");
+        evalExpr.replace("tan(", "Math.tan(");
+        evalExpr.replace("sqrt(", "Math.sqrt(");
+        evalExpr.replace("exp(", "Math.exp(");
+        evalExpr.replace("log(", "Math.log(");
+        evalExpr.replace("min(", "Math.min(");
+        evalExpr.replace("max(", "Math.max(");
+        evalExpr.replace("pow(", "Math.pow(");
+
+        QJSEngine engine;
+        QJSValue result = engine.evaluate(evalExpr);
+        if (result.isError()) {
+            m_behavioralPreview->setText(preview + "error evaluating expression.");
+        } else {
+            m_behavioralPreview->setText(preview + result.toString());
+        }
+    };
+
+    connect(m_behavioralExpr, &QPlainTextEdit::textChanged, this, updateBehavioralUi);
+    connect(m_previewValue, qOverload<double>(&QDoubleSpinBox::valueChanged), this, updateBehavioralUi);
+    connect(m_previewTime, qOverload<double>(&QDoubleSpinBox::valueChanged), this, updateBehavioralUi);
+
+    connect(m_insertNodeBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_scene) return;
+        NetManager nm;
+        nm.updateNets(m_scene);
+        QStringList nets = nm.netNames();
+        nets.removeAll("0");
+        nets.removeAll("GND");
+        nets.sort();
+        bool ok = false;
+        QString picked = QInputDialog::getItem(this, "Insert Node", "Node:", nets, 0, false, &ok);
+        if (!ok || picked.isEmpty()) return;
+        QTextCursor cursor = m_behavioralExpr->textCursor();
+        cursor.insertText(QString("V(%1)").arg(picked));
+        m_behavioralExpr->setTextCursor(cursor);
+    });
+
+    connect(preset1, &QPushButton::clicked, this, [this]() { m_behavioralExpr->setPlainText("V=V(in)"); });
+    connect(preset2, &QPushButton::clicked, this, [this]() { m_behavioralExpr->setPlainText("V=V(in)*2"); });
+    connect(preset3, &QPushButton::clicked, this, [this]() { m_behavioralExpr->setPlainText("V=if(V(in)>0,1,0)"); });
+    connect(preset4, &QPushButton::clicked, this, [this]() { m_behavioralExpr->setPlainText("V=table(time, 0 0 1m 1)"); });
+
+    updateBehavioralUi();
 }
 
 void VoltageSourceLTSpiceDialog::onFunctionChanged() {
@@ -188,6 +472,7 @@ void VoltageSourceLTSpiceDialog::onFunctionChanged() {
     else if (m_expRadio->isChecked()) m_paramStack->setCurrentIndex(3);
     else if (m_sffmRadio->isChecked()) m_paramStack->setCurrentIndex(4);
     else if (m_pwlRadio->isChecked()) m_paramStack->setCurrentIndex(5);
+    else if (m_behavioralRadio->isChecked()) m_paramStack->setCurrentIndex(6);
     else if (m_customRadio->isChecked()) {
         m_paramStack->setCurrentIndex(5);
         onCustomDraw();
@@ -244,6 +529,7 @@ void VoltageSourceLTSpiceDialog::loadFromItem() {
     m_pwlRadio->setChecked(m_item->sourceType() == VoltageSourceItem::PWL);
     m_customRadio->setChecked(false);
     m_pwlFileRadio->setChecked(m_item->sourceType() == VoltageSourceItem::PWLFile);
+    m_behavioralRadio->setChecked(m_item->sourceType() == VoltageSourceItem::Behavioral);
     
     onFunctionChanged();
 
@@ -286,6 +572,21 @@ void VoltageSourceLTSpiceDialog::loadFromItem() {
     m_pwlFile->setText(m_item->pwlFile());
     m_pwlRepeat->setChecked(m_item->pwlRepeat());
 
+    // Behavioral
+    m_behavioralExpr->setPlainText(m_item->value());
+    const QString msg = validateBehavioralExpr(m_behavioralExpr->toPlainText());
+    if (msg.isEmpty()) {
+        m_behavioralStatus->setText("Expression looks good.");
+        m_behavioralStatus->setStyleSheet("color: #008800; font-size: 11px;");
+    } else {
+        m_behavioralStatus->setText(msg);
+        if (msg.contains("Unbalanced")) {
+            m_behavioralStatus->setStyleSheet("color: #cc0000; font-size: 11px;");
+        } else {
+            m_behavioralStatus->setStyleSheet("color: #996600; font-size: 11px;");
+        }
+    }
+
     // Right Col
     m_dcValue->setText(m_item->dcVoltage());
     m_acAmplitude->setText(m_item->acAmplitude());
@@ -319,6 +620,7 @@ void VoltageSourceLTSpiceDialog::saveToItem() {
     else if (m_pwlRadio->isChecked()) type = VoltageSourceItem::PWL;
     else if (m_customRadio->isChecked()) type = VoltageSourceItem::PWL;
     else if (m_pwlFileRadio->isChecked()) type = VoltageSourceItem::PWLFile;
+    else if (m_behavioralRadio->isChecked()) type = VoltageSourceItem::Behavioral;
 
     m_item->setSourceType(type);
     
@@ -361,6 +663,12 @@ void VoltageSourceLTSpiceDialog::saveToItem() {
     m_item->setPwlFile(m_pwlFile->text());
     m_item->setPwlRepeat(m_pwlRepeat->isChecked());
 
+    // Behavioral
+    if (type == VoltageSourceItem::Behavioral) {
+        const QString expr = normalizeBehavioralExpr(m_behavioralExpr->toPlainText());
+        m_item->setValue(expr);
+    }
+
     // Right Col
     m_item->setDcVoltage(m_dcValue->text());
     m_item->setAcAmplitude(m_acAmplitude->text());
@@ -379,4 +687,36 @@ void VoltageSourceLTSpiceDialog::saveToItem() {
     }
     
     m_item->update();
+}
+
+bool VoltageSourceLTSpiceDialog::eventFilter(QObject* obj, QEvent* event) {
+    if (obj == m_behavioralExpr && m_behavioralCompleter) {
+        if (event->type() == QEvent::KeyPress) {
+            auto* keyEvent = static_cast<QKeyEvent*>(event);
+            if (m_behavioralCompleter->popup()->isVisible()) {
+                switch (keyEvent->key()) {
+                    case Qt::Key_Enter:
+                    case Qt::Key_Return:
+                    case Qt::Key_Escape:
+                    case Qt::Key_Tab:
+                    case Qt::Key_Backtab:
+                        keyEvent->ignore();
+                        return true;
+                }
+            }
+
+            const bool ctrlSpace = (keyEvent->modifiers() & Qt::ControlModifier) && keyEvent->key() == Qt::Key_Space;
+            if (ctrlSpace) {
+                QTextCursor tc = m_behavioralExpr->textCursor();
+                tc.select(QTextCursor::WordUnderCursor);
+                QString prefix = tc.selectedText();
+                if (prefix.isEmpty()) prefix = "V(";
+                m_behavioralCompleter->setCompletionPrefix(prefix);
+                m_behavioralCompleter->complete(m_behavioralExpr->cursorRect());
+                return true;
+            }
+        }
+    }
+
+    return QDialog::eventFilter(obj, event);
 }

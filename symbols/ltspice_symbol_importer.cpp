@@ -20,6 +20,198 @@ QString mapLtspicePinJustification(const QString& rawJustification) {
     if (j == "BOTTOM" || j == "VBOTTOM") return "Up";
     return QString();
 }
+
+QPointF scalePointAround(const QPointF& p, const QPointF& center, qreal s) {
+    return QPointF(center.x() + (p.x() - center.x()) * s,
+                   center.y() + (p.y() - center.y()) * s);
+}
+
+QRectF scaledRectAround(const QRectF& rect, const QPointF& center, qreal s) {
+    QPointF tl = scalePointAround(rect.topLeft(), center, s);
+    QPointF br = scalePointAround(rect.bottomRight(), center, s);
+    return QRectF(tl, br).normalized();
+}
+
+QRectF primitiveBounds(const SymbolPrimitive& prim) {
+    switch (prim.type) {
+    case SymbolPrimitive::Line: {
+        QPointF p1(prim.data["x1"].toDouble(), prim.data["y1"].toDouble());
+        QPointF p2(prim.data["x2"].toDouble(), prim.data["y2"].toDouble());
+        return QRectF(p1, p2).normalized();
+    }
+    case SymbolPrimitive::Rect:
+    case SymbolPrimitive::Arc:
+    case SymbolPrimitive::Image: {
+        QRectF r(prim.data["x"].toDouble(), prim.data["y"].toDouble(),
+                 prim.data["w"].toDouble(), prim.data["h"].toDouble());
+        return r.normalized();
+    }
+    case SymbolPrimitive::Circle: {
+        const qreal cx = prim.data["cx"].toDouble();
+        const qreal cy = prim.data["cy"].toDouble();
+        const qreal r = prim.data["r"].toDouble();
+        return QRectF(cx - r, cy - r, r * 2.0, r * 2.0);
+    }
+    case SymbolPrimitive::Polygon: {
+        QRectF r;
+        const QJsonArray pts = prim.data["points"].toArray();
+        for (const auto& v : pts) {
+            const QJsonObject obj = v.toObject();
+            const QPointF p(obj["x"].toDouble(), obj["y"].toDouble());
+            r = r.isNull() ? QRectF(p, p) : r.united(QRectF(p, p));
+        }
+        return r;
+    }
+    case SymbolPrimitive::Bezier: {
+        QRectF r;
+        QPointF p1(prim.data["x1"].toDouble(), prim.data["y1"].toDouble());
+        QPointF p2(prim.data["x2"].toDouble(), prim.data["y2"].toDouble());
+        QPointF p3(prim.data["x3"].toDouble(), prim.data["y3"].toDouble());
+        QPointF p4(prim.data["x4"].toDouble(), prim.data["y4"].toDouble());
+        r = r.isNull() ? QRectF(p1, p1) : r.united(QRectF(p1, p1));
+        r = r.united(QRectF(p2, p2));
+        r = r.united(QRectF(p3, p3));
+        r = r.united(QRectF(p4, p4));
+        return r;
+    }
+    case SymbolPrimitive::Text: {
+        QPointF p(prim.data["x"].toDouble(), prim.data["y"].toDouble());
+        return QRectF(p, p);
+    }
+    case SymbolPrimitive::Pin: {
+        QPointF p(prim.data["x"].toDouble(), prim.data["y"].toDouble());
+        return QRectF(p, p);
+    }
+    default:
+        return QRectF();
+    }
+}
+
+void scalePrimitive(SymbolPrimitive& prim, const QPointF& center, qreal s) {
+    auto scaleVal = [s](double v) { return v * s; };
+    switch (prim.type) {
+    case SymbolPrimitive::Line: {
+        QPointF p1 = scalePointAround(QPointF(prim.data["x1"].toDouble(), prim.data["y1"].toDouble()), center, s);
+        QPointF p2 = scalePointAround(QPointF(prim.data["x2"].toDouble(), prim.data["y2"].toDouble()), center, s);
+        prim.data["x1"] = p1.x(); prim.data["y1"] = p1.y();
+        prim.data["x2"] = p2.x(); prim.data["y2"] = p2.y();
+        break;
+    }
+    case SymbolPrimitive::Rect:
+    case SymbolPrimitive::Arc:
+    case SymbolPrimitive::Image: {
+        QRectF r(prim.data["x"].toDouble(), prim.data["y"].toDouble(),
+                 prim.data["w"].toDouble(), prim.data["h"].toDouble());
+        QRectF nr = scaledRectAround(r, center, s);
+        prim.data["x"] = nr.x(); prim.data["y"] = nr.y();
+        prim.data["w"] = nr.width(); prim.data["h"] = nr.height();
+        break;
+    }
+    case SymbolPrimitive::Circle: {
+        QPointF c = scalePointAround(QPointF(prim.data["cx"].toDouble(), prim.data["cy"].toDouble()), center, s);
+        prim.data["cx"] = c.x(); prim.data["cy"] = c.y();
+        prim.data["r"] = scaleVal(prim.data["r"].toDouble());
+        break;
+    }
+    case SymbolPrimitive::Polygon: {
+        QJsonArray pts = prim.data["points"].toArray();
+        QJsonArray out;
+        for (const auto& v : pts) {
+            QJsonObject obj = v.toObject();
+            QPointF p = scalePointAround(QPointF(obj["x"].toDouble(), obj["y"].toDouble()), center, s);
+            QJsonObject n;
+            n["x"] = p.x();
+            n["y"] = p.y();
+            out.append(n);
+        }
+        prim.data["points"] = out;
+        break;
+    }
+    case SymbolPrimitive::Bezier: {
+        QPointF p1 = scalePointAround(QPointF(prim.data["x1"].toDouble(), prim.data["y1"].toDouble()), center, s);
+        QPointF p2 = scalePointAround(QPointF(prim.data["x2"].toDouble(), prim.data["y2"].toDouble()), center, s);
+        QPointF p3 = scalePointAround(QPointF(prim.data["x3"].toDouble(), prim.data["y3"].toDouble()), center, s);
+        QPointF p4 = scalePointAround(QPointF(prim.data["x4"].toDouble(), prim.data["y4"].toDouble()), center, s);
+        prim.data["x1"] = p1.x(); prim.data["y1"] = p1.y();
+        prim.data["x2"] = p2.x(); prim.data["y2"] = p2.y();
+        prim.data["x3"] = p3.x(); prim.data["y3"] = p3.y();
+        prim.data["x4"] = p4.x(); prim.data["y4"] = p4.y();
+        break;
+    }
+    case SymbolPrimitive::Text: {
+        QPointF p = scalePointAround(QPointF(prim.data["x"].toDouble(), prim.data["y"].toDouble()), center, s);
+        prim.data["x"] = p.x(); prim.data["y"] = p.y();
+        if (prim.data.contains("fontSize")) {
+            prim.data["fontSize"] = scaleVal(prim.data["fontSize"].toDouble());
+        }
+        if (prim.data.contains("nameSize")) {
+            prim.data["nameSize"] = scaleVal(prim.data["nameSize"].toDouble());
+        }
+        if (prim.data.contains("numSize")) {
+            prim.data["numSize"] = scaleVal(prim.data["numSize"].toDouble());
+        }
+        break;
+    }
+    case SymbolPrimitive::Pin: {
+        QPointF p = scalePointAround(QPointF(prim.data["x"].toDouble(), prim.data["y"].toDouble()), center, s);
+        prim.data["x"] = p.x(); prim.data["y"] = p.y();
+        if (prim.data.contains("length")) {
+            prim.data["length"] = scaleVal(prim.data["length"].toDouble());
+        }
+        if (prim.data.contains("nameSize")) {
+            prim.data["nameSize"] = scaleVal(prim.data["nameSize"].toDouble());
+        }
+        if (prim.data.contains("numSize")) {
+            prim.data["numSize"] = scaleVal(prim.data["numSize"].toDouble());
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+void normalizeLtspiceSymbolSize(SymbolDefinition& symbol) {
+    const QList<SymbolPrimitive>& prims = symbol.primitives();
+    int pinCount = 0;
+    for (const auto& prim : prims) {
+        if (prim.type == SymbolPrimitive::Pin) pinCount++;
+    }
+    if (pinCount <= 0 || pinCount > 3) return;
+
+    QRectF bodyRect;
+    bool hasBody = false;
+    for (const auto& prim : prims) {
+        if (prim.type == SymbolPrimitive::Pin || prim.type == SymbolPrimitive::Text) continue;
+        QRectF r = primitiveBounds(prim);
+        if (!hasBody) { bodyRect = r; hasBody = true; }
+        else { bodyRect = bodyRect.united(r); }
+    }
+    if (!hasBody) {
+        for (const auto& prim : prims) {
+            QRectF r = primitiveBounds(prim);
+            if (r.isNull()) continue;
+            if (!hasBody) { bodyRect = r; hasBody = true; }
+            else { bodyRect = bodyRect.united(r); }
+        }
+    }
+    if (!hasBody || bodyRect.height() < 1.0) return;
+
+    const qreal targetHeight = 45.0;
+    const qreal scaleFactor = targetHeight / bodyRect.height();
+    if (scaleFactor <= 0.0 || !std::isfinite(scaleFactor)) return;
+
+    const QPointF center = bodyRect.center();
+    QList<SymbolPrimitive> scaled = symbol.primitives();
+    for (auto& prim : scaled) {
+        scalePrimitive(prim, center, scaleFactor);
+    }
+    symbol.clearPrimitives();
+    for (const auto& prim : scaled) symbol.addPrimitive(prim);
+
+    symbol.setReferencePos(scalePointAround(symbol.referencePos(), center, scaleFactor));
+    symbol.setNamePos(scalePointAround(symbol.namePos(), center, scaleFactor));
+}
 }
 
 SymbolDefinition LtspiceSymbolImporter::importSymbol(const QString& filePath) {
@@ -37,6 +229,9 @@ LtspiceSymbolImporter::ImportResult LtspiceSymbolImporter::importSymbolDetailed(
     SymbolDefinition symbol;
     QString fileName = QFileInfo(filePath).baseName();
     symbol.setName(fileName);
+    QString symattrValue;
+    QString symattrSpiceModel;
+    QString symattrModelFile;
 
     struct RawPin {
         QPointF pos;
@@ -111,7 +306,9 @@ LtspiceSymbolImporter::ImportResult LtspiceSymbolImporter::importSymbolDetailed(
                 QString val = parts.mid(2).join(" ");
                 if (key == "PREFIX") symbol.setReferencePrefix(val);
                 else if (key == "DESCRIPTION") symbol.setDescription(val);
-                else if (key == "VALUE") symbol.setDefaultValue(val);
+                else if (key == "VALUE") symattrValue = val;
+                else if (key == "SPICEMODEL" || key == "MODEL") symattrSpiceModel = val;
+                else if (key == "MODELFILE") symattrModelFile = val;
             }
         } else if (cmd == "WINDOW") {
             if (parts.size() >= 4) {
@@ -121,6 +318,20 @@ LtspiceSymbolImporter::ImportResult LtspiceSymbolImporter::importSymbolDetailed(
                 else if (id == 3) symbol.setNamePos(p);
             }
         }
+    }
+
+    const QString prefix = symbol.referencePrefix().trimmed().toUpper();
+    const bool modelPrefix = (prefix == "D" || prefix == "Q" || prefix == "M" || prefix == "J" || prefix == "X");
+    if (!symattrSpiceModel.trimmed().isEmpty()) {
+        symbol.setModelName(symattrSpiceModel.trimmed());
+    } else if (modelPrefix && !symattrValue.trimmed().isEmpty()) {
+        symbol.setModelName(symattrValue.trimmed());
+    } else if (!symattrValue.trimmed().isEmpty()) {
+        symbol.setDefaultValue(symattrValue.trimmed());
+    }
+    if (!symattrModelFile.trimmed().isEmpty()) {
+        symbol.setModelSource("library");
+        symbol.setModelPath(symattrModelFile.trimmed());
     }
 
     // Process Pins and detect orientation/stubs
@@ -184,6 +395,8 @@ LtspiceSymbolImporter::ImportResult LtspiceSymbolImporter::importSymbolDetailed(
             symbol.addPrimitive(SymbolPrimitive::createLine(scale(rawLines[i].p1), scale(rawLines[i].p2)));
         }
     }
+
+    normalizeLtspiceSymbolSize(symbol);
 
     result.symbol = symbol;
     result.success = true;

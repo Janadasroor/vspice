@@ -7,7 +7,7 @@
 #include <QAudioFormat>
 #include <QByteArray>
 #include <QVector>
-#include "../../simulator/core/sim_engine.h"
+#include "../../simulator/core/sim_results.h"
 
 class SimAudioEngine : public QObject {
     Q_OBJECT

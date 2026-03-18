@@ -4,6 +4,7 @@
 #include "../io/netlist_generator.h"
 #include "../../symbols/symbol_library.h"
 #include "../../symbols/models/symbol_definition.h"
+#include "../../simulator/bridge/model_library_manager.h"
 #include "../items/schematic_spice_directive_item.h"
 #include <QGraphicsScene>
 #include <QSet>
@@ -15,6 +16,8 @@
 #include <QTextStream>
 #include <QFileInfo>
 #include <QDir>
+#include <cmath>
+#include "../../core/config_manager.h"
 
 using Flux::Model::SymbolDefinition;
 
@@ -142,6 +145,27 @@ QString formatPwlValueForNetlist(const QString& value, int maxLen = 140) {
 
     return lines.join("\n");
 }
+
+QString resolveModelPath(const QString& modelPath, const QString& projectDir) {
+    if (modelPath.trimmed().isEmpty()) return QString();
+    QFileInfo fi(modelPath);
+    if (fi.isAbsolute()) return fi.absoluteFilePath();
+
+    const QString source = modelPath;
+    if (!projectDir.isEmpty()) {
+        const QString candidate = QDir(projectDir).filePath(source);
+        if (QFileInfo::exists(candidate)) return candidate;
+    }
+
+    const QStringList roots = ConfigManager::instance().libraryRoots();
+    for (const QString& root : roots) {
+        if (root.trimmed().isEmpty()) continue;
+        const QString candidate = QDir(root).filePath(source);
+        if (QFileInfo::exists(candidate)) return candidate;
+    }
+
+    return modelPath;
+}
 }
 
 QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& projectDir, NetManager* /*netManager*/, const SimulationParams& params) {
@@ -168,6 +192,9 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
     }
     netlist += "\n";
 
+    // 0.5 Collect model includes from symbols
+    QSet<QString> includePaths;
+
     // 1. Get Flattened ECO Package (Components)
     ECOPackage pkg = NetlistGenerator::generateECOPackage(scene, projectDir, nullptr);
     
@@ -186,7 +213,28 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         }
     }
 
+    // Collect include paths from symbol metadata
+    for (const auto& comp : pkg.components) {
+        SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(comp.typeName);
+        if (!sym) continue;
+        if (!sym->modelPath().isEmpty()) {
+            const QString resolved = resolveModelPath(sym->modelPath(), projectDir);
+            if (!resolved.isEmpty()) includePaths.insert(resolved);
+        }
+    }
+
+    if (!includePaths.isEmpty()) {
+        QStringList includeList = includePaths.values();
+        includeList.sort();
+        netlist += "* Model Includes\n";
+        for (const QString& inc : includeList) {
+            netlist += QString(".include \"%1\"\n").arg(inc);
+        }
+        netlist += "\n";
+    }
+
     // 3. Export components
+    QSet<QString> switchModelsAdded;
     QMap<QString, QString> powerNetVoltages;
     for (const auto& comp : pkg.components) {
         if (comp.excludeFromSim) {
@@ -254,6 +302,9 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
             if (comp.value.trimmed().startsWith("V=", Qt::CaseInsensitive)) line = "B" + ref;
             else line = "V" + ref;
         }
+        else if (comp.typeName.toLower().contains("gate") || comp.typeName.toLower().contains("digital")) {
+            line = "A" + ref; // XSPICE A-device
+        }
         else line = "X" + ref; // Subcircuit or generic
 
         // Fallback: if we don't know the type but reference has a known prefix,
@@ -276,7 +327,30 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         // Find Symbol definition to check for custom mapping
         SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(comp.typeName);
         if (sym) {
-            if (!sym->spiceModelName().isEmpty()) value = sym->spiceModelName();
+            if (!sym->spiceModelName().isEmpty() && comp.spiceModel.isEmpty()) value = sym->spiceModelName();
+
+            if (!sym->modelName().isEmpty() && comp.spiceModel.isEmpty()) {
+                if (line.startsWith("X") || line.startsWith("D") || line.startsWith("Q")) {
+                    value = sym->modelName();
+                }
+            }
+
+            if (!sym->modelName().isEmpty()) {
+                const SimModel* mdl = ModelLibraryManager::instance().findModel(sym->modelName());
+                const SimSubcircuit* sub = ModelLibraryManager::instance().findSubcircuit(sym->modelName());
+                if (!mdl && !sub) {
+                    netlist += QString("* Warning: Model '%1' not found for %2\n").arg(sym->modelName(), ref);
+                } else if (sub) {
+                    const int symPins = sym->connectionPoints().size();
+                    const int subPins = static_cast<int>(sub->pinNames.size());
+                    if (symPins > 0 && subPins > 0 && symPins != subPins) {
+                        netlist += QString("* Warning: Pin count mismatch for %1 (symbol %2 vs subckt %3)\n")
+                                       .arg(ref)
+                                       .arg(symPins)
+                                       .arg(subPins);
+                    }
+                }
+            }
             
             auto mapping = sym->spiceNodeMapping();
             if (!mapping.isEmpty()) {
@@ -314,11 +388,90 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                 continue;
             }
 
-            for (const QString& pk : sortedKeys) {
-                QString net = pins[pk];
-                if (net.isEmpty()) net = "NC_" + ref;
-                nodes.append(net.replace(" ", "_"));
+            // XSPICE A-device vector grouping: [in1 in2 ...] out
+            bool isADevice = line.startsWith("A");
+            if (isADevice) {
+                QStringList inputs;
+                QStringList outputs;
+                for (const QString& pk : sortedKeys) {
+                    QString net = pins[pk].replace(" ", "_");
+                    if (net.isEmpty()) net = "NC_" + ref;
+                    
+                    if (pk.toLower().contains("in") || pk.toLower().startsWith("a") || pk.toLower().startsWith("b")) 
+                        inputs.append(net);
+                    else 
+                        outputs.append(net);
+                }
+                
+                if (!inputs.isEmpty()) {
+                    nodes.append("[" + inputs.join(" ") + "]");
+                }
+                nodes.append(outputs);
+            } else {
+                for (const QString& pk : sortedKeys) {
+                    QString net = pins[pk];
+                    if (net.isEmpty()) net = "NC_" + ref;
+                    nodes.append(net.replace(" ", "_"));
+                }
             }
+        }
+
+        const bool isSwitch = (comp.typeName.compare("Switch", Qt::CaseInsensitive) == 0) || ref.startsWith("SW", Qt::CaseInsensitive);
+        if (isSwitch) {
+            const QString n1 = nodes.value(0, "0");
+            const QString n2 = nodes.value(1, "0");
+            const QString useModelExpr = comp.paramExpressions.value("switch.use_model").trimmed();
+            const bool useModel = (useModelExpr == "1" || useModelExpr.compare("true", Qt::CaseInsensitive) == 0);
+
+            if (useModel) {
+                QString modelName = comp.paramExpressions.value("switch.model_name").trimmed();
+                if (modelName.isEmpty()) modelName = QString("SW_%1").arg(ref);
+
+                QString ron = comp.paramExpressions.value("switch.ron").trimmed();
+                if (ron.isEmpty()) ron = "0.1";
+                QString roff = comp.paramExpressions.value("switch.roff").trimmed();
+                if (roff.isEmpty()) roff = "1Meg";
+                QString vt = comp.paramExpressions.value("switch.vt").trimmed();
+                if (vt.isEmpty()) vt = "0.5";
+                QString vh = comp.paramExpressions.value("switch.vh").trimmed();
+                if (vh.isEmpty()) vh = "0.1";
+
+                if (!switchModelsAdded.contains(modelName)) {
+                    netlist += QString(".model %1 SW(Ron=%2 Roff=%3 Vt=%4 Vh=%5)\n")
+                                   .arg(modelName, ron, roff, vt, vh);
+                    switchModelsAdded.insert(modelName);
+                }
+
+                QString switchRef = ref;
+                if (!switchRef.startsWith("S", Qt::CaseInsensitive)) switchRef = "S" + ref;
+                QString ctlNode = QString("SWCTL_%1").arg(ref);
+
+                const QString stateExpr = comp.paramExpressions.value("switch.state").trimmed().toLower();
+                const bool isOpen = (stateExpr.isEmpty() ? true : (stateExpr == "open"));
+
+                bool okVt = false;
+                bool okVh = false;
+                const double vtNum = vt.toDouble(&okVt);
+                const double vhNum = vh.toDouble(&okVh);
+                const double vhAbs = okVh ? std::abs(vhNum) : 0.1;
+                const double vtBase = okVt ? vtNum : 0.5;
+                const double high = vtBase + vhAbs + 0.1;
+                const double low = vtBase - vhAbs - 0.1;
+                const double controlV = isOpen ? low : high;
+
+                QString vref = QString("VSW_%1").arg(ref);
+                if (!vref.startsWith("V", Qt::CaseInsensitive)) vref = "V" + vref;
+
+                netlist += QString("%1 %2 %3 %4 0 %5\n").arg(switchRef, n1, n2, ctlNode, modelName);
+                netlist += QString("%1 %2 0 DC %3\n").arg(vref, ctlNode, QString::number(controlV, 'g', 6));
+                continue;
+            }
+
+            QString switchRef = ref;
+            if (!switchRef.startsWith("R", Qt::CaseInsensitive)) switchRef = "R" + ref;
+            QString switchValue = value.isEmpty() ? "1e12" : value;
+            netlist += QString("%1 %2 %3 %4\n").arg(switchRef, n1, n2, switchValue);
+            continue;
         }
 
         for (const QString& node : nodes) {

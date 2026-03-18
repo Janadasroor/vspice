@@ -13,6 +13,7 @@
 #include "flux/core/theme_manager.h"
 #include "schematic_item.h"
 #include "wire_item.h"
+#include "schematic_wire_utils.h"
 #include <limits>
 
 namespace {
@@ -35,6 +36,13 @@ SchematicItem* preferredPickItem(SchematicView* view, const QPointF& scenePos, c
 
     QGraphicsItem* rawItem = view->itemAt(viewPos);
     SchematicItem* fallback = nearestSchematicItem(rawItem);
+    if (fallback && fallback->isSubItem()) {
+        if (auto* parent = dynamic_cast<SchematicItem*>(fallback->parentItem())) {
+            if (parent->itemType() == SchematicItem::PowerType) {
+                fallback = parent;
+            }
+        }
+    }
     if (!view->scene()) return fallback;
 
     const QList<QGraphicsItem*> hits = view->scene()->items(
@@ -53,6 +61,14 @@ SchematicItem* preferredPickItem(SchematicView* view, const QPointF& scenePos, c
             if (QLineF(scenePos, pinScene).length() <= kAttachTolerance) {
                 return sItem;
             }
+        }
+    }
+
+    // 1b) Power symbols should be draggable even when close to wires.
+    for (QGraphicsItem* hit : hits) {
+        SchematicItem* sItem = nearestSchematicItem(hit);
+        if (sItem && sItem->itemType() == SchematicItem::PowerType) {
+            return sItem;
         }
     }
 
@@ -250,6 +266,43 @@ bool findExternalAnchorOnWire(SchematicView* view,
     return false;
 }
 
+bool findExternalAnchorSegmentInfo(SchematicView* view,
+                                   WireItem* ownerWire,
+                                   const QPointF& anchorScene,
+                                   SchematicItem* ignoreItem,
+                                   QPointF& segAOut,
+                                   QPointF& segBOut,
+                                   bool& segHOut,
+                                   bool& segVOut) {
+    if (!view || !view->scene() || !ownerWire) return false;
+    const QList<QGraphicsItem*> allItems = view->scene()->items();
+    for (QGraphicsItem* item : allItems) {
+        if (!item || item == ownerWire || item == ignoreItem) continue;
+        WireItem* otherWire = dynamic_cast<WireItem*>(item);
+        if (!otherWire) continue;
+        const QList<QPointF> pts = otherWire->points();
+        if (pts.size() < 2) continue;
+        for (int i = 0; i < pts.size() - 1; ++i) {
+            const QPointF a = otherWire->mapToScene(pts[i]);
+            const QPointF b = otherWire->mapToScene(pts[i + 1]);
+            if (!pointLiesOnSegment(anchorScene, a, b, kSegmentTolerance)) continue;
+            if (QLineF(anchorScene, a).length() <= kAttachTolerance ||
+                QLineF(anchorScene, b).length() <= kAttachTolerance) {
+                continue; // treat endpoint connections as fixed anchors
+            }
+            const bool h = qAbs(a.y() - b.y()) < 1.0;
+            const bool v = qAbs(a.x() - b.x()) < 1.0;
+            if (!h && !v) continue;
+            segAOut = a;
+            segBOut = b;
+            segHOut = h;
+            segVOut = v;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool isOrthogonalWire(const QList<QPointF>& pts) {
     if (pts.size() < 2) return true;
     for (int i = 0; i < pts.size() - 1; ++i) {
@@ -260,6 +313,133 @@ bool isOrthogonalWire(const QList<QPointF>& pts) {
         if (!h && !v) return false;
     }
     return true;
+}
+
+bool isObstacleItem(const SchematicItem* item) {
+    if (!item) return false;
+    switch (item->itemType()) {
+    case SchematicItem::WireType:
+    case SchematicItem::LabelType:
+    case SchematicItem::NetLabelType:
+    case SchematicItem::JunctionType:
+    case SchematicItem::NoConnectType:
+    case SchematicItem::BusType:
+    case SchematicItem::SheetType:
+    case SchematicItem::HierarchicalPortType:
+    case SchematicItem::SpiceDirectiveType:
+        return false;
+    default:
+        return true;
+    }
+}
+
+bool segmentIntersectsRect(const QPointF& a, const QPointF& b, const QRectF& rect) {
+    if (rect.contains(a) || rect.contains(b)) return true;
+    QLineF seg(a, b);
+    QPointF inter;
+    const QPointF tl = rect.topLeft();
+    const QPointF tr = rect.topRight();
+    const QPointF br = rect.bottomRight();
+    const QPointF bl = rect.bottomLeft();
+    if (seg.intersects(QLineF(tl, tr), &inter) == QLineF::BoundedIntersection) return true;
+    if (seg.intersects(QLineF(tr, br), &inter) == QLineF::BoundedIntersection) return true;
+    if (seg.intersects(QLineF(br, bl), &inter) == QLineF::BoundedIntersection) return true;
+    if (seg.intersects(QLineF(bl, tl), &inter) == QLineF::BoundedIntersection) return true;
+    return false;
+}
+
+bool segmentCollidesWithObstacles(const QPointF& a,
+                                  const QPointF& b,
+                                  SchematicView* view,
+                                  const QSet<SchematicItem*>& ignore) {
+    if (!view || !view->scene()) return false;
+    const QList<QGraphicsItem*> candidates = view->scene()->items();
+    for (QGraphicsItem* item : candidates) {
+        auto* sItem = dynamic_cast<SchematicItem*>(item);
+        if (!sItem || ignore.contains(sItem)) continue;
+        if (!isObstacleItem(sItem)) continue;
+        QRectF rect = sItem->sceneBoundingRect().adjusted(-2, -2, 2, 2);
+        if (segmentIntersectsRect(a, b, rect)) return true;
+    }
+    return false;
+}
+
+QList<QPointF> nudgeLWireAwayFromObstacles(WireItem* wire,
+                                           const QList<QPointF>& currPts,
+                                           SchematicView* view,
+                                           const QSet<SchematicItem*>& ignore) {
+    if (!wire || currPts.size() != 3 || !view) return currPts;
+    QPointF startScene = wire->mapToScene(currPts[0]);
+    QPointF elbowScene = wire->mapToScene(currPts[1]);
+    QPointF endScene = wire->mapToScene(currPts[2]);
+
+    if (qAbs(startScene.x() - endScene.x()) < 1.0 || qAbs(startScene.y() - endScene.y()) < 1.0) {
+        return currPts; // straight wire
+    }
+
+    const bool collides =
+        segmentCollidesWithObstacles(startScene, elbowScene, view, ignore) ||
+        segmentCollidesWithObstacles(elbowScene, endScene, view, ignore);
+
+    if (!collides) return currPts;
+
+    const QPointF altA = QPointF(startScene.x(), endScene.y());
+    const QPointF altB = QPointF(endScene.x(), startScene.y());
+    QPointF altElbow = altA;
+    if (QLineF(altB, elbowScene).length() > QLineF(altA, elbowScene).length()) {
+        altElbow = altB;
+    }
+    if (QLineF(altElbow, elbowScene).length() < 0.5) {
+        altElbow = (QLineF(altA, elbowScene).length() < 0.5) ? altB : altA;
+    }
+    altElbow = view->snapToGrid(altElbow);
+
+    const bool altCollides =
+        segmentCollidesWithObstacles(startScene, altElbow, view, ignore) ||
+        segmentCollidesWithObstacles(altElbow, endScene, view, ignore);
+
+    if (!altCollides) {
+        QList<QPointF> updated = currPts;
+        updated[1] = wire->mapFromScene(altElbow);
+        return updated;
+    }
+
+    // If both L paths collide, try small orthogonal nudges off the current elbow.
+    const qreal grid = view->gridSize();
+    const QVector<QPointF> offsets = {
+        QPointF(0.0, -grid),
+        QPointF(0.0, grid),
+        QPointF(-grid, 0.0),
+        QPointF(grid, 0.0),
+        QPointF(0.0, -2.0 * grid),
+        QPointF(0.0, 2.0 * grid),
+        QPointF(-2.0 * grid, 0.0),
+        QPointF(2.0 * grid, 0.0)
+    };
+
+    QPointF bestElbow = elbowScene;
+    bool found = false;
+    qreal bestDistance = std::numeric_limits<qreal>::max();
+    for (const QPointF& off : offsets) {
+        const QPointF candidate = view->snapToGrid(elbowScene + off);
+        const bool candidateCollides =
+            segmentCollidesWithObstacles(startScene, candidate, view, ignore) ||
+            segmentCollidesWithObstacles(candidate, endScene, view, ignore);
+        if (!candidateCollides) {
+            const qreal dist = QLineF(candidate, elbowScene).length();
+            if (!found || dist < bestDistance) {
+                bestDistance = dist;
+                bestElbow = candidate;
+                found = true;
+            }
+        }
+    }
+
+    if (!found) return currPts;
+
+    QList<QPointF> updated = currPts;
+    updated[1] = wire->mapFromScene(bestElbow);
+    return updated;
 }
 
 bool isMostlyOrthogonalWire(const QList<QPointF>& pts, qreal tol = 1.5) {
@@ -389,6 +569,7 @@ QList<QPointF> moveAttachedWireEndpoint(
     if (!wire) return {};
 
     QList<QPointF> pts = wire->points();
+    const QList<QPointF> orig = pts;
     if (pts.size() < 2) return pts;
 
     const int idx = isStartPoint ? 0 : static_cast<int>(pts.size()) - 1;
@@ -458,10 +639,80 @@ QList<QPointF> moveAttachedWireEndpoint(
     // Otherwise preserve orthogonality at the endpoint.
     QPointF n = pts[nIdx];
     if (isHorizontal) {
-        pts[nIdx].setY(p.y());
+        // Move the whole horizontal run that starts at the neighbor.
+        const qreal targetY = p.y();
+        int dir = isStartPoint ? 1 : -1;
+        int i = nIdx;
+        while (i >= 0 && i < pts.size()) {
+            pts[i].setY(targetY);
+            const int next = i + dir;
+            if (next < 0 || next >= pts.size()) break;
+            if (qAbs(orig[i].y() - orig[next].y()) >= 1.0) break;
+            i = next;
+        }
     } else if (isVertical) {
-        pts[nIdx].setX(p.x());
+        const qreal targetX = p.x();
+        int dir = isStartPoint ? 1 : -1;
+        int i = nIdx;
+        while (i >= 0 && i < pts.size()) {
+            pts[i].setX(targetX);
+            const int next = i + dir;
+            if (next < 0 || next >= pts.size()) break;
+            if (qAbs(orig[i].x() - orig[next].x()) >= 1.0) break;
+            i = next;
+        }
     } else {
+        if (qAbs(p.x() - n.x()) > qAbs(p.y() - n.y())) pts[nIdx].setY(p.y());
+        else pts[nIdx].setX(p.x());
+    }
+
+    return pts;
+}
+
+QList<QPointF> moveAttachedWireEndpointPreserveTopology(
+    WireItem* wire,
+    bool isStartPoint,
+    const QPointF& pinScenePos,
+    bool isHorizontal,
+    bool isVertical
+) {
+    if (!wire) return {};
+
+    QList<QPointF> pts = wire->points();
+    const QList<QPointF> orig = pts;
+    if (pts.size() < 2) return pts;
+
+    const int idx = isStartPoint ? 0 : static_cast<int>(pts.size()) - 1;
+    const int nIdx = isStartPoint ? 1 : static_cast<int>(pts.size()) - 2;
+    if (nIdx < 0 || nIdx >= pts.size()) return pts;
+
+    pts[idx] = wire->mapFromScene(pinScenePos);
+    const QPointF p = pts[idx];
+
+    if (isHorizontal) {
+        const qreal targetY = p.y();
+        int dir = isStartPoint ? 1 : -1;
+        int i = nIdx;
+        while (i >= 0 && i < pts.size()) {
+            pts[i].setY(targetY);
+            const int next = i + dir;
+            if (next < 0 || next >= pts.size()) break;
+            if (qAbs(orig[i].y() - orig[next].y()) >= 1.0) break;
+            i = next;
+        }
+    } else if (isVertical) {
+        const qreal targetX = p.x();
+        int dir = isStartPoint ? 1 : -1;
+        int i = nIdx;
+        while (i >= 0 && i < pts.size()) {
+            pts[i].setX(targetX);
+            const int next = i + dir;
+            if (next < 0 || next >= pts.size()) break;
+            if (qAbs(orig[i].x() - orig[next].x()) >= 1.0) break;
+            i = next;
+        }
+    } else {
+        const QPointF n = pts[nIdx];
         if (qAbs(p.x() - n.x()) > qAbs(p.y() - n.y())) pts[nIdx].setY(p.y());
         else pts[nIdx].setX(p.x());
     }
@@ -523,6 +774,155 @@ QList<WireItem*> collectConnectedWiresAtPins(
 
 } // namespace
 
+bool SchematicSelectTool::captureEndpointAnchor(SchematicView* view,
+                                                WireItem* ownerWire,
+                                                const QPointF& endpointScene,
+                                                WireEndpointAnchor& anchor,
+                                                bool isStart) {
+    if (!view || !view->scene() || !ownerWire) return false;
+
+    SchematicItem* bestItem = nullptr;
+    int bestPin = -1;
+    QPointF bestPinScene;
+    qreal bestDist = kAttachTolerance;
+
+    const QList<QGraphicsItem*> allItems = view->scene()->items();
+    for (QGraphicsItem* item : allItems) {
+        if (!item || item == ownerWire) continue;
+
+        SchematicItem* sItem = dynamic_cast<SchematicItem*>(item);
+        if (!sItem || sItem->itemType() == SchematicItem::WireType) continue;
+
+        const QList<QPointF> pins = sItem->connectionPoints();
+        for (int i = 0; i < pins.size(); ++i) {
+            const QPointF pinScene = sItem->mapToScene(pins[i]);
+            const qreal dist = QLineF(pinScene, endpointScene).length();
+            if (dist <= bestDist) {
+                bestDist = dist;
+                bestItem = sItem;
+                bestPin = i;
+                bestPinScene = pinScene;
+            }
+        }
+    }
+
+    if (!bestItem) return false;
+
+    if (isStart) {
+        anchor.startAnchored = true;
+        anchor.startItem = bestItem;
+        anchor.startPinIndex = bestPin;
+        anchor.startScene = bestPinScene;
+    } else {
+        anchor.endAnchored = true;
+        anchor.endItem = bestItem;
+        anchor.endPinIndex = bestPin;
+        anchor.endScene = bestPinScene;
+    }
+    return true;
+}
+
+QPointF SchematicSelectTool::resolveAnchorScene(const WireEndpointAnchor& anchor,
+                                                bool isStart) const {
+    if (isStart) {
+        if (anchor.startItem && anchor.startPinIndex >= 0) {
+            const QList<QPointF> pins = anchor.startItem->connectionPoints();
+            if (anchor.startPinIndex < pins.size()) {
+                return anchor.startItem->mapToScene(pins[anchor.startPinIndex]);
+            }
+        }
+        return anchor.startScene;
+    }
+    if (anchor.endItem && anchor.endPinIndex >= 0) {
+        const QList<QPointF> pins = anchor.endItem->connectionPoints();
+        if (anchor.endPinIndex < pins.size()) {
+            return anchor.endItem->mapToScene(pins[anchor.endPinIndex]);
+        }
+    }
+    return anchor.endScene;
+}
+
+void SchematicSelectTool::applyEndpointAnchorsToWire(WireItem* wire,
+                                                     const WireEndpointAnchor& anchor) {
+    if (!wire) return;
+    QList<QPointF> pts = wire->points();
+    if (pts.size() < 2) return;
+
+    if (anchor.startAnchored) {
+        const QPointF targetScene = resolveAnchorScene(anchor, true);
+        const QPointF newLocal = wire->mapFromScene(targetScene);
+        pts = SchematicWireUtils::maintainOrthogonality(pts, 0, newLocal);
+    }
+    if (anchor.endAnchored) {
+        const QPointF targetScene = resolveAnchorScene(anchor, false);
+        const QPointF newLocal = wire->mapFromScene(targetScene);
+        pts = SchematicWireUtils::maintainOrthogonality(pts, pts.size() - 1, newLocal);
+    }
+
+    wire->setPoints(pts);
+}
+
+void SchematicSelectTool::adjustEndpointOrientationForDrag(const AttachedWire& aw,
+                                                           const QPointF& currentPinScene,
+                                                           bool keepNeighborFixed,
+                                                           bool& isHorizontal,
+                                                           bool& isVertical) const {
+    if (!keepNeighborFixed) return;
+    if (!m_initialWireAnchors.contains(aw.wire)) return;
+
+    const WireEndpointAnchor& anchor = m_initialWireAnchors[aw.wire];
+    QPointF oldPinScene;
+    bool hasOld = false;
+    if (aw.isStartPoint && anchor.startAnchored) {
+        oldPinScene = anchor.startScene;
+        hasOld = true;
+    } else if (!aw.isStartPoint && anchor.endAnchored) {
+        oldPinScene = anchor.endScene;
+        hasOld = true;
+    }
+    if (!hasOld) return;
+
+    const qreal dx = currentPinScene.x() - oldPinScene.x();
+    const qreal dy = currentPinScene.y() - oldPinScene.y();
+    const qreal absDx = qAbs(dx);
+    const qreal absDy = qAbs(dy);
+    const qreal eps = 0.5;
+
+    if (absDx > absDy + eps) {
+        // Mostly horizontal drag -> prefer horizontal-first elbow (match new X at anchor Y)
+        isVertical = true;
+        isHorizontal = false;
+    } else if (absDy > absDx + eps) {
+        // Mostly vertical drag -> prefer vertical-first elbow (match new Y at anchor X)
+        isHorizontal = true;
+        isVertical = false;
+    }
+}
+
+QPointF SchematicSelectTool::adjustFixedNeighborSceneForSliding(const AttachedWire& aw,
+                                                                const QPointF& currentPinScene,
+                                                                const QPointF& fixedNeighborScene) const {
+    if (!aw.neighborAnchorIsSegment || !aw.wire) return fixedNeighborScene;
+    const QList<QPointF> pts = aw.wire->points();
+    if (pts.size() != 2) return fixedNeighborScene;
+
+    QPointF adjusted = fixedNeighborScene;
+    if (aw.isVertical && aw.neighborAnchorSegmentHorizontal) {
+        const qreal minX = qMin(aw.neighborAnchorSegmentA.x(), aw.neighborAnchorSegmentB.x());
+        const qreal maxX = qMax(aw.neighborAnchorSegmentA.x(), aw.neighborAnchorSegmentB.x());
+        const qreal targetX = qBound(minX, currentPinScene.x(), maxX);
+        adjusted.setX(targetX);
+        adjusted.setY(aw.neighborAnchorSegmentA.y());
+    } else if (aw.isHorizontal && aw.neighborAnchorSegmentVertical) {
+        const qreal minY = qMin(aw.neighborAnchorSegmentA.y(), aw.neighborAnchorSegmentB.y());
+        const qreal maxY = qMax(aw.neighborAnchorSegmentA.y(), aw.neighborAnchorSegmentB.y());
+        const qreal targetY = qBound(minY, currentPinScene.y(), maxY);
+        adjusted.setY(targetY);
+        adjusted.setX(aw.neighborAnchorSegmentA.x());
+    }
+    return adjusted;
+}
+
 SchematicSelectTool::SchematicSelectTool(QObject* parent)
     : SchematicTool("Select", parent) {
 }
@@ -558,7 +958,6 @@ QPointF SchematicSelectTool::snapPoint(QPointF scenePos) {
 }
 
 #include "schematic_commands.h"
-#include "schematic_wire_utils.h"
 #include "../analysis/schematic_connectivity.h"
 #include <QUndoStack>
 
@@ -741,9 +1140,13 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
             m_lastMousePos = event->pos();
             m_lastMousePosOrigin = event->pos();
             m_initialMouseScenePos = scenePos;
+            m_axisLockActive = false;
+            m_axisLockHorizontal = true;
             m_attachedWires.clear();
             m_initialPositions.clear();
             m_initialWirePoints.clear();
+            m_initialWireAnchors.clear();
+            m_topologyLockedWires.clear();
 
             // Capture initial positions of ALL selected items
             QList<QGraphicsItem*> selectedItems = view()->scene()->selectedItems();
@@ -758,6 +1161,9 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
                 if (!wire) return;
                 if (!m_initialWirePoints.contains(wire)) {
                     m_initialWirePoints[wire] = wire->points();
+                    if (wire->points().size() > 3) {
+                        m_topologyLockedWires.insert(wire);
+                    }
                 }
             };
 
@@ -796,17 +1202,31 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
                                 int nextIdx = (idx == 0) ? 1 : idx - 1;
                                 bool isH = false, isV = false;
                                 QPointF neighborScene;
+                                QPointF externalAnchorScene;
                                 bool neighborAnchored = false;
+                                bool anchorIsSegment = false;
+                                bool segH = false;
+                                bool segV = false;
+                                QPointF segA;
+                                QPointF segB;
+                                const bool lockElbow = false;
                                 if (wPts.size() > 1) {
                                     isH = qAbs(wPts[idx].y() - wPts[nextIdx].y()) < 1.0;
                                     isV = qAbs(wPts[idx].x() - wPts[nextIdx].x()) < 1.0;
                                     neighborScene = wire->mapToScene(wPts[nextIdx]);
                                     QPointF anchorScene;
                                     neighborAnchored = findExternalAnchorOnWire(view(), wire, idx, sItem, anchorScene);
-                                    if (neighborAnchored) neighborScene = anchorScene;
+                                    if (neighborAnchored) {
+                                        externalAnchorScene = anchorScene;
+                                        anchorIsSegment = findExternalAnchorSegmentInfo(view(), wire, anchorScene, sItem,
+                                                                                       segA, segB, segH, segV);
+                                    } else {
+                                        externalAnchorScene = neighborScene;
+                                    }
                                 }
                                 m_attachedWires.append(
-                                    {wire, idx == 0, sItem, i, isH, isV, neighborScene, neighborAnchored});
+                                    {wire, idx == 0, sItem, i, isH, isV, neighborScene, externalAnchorScene, neighborAnchored, lockElbow,
+                                     anchorIsSegment, segH, segV, segA, segB});
                                 rememberWire(wire);
                             }
                         }
@@ -828,17 +1248,31 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
                                     int nextIdx = (idx == 0) ? 1 : idx - 1;
                                     bool isH = false, isV = false;
                                     QPointF neighborScene;
+                                    QPointF externalAnchorScene;
                                     bool neighborAnchored = false;
+                                    bool anchorIsSegment = false;
+                                    bool segH = false;
+                                    bool segV = false;
+                                    QPointF segA;
+                                    QPointF segB;
+                                    const bool lockElbow = false;
                                     if (wPts.size() > 1) {
                                         isH = qAbs(wPts[idx].y() - wPts[nextIdx].y()) < 1.0;
                                         isV = qAbs(wPts[idx].x() - wPts[nextIdx].x()) < 1.0;
                                         neighborScene = wire->mapToScene(wPts[nextIdx]);
                                         QPointF anchorScene;
                                         neighborAnchored = findExternalAnchorOnWire(view(), wire, idx, otherSItem, anchorScene);
-                                        if (neighborAnchored) neighborScene = anchorScene;
+                                        if (neighborAnchored) {
+                                            externalAnchorScene = anchorScene;
+                                            anchorIsSegment = findExternalAnchorSegmentInfo(view(), wire, anchorScene, otherSItem,
+                                                                                           segA, segB, segH, segV);
+                                        } else {
+                                            externalAnchorScene = neighborScene;
+                                        }
                                     }
                                     m_attachedWires.append(
-                                        {wire, idx == 0, otherSItem, j, isH, isV, neighborScene, neighborAnchored});
+                                        {wire, idx == 0, otherSItem, j, isH, isV, neighborScene, externalAnchorScene, neighborAnchored, lockElbow,
+                                         anchorIsSegment, segH, segV, segA, segB});
                                     rememberWire(wire);
                                 }
                             }
@@ -857,17 +1291,31 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
                                         int nextIdx = (si == 0) ? 1 : si - 1;
                                         bool isH = false, isV = false;
                                         QPointF neighborScene;
+                                        QPointF externalAnchorScene;
                                         bool neighborAnchored = false;
+                                        bool anchorIsSegment = false;
+                                        bool segH = false;
+                                        bool segV = false;
+                                        QPointF segA;
+                                        QPointF segB;
+                                        const bool lockElbow = false;
                                         if (selPts.size() > 1) {
                                             isH = qAbs(selPts[si].y() - selPts[nextIdx].y()) < 1.0;
                                             isV = qAbs(selPts[si].x() - selPts[nextIdx].x()) < 1.0;
                                             neighborScene = selWire->mapToScene(selPts[nextIdx]);
                                             QPointF anchorScene;
                                             neighborAnchored = findExternalAnchorOnWire(view(), selWire, si, nullptr, anchorScene);
-                                            if (neighborAnchored) neighborScene = anchorScene;
+                                            if (neighborAnchored) {
+                                                externalAnchorScene = anchorScene;
+                                                anchorIsSegment = findExternalAnchorSegmentInfo(view(), selWire, anchorScene, nullptr,
+                                                                                               segA, segB, segH, segV);
+                                            } else {
+                                                externalAnchorScene = neighborScene;
+                                            }
                                         }
                                         m_attachedWires.append(
-                                            {selWire, si == 0, otherWire, oi, isH, isV, neighborScene, neighborAnchored});
+                                            {selWire, si == 0, otherWire, oi, isH, isV, neighborScene, externalAnchorScene, neighborAnchored, lockElbow,
+                                             anchorIsSegment, segH, segV, segA, segB});
                                         rememberWire(selWire);
                                     }
                                 }
@@ -880,17 +1328,31 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
                                         int nextIdx = (oi == 0) ? 1 : oi - 1;
                                         bool isH = false, isV = false;
                                         QPointF neighborScene;
+                                        QPointF externalAnchorScene;
                                         bool neighborAnchored = false;
+                                        bool anchorIsSegment = false;
+                                        bool segH = false;
+                                        bool segV = false;
+                                        QPointF segA;
+                                        QPointF segB;
+                                        const bool lockElbow = false;
                                         if (otherPts.size() > 1) {
                                             isH = qAbs(otherPts[oi].y() - otherPts[nextIdx].y()) < 1.0;
                                             isV = qAbs(otherPts[oi].x() - otherPts[nextIdx].x()) < 1.0;
                                             neighborScene = otherWire->mapToScene(otherPts[nextIdx]);
                                             QPointF anchorScene;
                                             neighborAnchored = findExternalAnchorOnWire(view(), otherWire, oi, nullptr, anchorScene);
-                                            if (neighborAnchored) neighborScene = anchorScene;
+                                            if (neighborAnchored) {
+                                                externalAnchorScene = anchorScene;
+                                                anchorIsSegment = findExternalAnchorSegmentInfo(view(), otherWire, anchorScene, nullptr,
+                                                                                               segA, segB, segH, segV);
+                                            } else {
+                                                externalAnchorScene = neighborScene;
+                                            }
                                         }
                                         m_attachedWires.append(
-                                            {otherWire, oi == 0, selWire, si, isH, isV, neighborScene, neighborAnchored});
+                                            {otherWire, oi == 0, selWire, si, isH, isV, neighborScene, externalAnchorScene, neighborAnchored, lockElbow,
+                                             anchorIsSegment, segH, segV, segA, segB});
                                         rememberWire(otherWire);
                                     }
                                 }
@@ -963,6 +1425,23 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
             }
             for (const AttachedWire& aw : m_attachedWires) {
                 discoverTJunctionsForMovingWire(aw.wire);
+            }
+
+            // Capture anchors for wire endpoints so they can be re-snapped on release.
+            for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
+                WireItem* wire = it.key();
+                if (!wire) continue;
+                WireEndpointAnchor anchor;
+                const QList<QPointF> pts = wire->points();
+                if (pts.size() >= 2) {
+                    const QPointF startScene = wire->mapToScene(pts.first());
+                    const QPointF endScene = wire->mapToScene(pts.last());
+                    captureEndpointAnchor(view(), wire, startScene, anchor, true);
+                    captureEndpointAnchor(view(), wire, endScene, anchor, false);
+                }
+                if (anchor.startAnchored || anchor.endAnchored) {
+                    m_initialWireAnchors[wire] = anchor;
+                }
             }
             
             event->accept();
@@ -1133,6 +1612,20 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
         if (!m_initialPositions.isEmpty()) {
             // Total accumulated movement in scene coordinates
             QPointF totalMove = view()->mapToScene(event->pos()) - m_initialMouseScenePos;
+            const bool shiftHeld = event->modifiers() & Qt::ShiftModifier;
+            if (shiftHeld && (qAbs(totalMove.x()) > 0.001 || qAbs(totalMove.y()) > 0.001)) {
+                if (!m_axisLockActive) {
+                    m_axisLockHorizontal = qAbs(totalMove.x()) >= qAbs(totalMove.y());
+                    m_axisLockActive = true;
+                }
+                if (m_axisLockHorizontal) {
+                    totalMove.setY(0.0);
+                } else {
+                    totalMove.setX(0.0);
+                }
+            } else {
+                m_axisLockActive = false;
+            }
             
             QList<QGraphicsItem*> selectedItems = view()->scene()->selectedItems();
             for (QGraphicsItem* item : selectedItems) {
@@ -1158,6 +1651,20 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
             }
         } else if (m_isDragging) {
              QPointF sceneDelta = view()->mapToScene(event->pos()) - view()->mapToScene(m_lastMousePos);
+             const bool shiftHeld = event->modifiers() & Qt::ShiftModifier;
+             if (shiftHeld && (qAbs(sceneDelta.x()) > 0.001 || qAbs(sceneDelta.y()) > 0.001)) {
+                 if (!m_axisLockActive) {
+                     m_axisLockHorizontal = qAbs(sceneDelta.x()) >= qAbs(sceneDelta.y());
+                     m_axisLockActive = true;
+                 }
+                 if (m_axisLockHorizontal) {
+                     sceneDelta.setY(0.0);
+                 } else {
+                     sceneDelta.setX(0.0);
+                 }
+             } else {
+                 m_axisLockActive = false;
+             }
              if (sceneDelta.manhattanLength() > 0.001) {
                 QList<QGraphicsItem*> selectedItems = view()->scene()->selectedItems();
                 for (QGraphicsItem* item : selectedItems) {
@@ -1175,17 +1682,37 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
                 if (m_vertexDragActive && aw.wire == m_vertexWire) continue;
 
                 const QPointF currentPinScene = aw.anchor->mapToScene(aw.anchor->connectionPoints()[aw.anchorPointIndex]);
-                QList<QPointF> pts = moveAttachedWireEndpoint(
-                    aw.wire,
-                    aw.isStartPoint,
-                    currentPinScene,
-                    aw.isHorizontal,
-                    aw.isVertical,
-                    aw.neighborExternallyAnchored,
-                    aw.initialNeighborPos
-                );
+                QList<QPointF> pts;
+                if (m_topologyLockedWires.contains(aw.wire)) {
+                    pts = moveAttachedWireEndpointPreserveTopology(
+                        aw.wire,
+                        aw.isStartPoint,
+                        currentPinScene,
+                        aw.isHorizontal,
+                        aw.isVertical
+                    );
+                } else {
+                    const bool keepNeighborFixed = aw.neighborExternallyAnchored;
+                    QPointF fixedNeighborScene = aw.neighborExternallyAnchored ? aw.externalAnchorScenePos : aw.neighborScenePos;
+                    bool isH = aw.isHorizontal;
+                    bool isV = aw.isVertical;
+                    adjustEndpointOrientationForDrag(aw, currentPinScene, keepNeighborFixed, isH, isV);
+                    fixedNeighborScene = adjustFixedNeighborSceneForSliding(aw, currentPinScene, fixedNeighborScene);
+                    pts = moveAttachedWireEndpoint(
+                        aw.wire,
+                        aw.isStartPoint,
+                        currentPinScene,
+                        isH,
+                        isV,
+                        keepNeighborFixed,
+                        fixedNeighborScene
+                    );
+                }
                 if (m_initialWirePoints.contains(aw.wire)) {
                     const QList<QPointF>& orig = m_initialWirePoints.value(aw.wire);
+                    if (isOrthogonalWire(orig) && orig.size() <= 3) {
+                        pts = rebuildSimpleOrthogonal(pts, orig, view());
+                    }
                     if (isOrthogonalWire(orig)) {
                         orthogonalizeFromOriginal(pts, orig);
                     } else if (isMostlyOrthogonalWire(pts)) {
@@ -1255,17 +1782,37 @@ void SchematicSelectTool::mouseReleaseEvent(QMouseEvent* event) {
                     if (m_vertexDragActive && aw.wire == m_vertexWire) continue;
 
                     const QPointF pinScene = aw.anchor->mapToScene(aw.anchor->connectionPoints()[aw.anchorPointIndex]);
-                    QList<QPointF> pts = moveAttachedWireEndpoint(
-                        aw.wire,
-                        aw.isStartPoint,
-                        pinScene,
-                        aw.isHorizontal,
-                        aw.isVertical,
-                        aw.neighborExternallyAnchored,
-                        aw.initialNeighborPos
-                    );
+                    QList<QPointF> pts;
+                    if (m_topologyLockedWires.contains(aw.wire)) {
+                        pts = moveAttachedWireEndpointPreserveTopology(
+                            aw.wire,
+                            aw.isStartPoint,
+                            pinScene,
+                            aw.isHorizontal,
+                            aw.isVertical
+                        );
+                    } else {
+                        const bool keepNeighborFixed = aw.neighborExternallyAnchored;
+                        QPointF fixedNeighborScene = aw.neighborExternallyAnchored ? aw.externalAnchorScenePos : aw.neighborScenePos;
+                        bool isH = aw.isHorizontal;
+                        bool isV = aw.isVertical;
+                        adjustEndpointOrientationForDrag(aw, pinScene, keepNeighborFixed, isH, isV);
+                        fixedNeighborScene = adjustFixedNeighborSceneForSliding(aw, pinScene, fixedNeighborScene);
+                        pts = moveAttachedWireEndpoint(
+                            aw.wire,
+                            aw.isStartPoint,
+                            pinScene,
+                            isH,
+                            isV,
+                            keepNeighborFixed,
+                            fixedNeighborScene
+                        );
+                    }
                     if (m_initialWirePoints.contains(aw.wire)) {
                         const QList<QPointF>& orig = m_initialWirePoints.value(aw.wire);
+                        if (isOrthogonalWire(orig) && orig.size() <= 3) {
+                            pts = rebuildSimpleOrthogonal(pts, orig, view());
+                        }
                         if (isOrthogonalWire(orig)) {
                             orthogonalizeFromOriginal(pts, orig);
                         } else if (isMostlyOrthogonalWire(pts)) {
@@ -1352,6 +1899,16 @@ void SchematicSelectTool::mouseReleaseEvent(QMouseEvent* event) {
         }
 
         // Final orthogonal cleanup for wires that were originally orthogonal.
+        auto buildIgnoreSet = [this](WireItem* wire) {
+            QSet<SchematicItem*> ignore;
+            if (m_initialWireAnchors.contains(wire)) {
+                const WireEndpointAnchor& anchor = m_initialWireAnchors[wire];
+                if (anchor.startItem) ignore.insert(anchor.startItem);
+                if (anchor.endItem) ignore.insert(anchor.endItem);
+            }
+            return ignore;
+        };
+
         for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
             WireItem* wire = it.key();
             if (!wire) continue;
@@ -1366,7 +1923,7 @@ void SchematicSelectTool::mouseReleaseEvent(QMouseEvent* event) {
             }
         }
 
-        // Re-snap attached wire endpoints to their pins after cleanup.
+    // Re-snap attached wire endpoints to their pins after cleanup.
         if (!m_attachedWires.isEmpty()) {
             for (const AttachedWire& aw : m_attachedWires) {
                 if (!aw.wire || !aw.anchor) continue;
@@ -1374,20 +1931,62 @@ void SchematicSelectTool::mouseReleaseEvent(QMouseEvent* event) {
                 const QList<QPointF> pins = aw.anchor->connectionPoints();
                 if (aw.anchorPointIndex < 0 || aw.anchorPointIndex >= pins.size()) continue;
                 const QPointF pinScene = aw.anchor->mapToScene(pins[aw.anchorPointIndex]);
-                QList<QPointF> pts = moveAttachedWireEndpoint(
-                    aw.wire,
-                    aw.isStartPoint,
-                    pinScene,
-                    aw.isHorizontal,
-                    aw.isVertical,
-                    aw.neighborExternallyAnchored,
-                    aw.initialNeighborPos
-                );
+                QList<QPointF> pts;
+                if (m_topologyLockedWires.contains(aw.wire)) {
+                    pts = moveAttachedWireEndpointPreserveTopology(
+                        aw.wire,
+                        aw.isStartPoint,
+                        pinScene,
+                        aw.isHorizontal,
+                        aw.isVertical
+                    );
+                } else {
+                    const bool keepNeighborFixed = aw.neighborExternallyAnchored;
+                    QPointF fixedNeighborScene = aw.neighborExternallyAnchored ? aw.externalAnchorScenePos : aw.neighborScenePos;
+                    bool isH = aw.isHorizontal;
+                    bool isV = aw.isVertical;
+                    adjustEndpointOrientationForDrag(aw, pinScene, keepNeighborFixed, isH, isV);
+                    fixedNeighborScene = adjustFixedNeighborSceneForSliding(aw, pinScene, fixedNeighborScene);
+                    pts = moveAttachedWireEndpoint(
+                        aw.wire,
+                        aw.isStartPoint,
+                        pinScene,
+                        isH,
+                        isV,
+                        keepNeighborFixed,
+                        fixedNeighborScene
+                    );
+                }
+                if (m_initialWirePoints.contains(aw.wire)) {
+                    const QList<QPointF>& orig = m_initialWirePoints.value(aw.wire);
+                    if (isOrthogonalWire(orig) && orig.size() <= 3) {
+                        pts = rebuildSimpleOrthogonal(pts, orig, view());
+                    }
+                }
                 aw.wire->setPoints(pts);
             }
         }
 
+        // Clamp endpoints to their original anchors (pins) to prevent drift.
+        if (!m_initialWireAnchors.isEmpty()) {
+            for (auto it = m_initialWireAnchors.begin(); it != m_initialWireAnchors.end(); ++it) {
+                applyEndpointAnchorsToWire(it.key(), it.value());
+            }
+        }
+
+        // Final obstacle avoidance for simple L-wires after anchors are clamped.
         for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
+            WireItem* wire = it.key();
+            if (!wire) continue;
+            const QList<QPointF>& orig = it.value();
+            if (orig.size() != 3) continue;
+            QList<QPointF> curr = wire->points();
+            curr = nudgeLWireAwayFromObstacles(wire, curr, view(), buildIgnoreSet(wire));
+            wire->setPoints(curr);
+        }
+
+        for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
+            if (m_topologyLockedWires.contains(it.key())) continue;
             it.key()->setPoints(simplifyWirePoints(it.key()->points()));
         }
 

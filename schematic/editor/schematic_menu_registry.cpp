@@ -10,11 +10,20 @@
 #include "../items/voltage_source_item.h"
 #include "../items/generic_component_item.h"
 #include "../items/schematic_sheet_item.h"
+#include "../items/led_item.h"
+#include "../items/blinking_led_item.h"
+#include "../analysis/net_manager.h"
+#include "../../core/theme_manager.h"
+#include "../dialogs/led_properties_dialog.h"
 #include <algorithm>
 #include <set>
 #include <QApplication>
 #include <QDesktopServices>
 #include <QInputDialog>
+#include <QLineF>
+#include <QMessageBox>
+#include <QCursor>
+#include <QMenu>
 #include <QUrl>
 
 SchematicMenuRegistry& SchematicMenuRegistry::instance() {
@@ -157,6 +166,93 @@ void SchematicMenuRegistry::initializeDefaultActions() {
         emit view->itemDoubleClicked(items.first());
     };
     registerAction(SchematicItem::WireType, editNetLabel);
+
+    ContextAction wireInfo;
+    wireInfo.label = "Info...";
+    wireInfo.priority = 95;
+    wireInfo.isVisible = [](const QList<SchematicItem*>& items) {
+        return items.size() == 1 && items.first()->itemType() == SchematicItem::WireType;
+    };
+    wireInfo.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
+        auto* wire = dynamic_cast<WireItem*>(items.first());
+        if (!wire || !view) return;
+
+        const QList<QPointF> pts = wire->points();
+        if (pts.isEmpty()) return;
+
+        NetManager* netManager = view->netManager();
+        QString netName = "N/A";
+        QString netEndName;
+        QPointF startScene = wire->mapToScene(pts.first());
+        QPointF endScene = wire->mapToScene(pts.last());
+        if (netManager && view->scene()) {
+            netManager->updateNets(view->scene());
+            netName = netManager->findNetAtPoint(startScene);
+            netEndName = netManager->findNetAtPoint(endScene);
+            if (netName.isEmpty()) netName = "N/A";
+            if (!netEndName.isEmpty() && netEndName != netName) {
+                netName = QString("%1 -> %2").arg(netName, netEndName);
+            }
+        }
+
+        double totalLength = 0.0;
+        for (int i = 0; i < pts.size() - 1; ++i) {
+            const QPointF a = wire->mapToScene(pts[i]);
+            const QPointF b = wire->mapToScene(pts[i + 1]);
+            totalLength += QLineF(a, b).length();
+        }
+
+        QString wireType = (wire->wireType() == WireItem::PowerWire) ? "Power" : "Signal";
+        QString styleStr = "Solid";
+        if (wire->pen().style() == Qt::DashLine) styleStr = "Dash";
+        else if (wire->pen().style() == Qt::DotLine) styleStr = "Dot";
+
+        QString info = QString(
+            "Net: %1\n"
+            "Type: %2\n"
+            "Points: %3\n"
+            "Segments: %4\n"
+            "Length (scene units): %5\n"
+            "Start: (%6, %7)\n"
+            "End: (%8, %9)\n"
+            "Junctions: %10\n"
+            "Jump-overs: %11\n"
+            "Line width: %12\n"
+            "Line style: %13")
+            .arg(netName)
+            .arg(wireType)
+            .arg(pts.size())
+            .arg(qMax(0, pts.size() - 1))
+            .arg(QString::number(totalLength, 'f', 2))
+            .arg(QString::number(startScene.x(), 'f', 2))
+            .arg(QString::number(startScene.y(), 'f', 2))
+            .arg(QString::number(endScene.x(), 'f', 2))
+            .arg(QString::number(endScene.y(), 'f', 2))
+            .arg(wire->junctions().size())
+            .arg(wire->jumpOvers().size())
+            .arg(QString::number(wire->pen().widthF(), 'f', 2))
+            .arg(styleStr);
+
+        QMessageBox::information(view, "Wire Info", info);
+    };
+    registerAction(SchematicItem::WireType, wireInfo);
+
+    // --- LED Actions ---
+    ContextAction ledOptions;
+    ledOptions.label = "LED Properties...";
+    ledOptions.priority = 90;
+    ledOptions.isVisible = [](const QList<SchematicItem*>& items) {
+        if (items.size() != 1) return false;
+        const QString t = items.first()->itemTypeName();
+        return t == "LED" || t == "Blinking LED";
+    };
+    ledOptions.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
+        if (!view || items.size() != 1) return;
+        SchematicItem* base = items.first();
+        LedPropertiesDialog dlg(base, view->scene(), view);
+        dlg.exec();
+    };
+    registerGlobalAction(ledOptions);
 
     // --- Bus Actions ---
     

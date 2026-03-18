@@ -52,7 +52,7 @@ void PotentiometerItem::onInteractiveClick(const QPointF& pos) {
 }
 
 QRectF PotentiometerItem::boundingRect() const {
-    return QRectF(-45, -40, 90, 60);
+    return QRectF(-50, -50, 100, 100);
 }
 
 void PotentiometerItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*, QWidget*) {
@@ -63,46 +63,46 @@ void PotentiometerItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*
     // Resistor Body (Zigzag)
     QPolygonF zigzag;
     zigzag << QPointF(-30, 0)
-           << QPointF(-25, -10)
-           << QPointF(-15, 10)
-           << QPointF(-5, -10)
-           << QPointF(5, 10)
-           << QPointF(15, -10)
-           << QPointF(25, 10)
+           << QPointF(-25, -22.5)
+           << QPointF(-15, 22.5)
+           << QPointF(-5, -22.5)
+           << QPointF(5, 22.5)
+           << QPointF(15, -22.5)
+           << QPointF(25, 22.5)
            << QPointF(30, 0);
     painter->drawPolyline(zigzag);
 
     // Terminal pins
-    painter->drawLine(-40, 0, -30, 0);
-    painter->drawLine(30, 0, 40, 0);
+    painter->drawLine(-45, 0, -30, 0);
+    painter->drawLine(30, 0, 45, 0);
 
     // Wiper Arrow
     double wx = -30 + (m_wiperPos * 60.0);
     painter->setPen(QPen(QColor(0, 255, 100), 2)); // Green wiper
-    painter->drawLine(wx, -12, wx, -25);
-    painter->drawLine(wx, -12, wx - 4, -18);
-    painter->drawLine(wx, -12, wx + 4, -18);
+    painter->drawLine(wx, -18, wx, -35);
+    painter->drawLine(wx, -18, wx - 4, -26);
+    painter->drawLine(wx, -18, wx + 4, -26);
     
     // Wiper pin line
-    painter->drawLine(wx, -25, 0, -25);
-    painter->drawLine(0, -25, 0, -35);
+    painter->drawLine(wx, -35, 0, -35);
+    painter->drawLine(0, -35, 0, -45);
 
     // Knob handle
     painter->setBrush(m_isDraggingWiper ? QColor(0, 200, 80) : QColor(0, 100, 40));
-    painter->drawEllipse(wx - 6, -30, 12, 12);
+    painter->drawEllipse(wx - 6, -40, 12, 12);
 
     painter->setPen(QPen(Qt::white, 1));
     painter->setFont(QFont("Inter", 6));
-    painter->drawText(QRectF(-40, 10, 80, 10), Qt::AlignCenter, QString::number((int)(m_wiperPos * 100)) + "%");
+    painter->drawText(QRectF(-40, 25, 80, 10), Qt::AlignCenter, QString::number((int)(m_wiperPos * 100)) + "%");
 
     drawConnectionPointHighlights(painter);
 }
 
 QList<QPointF> PotentiometerItem::connectionPoints() const {
     return {
-        QPointF(-40, 0),  // Pin 1 (A)
-        QPointF(0, -35),  // Pin 2 (Wiper)
-        QPointF(40, 0)    // Pin 3 (B)
+        QPointF(-45, 0),  // Pin 1 (A)
+        QPointF(0, -45),  // Pin 2 (Wiper)
+        QPointF(45, 0)    // Pin 3 (B)
     };
 }
 

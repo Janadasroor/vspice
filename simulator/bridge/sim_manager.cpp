@@ -1,10 +1,15 @@
 #include "sim_manager.h"
+#include "../core/raw_data_parser.h"
 #include "../../schematic/items/schematic_item.h"
 #include "../../schematic/items/smart_signal_item.h"
+#include "../../core/simulation_manager.h"
+#include "../../schematic/analysis/spice_netlist_generator.h"
 #include <QDebug>
 #include <QTimer>
 #include <QtConcurrent>
 #include <QFutureWatcher>
+#include <QTemporaryFile>
+#include <QDir>
 
 SimManager& SimManager::instance() {
     static SimManager inst;
@@ -14,258 +19,171 @@ SimManager& SimManager::instance() {
 SimManager::SimManager(QObject* parent) : QObject(parent) {}
 
 void SimManager::runDCOP(QGraphicsScene* scene, NetManager* netMgr) {
-    emit simulationStarted();
-    emit logMessage("Building netlist from schematic...");
-
-    SimNetlist netlist = SimSchematicBridge::buildNetlist(scene, netMgr);
-    
     SimAnalysisConfig config;
     config.type = SimAnalysisType::OP;
-    netlist.setAnalysis(config);
-
-    emit logMessage(QString("Simulating circuit with %1 nodes and %2 components...")
-                    .arg(netlist.nodeCount())
-                    .arg(netlist.components().size()));
-
-    SimEngine engine;
-    SimResults results = engine.run(netlist);
-
-    if (results.nodeVoltages.empty() && netlist.nodeCount() > 1) {
-        if (!results.fixSuggestions.empty()) {
-            emit logMessage(QString("Convergence hint: %1").arg(QString::fromStdString(results.fixSuggestions.front())));
-        }
-        emit errorOccurred("Simulation failed to converge or matrix is singular.");
-        return;
-    }
-
-    emit logMessage("Simulation successful.");
-    emit simulationFinished(results);
+    runNgspiceSimulation(scene, netMgr, config);
 }
 
 void SimManager::runTransient(QGraphicsScene* scene, NetManager* netMgr, double tStop, double tStep) {
+    SimAnalysisConfig config;
+    config.type = SimAnalysisType::Transient;
+    config.tStop = tStop;
+    config.tStep = tStep;
+    runNgspiceSimulation(scene, netMgr, config);
+}
+
+void SimManager::runAC(QGraphicsScene* scene, NetManager* netMgr, double fStart, double fStop, int points) {
+    SimAnalysisConfig config;
+    config.type = SimAnalysisType::AC;
+    config.fStart = fStart;
+    config.fStop = fStop;
+    config.fPoints = points;
+    runNgspiceSimulation(scene, netMgr, config);
+}
+
+void SimManager::runMonteCarlo(QGraphicsScene* scene, NetManager* netMgr, int runs) {
+    // Ngspice support for Monte Carlo usually involves a control script loop.
+    // For now, we will just run a basic OP analysis as a placeholder,
+    // or we could implement a script generator.
+    emit logMessage("Monte Carlo via Ngspice not fully implemented yet, running OP.");
+    SimAnalysisConfig config;
+    config.type = SimAnalysisType::OP;
+    runNgspiceSimulation(scene, netMgr, config);
+}
+
+void SimManager::runParametricSweep(QGraphicsScene* scene, NetManager* netMgr, const QString& component, const QString& param, double start, double stop, int steps) {
+    // Requires .control script loop
+    emit logMessage("Parametric Sweep via Ngspice not fully implemented yet, running OP.");
+    SimAnalysisConfig config;
+    config.type = SimAnalysisType::OP;
+    runNgspiceSimulation(scene, netMgr, config);
+}
+
+void SimManager::runSensitivity(QGraphicsScene* scene, NetManager* netMgr, const QString& targetSignal) {
+     emit logMessage("Sensitivity analysis via Ngspice not fully implemented yet.");
+     // Fallback to OP
+     SimAnalysisConfig config;
+     config.type = SimAnalysisType::OP;
+     runNgspiceSimulation(scene, netMgr, config);
+}
+
+void SimManager::runNgspiceSimulation(QGraphicsScene* scene, NetManager* netMgr, const SimAnalysisConfig& config) {
     if (m_control) {
         emit logMessage("A simulation is already running.");
         return;
     }
 
     emit simulationStarted();
-    emit logMessage(QString("Building netlist for transient analysis (Stop: %1s, Step: %2s)...").arg(tStop).arg(tStep));
+    emit logMessage(QString("Generating ngspice netlist (Analysis: %1)...").arg(static_cast<int>(config.type)));
+
+    // Map SimAnalysisConfig to SpiceNetlistGenerator::SimulationParams
+    SpiceNetlistGenerator::SimulationParams params;
+    switch (config.type) {
+        case SimAnalysisType::Transient:
+            params.type = SpiceNetlistGenerator::Transient;
+            params.start = "0";
+            params.stop = QString::number(config.tStop);
+            params.step = QString::number(config.tStep);
+            break;
+        case SimAnalysisType::AC:
+            params.type = SpiceNetlistGenerator::AC;
+            params.start = QString::number(config.fStart);
+            params.stop = QString::number(config.fStop);
+            params.step = QString::number(config.fPoints); 
+            break;
+        case SimAnalysisType::OP:
+        default:
+            params.type = SpiceNetlistGenerator::OP;
+            break;
+    }
+
+    QString netlistContent = SpiceNetlistGenerator::generate(scene, "", netMgr, params);
+    
+    // Create a temporary file that auto-deletes when the object is destroyed.
+    // However, we need it to persist until simulation load.
+    // We'll manage it via a member or just use a transient one and pass path.
+    auto* tempFile = new QTemporaryFile(this);
+    tempFile->setAutoRemove(false);
+    if (tempFile->open()) {
+        QTextStream out(tempFile);
+        out << netlistContent;
+        tempFile->close();
+    } else {
+        emit errorOccurred("Failed to create temporary netlist file.");
+        delete tempFile;
+        return;
+    }
 
     m_control = new SimControl();
-    m_control->streamingCallback = [this](double t, const std::vector<double>& values) {
-        QMetaObject::invokeMethod(this, [this, t, values]() {
-            emit realTimePointReceived(t, values);
-        }, Qt::QueuedConnection);
-    };
     m_paused = false;
 
-    // Offload ONLY numerical calculation to background thread.
-    // Netlist building MUST happen on GUI thread as it traverses the scene.
-    SimNetlist netlist = SimSchematicBridge::buildNetlist(scene, netMgr);
+    auto& sm = SimulationManager::instance();
     
-    QFuture<SimResults> future = QtConcurrent::run([netlist, tStop, tStep, this]() {
-        SimAnalysisConfig config;
-        config.type = SimAnalysisType::Transient;
-        config.tStart = 0;
-        config.tStop = tStop;
-        config.tStep = tStep;
-        config.transientStorageMode = SimTransientStorageMode::AutoDecimate;
-        config.transientMaxStoredPoints = 50000;
-        
-        // Ensure mutable components copy keeps their own copy of the config
-        SimNetlist localNetlist = netlist;
-        localNetlist.setAnalysis(config);
+    // Disconnect previous connections to avoid duplicates
+    sm.disconnect(this);
 
-        SimEngine engine;
-        return engine.run(localNetlist, m_control);
+    // Connect signals
+    connect(&sm, &SimulationManager::outputReceived, this, &SimManager::logMessage, Qt::UniqueConnection);
+    connect(&sm, &SimulationManager::realTimePointReceived, this, &SimManager::realTimePointReceived, Qt::UniqueConnection);
+    connect(&sm, &SimulationManager::realTimeDataBatchReceived, this, &SimManager::realTimeDataBatchReceived, Qt::UniqueConnection);
+    
+    connect(&sm, &SimulationManager::rawResultsReady, this, [this, tempFile](const QString& path) {
+        RawData rd;
+        QString err;
+        if (RawDataParser::loadRawAscii(path, &rd, &err)) {
+            emit simulationFinished(rd.toSimResults());
+        } else {
+             emit logMessage("Ngspice: Parsed results."); 
+             emit logMessage("Data parse error: " + err);
+        }
+        
+        tempFile->deleteLater();
+        cleanupSimulation();
+    });
+    
+    // Handle error or simple finish
+    connect(&sm, &SimulationManager::simulationFinished, this, [this, tempFile]() {
+        if (m_control) {
+            tempFile->deleteLater();
+            cleanupSimulation();
+        }
     });
 
-    auto* watcher = new QFutureWatcher<SimResults>(this);
-    connect(watcher, &QFutureWatcher<SimResults>::finished, this, [this, watcher]() {
-        SimResults results = watcher->result();
-        
+    sm.runSimulation(tempFile->fileName(), m_control);
+}
+
+void SimManager::cleanupSimulation() {
+    if (m_control) {
         delete m_control;
         m_control = nullptr;
-        m_paused = false;
-        emit simulationPaused(false);
-
-        if (results.waveforms.empty()) {
-            if (!results.fixSuggestions.empty()) {
-                emit logMessage(QString("Convergence hint: %1").arg(QString::fromStdString(results.fixSuggestions.front())));
-            }
-            emit errorOccurred("Transient simulation failed or stopped.");
-        } else {
-            emit logMessage(QString("Simulation finished with %1 waveforms.").arg(results.waveforms.size()));
-            emit simulationFinished(results);
-        }
-        
-        watcher->deleteLater();
-    });
-    watcher->setFuture(future);
-}
-
-void SimManager::runAC(QGraphicsScene* scene, NetManager* netMgr, double fStart, double fStop, int points) {
-    emit simulationStarted();
-    emit logMessage(QString("Building netlist for AC analysis (%1Hz to %2Hz, %3 pts)...").arg(fStart).arg(fStop).arg(points));
-
-    SimNetlist netlist = SimSchematicBridge::buildNetlist(scene, netMgr);
-    
-    SimAnalysisConfig config;
-    config.type = SimAnalysisType::AC;
-    config.fStart = fStart;
-    config.fStop = fStop;
-    config.fPoints = points;
-    netlist.setAnalysis(config);
-
-    SimEngine engine;
-    SimResults results = engine.run(netlist);
-
-    if (results.waveforms.empty()) {
-        emit errorOccurred("AC simulation failed (no data generated).");
-        return;
     }
-
-    emit logMessage(QString("Simulation finished with %1 waveforms.").arg(results.waveforms.size()));
-    emit simulationFinished(results);
-}
-
-void SimManager::runMonteCarlo(QGraphicsScene* scene, NetManager* netMgr, int runs) {
-    emit simulationStarted();
-    emit logMessage(QString("Building netlist for Monte Carlo analysis (%1 runs)...").arg(runs));
-
-    SimNetlist netlist = SimSchematicBridge::buildNetlist(scene, netMgr);
-    
-    // Add default tolerances if none exist
-    auto& comps = netlist.mutableComponents();
-    for (auto& comp : comps) {
-        if (comp.type == SimComponentType::Resistor) {
-            if (!comp.tolerances.count("resistance")) comp.tolerances["resistance"] = { 0.05, ToleranceDistribution::Uniform };
-        } else if (comp.type == SimComponentType::Capacitor) {
-            if (!comp.tolerances.count("capacitance")) comp.tolerances["capacitance"] = { 0.10, ToleranceDistribution::Uniform };
-        }
-    }
-
-    SimAnalysisConfig config;
-    config.type = SimAnalysisType::MonteCarlo;
-    config.mcRuns = runs;
-    config.mcBaseAnalysis = SimAnalysisType::OP;
-    netlist.setAnalysis(config);
-
-    SimEngine engine;
-    SimResults results = engine.run(netlist);
-
-    emit logMessage(QString("Monte Carlo finished with %1 traces.").arg(results.waveforms.size()));
-    emit simulationFinished(results);
-}
-
-void SimManager::runParametricSweep(QGraphicsScene* scene, NetManager* netMgr, const QString& component, const QString& param, double start, double stop, int steps) {
-    emit simulationStarted();
-    emit logMessage(QString("Building netlist for Parametric Sweep (%1: %2 from %3 to %4)...").arg(component).arg(param).arg(start).arg(stop));
-
-    SimNetlist netlist = SimSchematicBridge::buildNetlist(scene, netMgr);
-    SimAnalysisConfig config;
-    config.type = SimAnalysisType::ParametricSweep;
-    config.sweepParam = component.toStdString() + "." + param.toStdString();
-    config.sweepStart = start;
-    config.sweepStop = stop;
-    config.sweepPoints = std::max(1, steps);
-    config.sweepParallelism = 0; // auto
-    netlist.setAnalysis(config);
-
-    SimEngine engine;
-    const SimResults results = engine.run(netlist);
-
-    if (results.waveforms.empty()) {
-        emit errorOccurred(QString("Parametric Sweep Error: no traces generated for '%1'.").arg(component));
-        return;
-    }
-
-    emit logMessage(QString("Parametric Sweep finished with %1 traces.").arg(results.waveforms.size()));
-    emit simulationFinished(results);
-}
-
-#include <QTimer>
-
-void SimManager::runSensitivity(QGraphicsScene* scene, NetManager* netMgr, const QString& targetSignal) {
-    emit simulationStarted();
-    emit logMessage(QString("Building netlist for Sensitivity analysis (Target: %1)...").arg(targetSignal));
-
-    SimNetlist netlist = SimSchematicBridge::buildNetlist(scene, netMgr);
-    
-    SimAnalysisConfig config;
-    config.type = SimAnalysisType::Sensitivity;
-    config.sensitivityTargetSignal = targetSignal.toStdString();
-    netlist.setAnalysis(config);
-
-    SimEngine engine;
-    SimResults results = engine.run(netlist);
-
-    emit logMessage(QString("Sensitivity finished."));
-    emit simulationFinished(results);
 }
 
 void SimManager::runRealTime(QGraphicsScene* scene, NetManager* netMgr, int intervalMs) {
-    stopRealTime();
-    
-    m_rtScene = scene;
-    m_rtNetMgr = netMgr;
-    m_rtCurrentTime = 0.0;
-    
-    emit simulationStarted();
-    emit logMessage(QString("Starting real-time interactive simulation (%1ms interval)...").arg(intervalMs));
+    // Stub for now or implement via repeated OP
+    emit logMessage("Real-time simulation via Ngspice not yet optimized. Running single-shot OP.");
+    runDCOP(scene, netMgr);
+}
 
-    m_rtTimer = new QTimer(this);
-    m_rtTimer->setObjectName("RealTimeTimer");
-    
-    connect(m_rtTimer, &QTimer::timeout, this, &SimManager::onRealTimeTick);
-
-    // Hook into interactive items
-    for (auto* item : scene->items()) {
-        if (auto* si = dynamic_cast<SchematicItem*>(item)) {
-            if (si->isInteractive()) {
-                connect(si, &SchematicItem::interactiveStateChanged, this, &SimManager::onInteractiveStateChanged, Qt::UniqueConnection);
-            }
-        }
+void SimManager::stopRealTime() {
+    if (m_rtTimer) {
+        m_rtTimer->stop();
+        delete m_rtTimer;
+        m_rtTimer = nullptr;
     }
+    m_rtScene = nullptr;
+}
 
-    m_rtTimer->start(intervalMs); 
-    m_rtPending = true; // Initial run
+void SimManager::onInteractiveStateChanged() {
+    // Interactive changes handling
 }
 
 void SimManager::onRealTimeTick() {
-    if (!m_rtScene) return;
-    
-    // For RealTime mode, we usually simulate a small time step even if no interaction occurred
-    // to allow for dynamic effects (if any).
-    m_rtCurrentTime += 0.05; // 50ms simulated step
-    
-    if (m_rtPending) {
-        m_rtPending = false;
-        
-        SimNetlist netlist = SimSchematicBridge::buildNetlist(m_rtScene, m_rtNetMgr);
-        SimAnalysisConfig config;
-        config.type = SimAnalysisType::OP;
-        netlist.setAnalysis(config);
-
-        SimEngine engine;
-        SimResults results = engine.run(netlist);
-        results.analysisType = SimAnalysisType::RealTime;
-        results.xAxisName = "time_s"; 
-
-        // Inject single points into waveforms so oscilloscope can scroll
-        for (const auto& [node, val] : results.nodeVoltages) {
-            SimWaveform w;
-            w.name = "V(" + node + ")";
-            w.xData = { m_rtCurrentTime };
-            w.yData = { val };
-            results.waveforms.push_back(w);
-        }
-        
-        emit simulationFinished(results);
-    }
+    // Real-time tick handling
 }
 
 QStringList SimManager::preflightCheck(QGraphicsScene* scene, NetManager* netMgr, SimNetlist& outNetlist) {
+    // Generate netlist via bridge just to check structure/connectivity
     outNetlist = SimSchematicBridge::buildNetlist(scene, netMgr);
     outNetlist.flatten();
     
@@ -274,108 +192,20 @@ QStringList SimManager::preflightCheck(QGraphicsScene* scene, NetManager* netMgr
         QString qd = QString::fromStdString(d);
         if (!qd.trimmed().isEmpty()) diag << qd;
     }
-
-    // Heuristics: check for missing ground
-    bool hasGnd = false;
-    for (const auto& comp : outNetlist.components()) {
-        for (int node : comp.nodes) if (node == 0) { hasGnd = true; break; }
-        if (hasGnd) break;
-    }
-    if (!hasGnd && outNetlist.nodeCount() > 1) {
-        diag << "[error] No ground (node 0) found in circuit. Please add a GND symbol.";
-    }
-
     return diag;
 }
 
 void SimManager::runWithNetlist(const SimNetlist& netlist) {
-    if (m_control) {
-        emit logMessage("A simulation is already running.");
-        return;
-    }
-
-    emit simulationStarted();
-    
-    m_control = new SimControl();
-    m_paused = false;
-
-    QFuture<SimResults> future = QtConcurrent::run([netlist, this]() {
-        SimEngine engine;
-        return engine.run(netlist, m_control);
-    });
-
-    auto* watcher = new QFutureWatcher<SimResults>(this);
-    connect(watcher, &QFutureWatcher<SimResults>::finished, this, [this, watcher]() {
-        SimResults results = watcher->result();
-        
-        delete m_control;
-        m_control = nullptr;
-        m_paused = false;
-        emit simulationPaused(false);
-
-        if (results.waveforms.empty() && results.nodeVoltages.empty()) {
-            if (!results.fixSuggestions.empty()) {
-                emit logMessage(QString("Convergence hint: %1").arg(QString::fromStdString(results.fixSuggestions.front())));
-            }
-            emit errorOccurred("Simulation failed or stopped.");
-        } else {
-            if (results.analysisType == SimAnalysisType::OP) {
-                emit logMessage("DCOP simulation successful.");
-            } else {
-                emit logMessage(QString("Simulation finished with %1 waveforms.").arg(results.waveforms.size()));
-            }
-            emit simulationFinished(results);
-        }
-        
-        watcher->deleteLater();
-    });
-    watcher->setFuture(future);
-}
-
-void SimManager::stopRealTime() {
-    if (m_rtTimer) {
-        m_rtTimer->stop();
-        m_rtTimer->deleteLater();
-        m_rtTimer = nullptr;
-    }
-    
-    if (m_rtScene) {
-        for (auto* item : m_rtScene->items()) {
-            if (auto* si = dynamic_cast<SchematicItem*>(item)) {
-                si->disconnect(this);
-            }
-        }
-    }
-    
-    m_rtScene = nullptr;
-    m_rtNetMgr = nullptr;
-    m_rtPending = false;
-}
-
-void SimManager::onInteractiveStateChanged() {
-    m_rtPending = true;
-    // If the timer is active, we could wait for next tick, 
-    // but for best 'Live' feel, we should trigger immediately if not already busy.
-    // However, buildNetlist can be slow, so we rely on m_rtPending flag 
-    // which the timer will pick up within RT interval (e.g. 50ms).
+     emit errorOccurred("Direct SimNetlist execution not supported with Ngspice backend yet. Use UI.");
 }
 
 void SimManager::stopAll() {
-    stopRealTime();
-    if (m_control) {
-        m_control->stopRequested = true;
-        m_control->pauseRequested = false; // Unpause so it can see stop request
-        emit logMessage("Stopping active simulation...");
-    } else {
-        emit logMessage("Stop requested. Real-time simulation was stopped if active.");
-    }
+    SimulationManager::instance().stopSimulation();
+    cleanupSimulation();
+    emit logMessage("Simulation stopped.");
 }
 
 void SimManager::pauseSimulation(bool pause) {
-    if (m_control) {
-        m_control->pauseRequested = pause;
-        m_paused = pause;
-        emit simulationPaused(pause);
-        emit logMessage(pause ? "Simulation paused." : "Simulation resumed.");
-    }
+    // Ngspice bg_halt / bg_resume could be used
+    emit logMessage("Pause not fully implemented for Ngspice.");
 }

@@ -21,6 +21,7 @@
 #include "switch_item.h"
 #include "push_button_item.h"
 #include "led_item.h"
+#include "blinking_led_item.h"
 #include "signal_generator_item.h"
 #include "logic_analyzer_item.h"
 #include "oscilloscope_item.h"
@@ -357,6 +358,12 @@ void SchematicItemRegistry::registerBuiltInItems() {
 
     factory.registerItemType("LED", [](QPointF pos, const QJsonObject&, QGraphicsItem* parent) -> SchematicItem* {
         return new LEDItem(pos, parent);
+    });
+
+    factory.registerItemType("Blinking LED", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        auto* item = new BlinkingLEDItem(pos, parent);
+        if (!properties.isEmpty()) item->fromJson(properties);
+        return item;
     });
 
     factory.registerItemType("Signal Generator", [](QPointF pos, const QJsonObject&, QGraphicsItem* parent) -> SchematicItem* {

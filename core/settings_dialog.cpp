@@ -178,6 +178,12 @@ void SettingsDialog::setupUI() {
     laySyms->addWidget(m_symbolPathsEdit);
     layLibs->addWidget(grpSyms);
 
+    QGroupBox* grpRoots = new QGroupBox("Library Root Paths (LTspice-style)");
+    QVBoxLayout* layRoots = new QVBoxLayout(grpRoots);
+    m_libraryRootsEdit = new QTextEdit();
+    layRoots->addWidget(m_libraryRootsEdit);
+    layLibs->addWidget(grpRoots);
+
     QGroupBox* grpModels = new QGroupBox("SPICE Model Paths");
     QVBoxLayout* layGrpModels = new QVBoxLayout(grpModels);
     m_modelPathsEdit = new QTextEdit();
@@ -252,8 +258,9 @@ void SettingsDialog::loadSettings() {
     m_maxIterSpin->setValue(config.maxIterations());
 
     m_geminiKeyEdit->setText(config.geminiApiKey());
-    m_symbolPathsEdit->setPlainText(config.symbolPaths().join("\n"));
-    m_modelPathsEdit->setPlainText(config.modelPaths().join("\n"));
+    m_symbolPathsEdit->setPlainText(config.rawSymbolPaths().join("\n"));
+    m_modelPathsEdit->setPlainText(config.rawModelPaths().join("\n"));
+    m_libraryRootsEdit->setPlainText(config.libraryRoots().join("\n"));
 }
 
 void SettingsDialog::onAccept() {
@@ -276,6 +283,7 @@ void SettingsDialog::onAccept() {
     config.setGeminiApiKey(m_geminiKeyEdit->text());
     config.setSymbolPaths(m_symbolPathsEdit->toPlainText().split('\n', Qt::SkipEmptyParts));
     config.setModelPaths(m_modelPathsEdit->toPlainText().split('\n', Qt::SkipEmptyParts));
+    config.setLibraryRoots(m_libraryRootsEdit->toPlainText().split('\n', Qt::SkipEmptyParts));
     
     config.save();
     accept();

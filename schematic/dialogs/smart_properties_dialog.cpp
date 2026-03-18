@@ -54,6 +54,12 @@ void SmartPropertiesDialog::createFieldWidget(const PropertyField& field, QFormL
         case PropertyField::EngineeringValue:
             widget = new QLineEdit();
             break;
+        case PropertyField::MultilineText: {
+            auto* edit = new QPlainTextEdit();
+            edit->setMinimumHeight(90);
+            widget = edit;
+            break;
+        }
         case PropertyField::Integer: {
             auto* spin = new QSpinBox();
             spin->setRange(-1000000, 1000000);
@@ -104,6 +110,8 @@ void SmartPropertiesDialog::createFieldWidget(const PropertyField& field, QFormL
         // Connect change signal
         if (auto* le = qobject_cast<QLineEdit*>(widget))
             connect(le, &QLineEdit::textChanged, this, &SmartPropertiesDialog::onFieldChanged);
+        else if (auto* pe = qobject_cast<QPlainTextEdit*>(widget))
+            connect(pe, &QPlainTextEdit::textChanged, this, &SmartPropertiesDialog::onFieldChanged);
         else if (auto* cb = qobject_cast<QCheckBox*>(widget))
             connect(cb, &QCheckBox::stateChanged, this, &SmartPropertiesDialog::onFieldChanged);
         else if (auto* cmb = qobject_cast<QComboBox*>(widget))
@@ -120,6 +128,7 @@ QVariant SmartPropertiesDialog::getPropertyValue(const QString& name) const {
     if (!w) return QVariant();
     
     if (auto* le = qobject_cast<QLineEdit*>(w)) return le->text();
+    if (auto* pe = qobject_cast<QPlainTextEdit*>(w)) return pe->toPlainText();
     if (auto* cb = qobject_cast<QCheckBox*>(w)) return cb->isChecked();
     if (auto* cmb = qobject_cast<QComboBox*>(w)) return cmb->currentText();
     if (auto* sb = qobject_cast<QSpinBox*>(w)) return sb->value();
@@ -133,6 +142,7 @@ void SmartPropertiesDialog::setPropertyValue(const QString& name, const QVariant
     if (!w) return;
     
     if (auto* le = qobject_cast<QLineEdit*>(w)) le->setText(value.toString());
+    else if (auto* pe = qobject_cast<QPlainTextEdit*>(w)) pe->setPlainText(value.toString());
     else if (auto* cb = qobject_cast<QCheckBox*>(w)) cb->setChecked(value.toBool());
     else if (auto* cmb = qobject_cast<QComboBox*>(w)) cmb->setCurrentText(value.toString());
     else if (auto* sb = qobject_cast<QSpinBox*>(w)) sb->setValue(value.toInt());

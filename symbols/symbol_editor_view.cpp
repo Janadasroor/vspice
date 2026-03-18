@@ -52,7 +52,9 @@ void SymbolEditorView::setCurrentTool(int tool) {
 }
 
 void SymbolEditorView::drawBackground(QPainter* painter, const QRectF& rect) {
-    painter->fillRect(rect, QColor(14, 15, 17)); // Modern Dark Horizon color
+    PCBTheme* theme = ThemeManager::theme();
+    QColor bgColor = theme ? theme->canvasBackground() : QColor(30, 30, 30);
+    painter->fillRect(rect, bgColor);
     
     // Safety check: if grid is too small or viewport is too large, skip fine grid
     qreal fineGrid = m_gridSize;
@@ -69,8 +71,13 @@ void SymbolEditorView::drawBackground(QPainter* painter, const QRectF& rect) {
     qreal startX = std::floor(rect.left() / (drawFine ? fineGrid : majorGrid)) * (drawFine ? fineGrid : majorGrid);
     qreal startY = std::floor(rect.top() / (drawFine ? fineGrid : majorGrid)) * (drawFine ? fineGrid : majorGrid);
     
-    QPen minorPen(QColor(40, 42, 48), 0.0);
-    QPen majorPen(QColor(60, 64, 72), 0.0);
+    QColor subColor = theme ? theme->gridSecondary() : QColor(120, 120, 130);
+    subColor.setAlpha(110);
+    QColor mainColor = theme ? theme->gridPrimary() : QColor(180, 180, 190);
+    mainColor.setAlpha(200);
+
+    QPen minorPen(subColor, 0.0);
+    QPen majorPen(mainColor, 0.0);
     minorPen.setCosmetic(true);
     majorPen.setCosmetic(true);
 
@@ -95,7 +102,9 @@ void SymbolEditorView::drawBackground(QPainter* painter, const QRectF& rect) {
     }
 
     // Draw Origin Crosshair
-    QPen originPen(QColor(0, 200, 255, 160)); // Vibrant cyan
+    QColor originColor = theme ? theme->accentColor() : QColor(0, 200, 255);
+    originColor.setAlpha(160);
+    QPen originPen(originColor);
     originPen.setWidth(0);
     originPen.setCosmetic(true);
     painter->setPen(originPen);
@@ -105,7 +114,9 @@ void SymbolEditorView::drawBackground(QPainter* painter, const QRectF& rect) {
     painter->drawLine(QLineF(0, -crossSize, 0, crossSize));
     
     // Draw a small circle at origin
-    painter->setBrush(QColor(0, 200, 255, 80));
+    QColor originFill = originColor;
+    originFill.setAlpha(80);
+    painter->setBrush(originFill);
     painter->drawEllipse(QPointF(0, 0), fineGrid/2.0, fineGrid/2.0);
 }
 

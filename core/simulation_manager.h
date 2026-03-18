@@ -5,10 +5,14 @@
 #include <QString>
 #include <QVector>
 #include <functional>
+#include <vector>
+#include <mutex>
 
 #ifdef HAVE_NGSPICE
 #include <ngspice/sharedspice.h>
 #endif
+
+class SimControl;
 
 /**
  * @brief Manages interaction with the Ngspice simulation engine
@@ -21,21 +25,53 @@ public:
 
     bool isAvailable() const;
     void initialize();
-    void runSimulation(const QString& netlist);
+    void runSimulation(const QString& netlist, SimControl* control = nullptr);
+    bool validateNetlist(const QString& netlist, QString* errorOut = nullptr);
     void stopSimulation();
 
 signals:
     void outputReceived(const QString& text);
     void simulationFinished();
+    void rawResultsReady(const QString& rawPath);
     void simulationStarted();
     void errorOccurred(const QString& error);
+    void realTimePointReceived(double t, const std::vector<double>& values);
+    void realTimeDataBatchReceived(const std::vector<double>& times, const std::vector<std::vector<double>>& values);
+
+private slots:
+    void handleSimulationFinished(const QString& rawPath);
+    void processBufferedData();
 
 private:
     explicit SimulationManager(QObject* parent = nullptr);
-    QString m_currentNetlist;
     ~SimulationManager();
 
+    bool loadNetlistInternal(const QString& netlist, bool keepStorage, QString* errorOut);
+
     bool m_isInitialized;
+    bool m_lastLoadFailed = false;
+    QString m_currentNetlist;
+    SimControl* m_streamingControl = nullptr;
+    
+    // Thread-safe buffering for real-time updates
+    struct SimDataPoint {
+        double time;
+        std::vector<double> values;
+    };
+    std::vector<SimDataPoint> m_simBuffer;
+    std::mutex m_bufferMutex;
+    QTimer* m_bufferTimer = nullptr;
+    
+    // Vector mapping for real-time streaming
+    struct VectorMap {
+        int index;
+        QString name;
+        bool isVoltage;
+    };
+    std::vector<VectorMap> m_vectorMap;
+
+    std::vector<QByteArray> m_circStorage;
+    std::vector<char*> m_circPtrs;
 
     // Callbacks from ngspice (static because they are C function pointers)
     static int cbSendChar(char* output, int id, void* userData);

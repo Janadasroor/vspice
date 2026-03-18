@@ -22,7 +22,7 @@ NetlistEditor::NetlistEditor(QWidget* parent)
     m_highlighter = new SpiceHighlighter(m_editor->document());
     
     connect(&SimulationManager::instance(), &SimulationManager::outputReceived, this, &NetlistEditor::onOutputReceived);
-    connect(&SimulationManager::instance(), &SimulationManager::simulationFinished, this, &NetlistEditor::onSimulationFinished);
+    connect(&SimulationManager::instance(), qOverload<>(&SimulationManager::simulationFinished), this, &NetlistEditor::onSimulationFinished);
 
     applyTheme();
 }

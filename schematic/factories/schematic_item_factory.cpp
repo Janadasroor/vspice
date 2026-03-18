@@ -22,19 +22,27 @@ SchematicItem* SchematicItemFactory::createItem(const QString& typeName, QPointF
                                                const QJsonObject& properties,
                                                QGraphicsItem* parent) {
     qDebug() << "SchematicItemFactory: Creating item of type:" << typeName;
-    auto it = m_creators.find(typeName);
     SchematicItem* item = nullptr;
 
-    if (it != m_creators.end()) {
-        item = it.value()(pos, properties, parent);
-        qDebug() << "SchematicItemFactory: Created built-in item:" << typeName;
-    } else {
-        // Fallback: Check if it's a dynamic symbol from libraries
-        SymbolDefinition* def = SymbolLibraryManager::instance().findSymbol(typeName);
-        if (def) {
-             item = new GenericComponentItem(*def, parent);
-             item->setPos(pos);
-             qDebug() << "SchematicItemFactory: Created dynamic library item:" << typeName;
+    const QSet<QString> powerTypes = {
+        "Power", "GND", "VCC", "VDD", "VSS", "VBAT", "3.3V", "5V", "12V"
+    };
+    const bool isPowerItem = powerTypes.contains(typeName);
+
+    // Prefer external symbols if they exist (override built-ins), except for power items.
+    if (!isPowerItem) {
+        if (SymbolDefinition* def = SymbolLibraryManager::instance().findSymbol(typeName)) {
+            item = new GenericComponentItem(*def, parent);
+            item->setPos(pos);
+            qDebug() << "SchematicItemFactory: Created library symbol item:" << typeName;
+        }
+    }
+
+    if (!item) {
+        auto it = m_creators.find(typeName);
+        if (it != m_creators.end()) {
+            item = it.value()(pos, properties, parent);
+            qDebug() << "SchematicItemFactory: Created built-in item:" << typeName;
         } else {
             qWarning() << "SchematicItemFactory Error: Unknown item type:" << typeName;
             return nullptr;

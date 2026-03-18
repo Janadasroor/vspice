@@ -27,8 +27,38 @@ public:
     bool fromJson(const QJsonObject& json) override;
     SchematicItem* clone() const override;
 
+    bool isOpen() const { return m_isOpen; }
+    void setOpen(bool open);
+
+    bool useModel() const { return m_useModel; }
+    void setUseModel(bool useModel);
+
+    QString modelName() const { return m_modelName; }
+    void setModelName(const QString& name);
+
+    QString ron() const { return m_ron; }
+    void setRon(const QString& value);
+
+    QString roff() const { return m_roff; }
+    void setRoff(const QString& value);
+
+    QString vt() const { return m_vt; }
+    void setVt(const QString& value);
+
+    QString vh() const { return m_vh; }
+    void setVh(const QString& value);
+
 private:
+    void syncParamExpressions();
+    void applyParamExpressions();
+
     bool m_isOpen;
+    bool m_useModel;
+    QString m_modelName;
+    QString m_ron;
+    QString m_roff;
+    QString m_vt;
+    QString m_vh;
 };
 
 #endif // SWITCHITEM_H

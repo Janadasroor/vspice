@@ -16,7 +16,6 @@ QJsonObject SimulationSetupDialog::Config::toJson() const {
     obj["fStart"] = fStart;
     obj["fStop"] = fStop;
     obj["pts"] = pts;
-    obj["native"] = native;
     return obj;
 }
 
@@ -35,7 +34,6 @@ SimulationSetupDialog::Config SimulationSetupDialog::Config::fromJson(const QJso
     cfg.fStart = obj.value("fStart").toDouble(cfg.fStart);
     cfg.fStop = obj.value("fStop").toDouble(cfg.fStop);
     cfg.pts = obj.value("pts").toInt(cfg.pts);
-    cfg.native = obj.value("native").toBool(cfg.native);
     return cfg;
 }
 
@@ -52,10 +50,6 @@ void SimulationSetupDialog::setupUI() {
     m_typeCombo = new QComboBox();
     m_typeCombo->addItems({"Transient (Time)", "DC Operating Point", "AC Sweep (Frequency)", "Interactive (Live)"});
     form->addRow("Analysis Type:", m_typeCombo);
-
-    m_nativeCheck = new QCheckBox("Use Native Viora Engine");
-    m_nativeCheck->setChecked(true);
-    form->addRow("", m_nativeCheck);
 
     m_param1 = new QLineEdit("10u");
     m_param2 = new QLineEdit("10m");
@@ -121,7 +115,6 @@ void SimulationSetupDialog::onAnalysisChanged(int index) {
 
 SimulationSetupDialog::Config SimulationSetupDialog::getConfig() const {
     Config cfg;
-    cfg.native = m_nativeCheck->isChecked();
     int idx = m_typeCombo->currentIndex();
     if (idx == 0) cfg.type = SimAnalysisType::Transient;
     else if (idx == 1) cfg.type = SimAnalysisType::OP;
@@ -148,7 +141,6 @@ SimulationSetupDialog::Config SimulationSetupDialog::getConfig() const {
 }
 
 void SimulationSetupDialog::setConfig(const Config& cfg) {
-    m_nativeCheck->setChecked(cfg.native);
     if (cfg.type == SimAnalysisType::Transient) m_typeCombo->setCurrentIndex(0);
     else if (cfg.type == SimAnalysisType::OP) m_typeCombo->setCurrentIndex(1);
     else if (cfg.type == SimAnalysisType::AC) m_typeCombo->setCurrentIndex(2);

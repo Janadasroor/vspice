@@ -12,6 +12,8 @@
 #include "../items/voltage_source_item.h"
 #include "../items/schematic_spice_directive_item.h"
 #include "../tools/schematic_probe_tool.h"
+#include "../items/wire_item.h"
+#include "../analysis/net_manager.h"
 #include <QPainter>
 #include <QWheelEvent>
 #include <QDebug>
@@ -24,10 +26,11 @@
 #include <QLabel>
 #include <QHBoxLayout>
 #include <QApplication>
+#include <QLineF>
+#include <QMessageBox>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QKeySequence>
-#include <QInputDialog>
 #include "flux/core/net_manager.h"
 #include <QTimer>
 #include <QGraphicsPixmapItem>
@@ -59,6 +62,7 @@ SchematicView::SchematicView(QWidget *parent)
     setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
     setResizeAnchor(QGraphicsView::AnchorUnderMouse);
     setMouseTracking(true);
+    setFocusPolicy(Qt::StrongFocus);
     setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
     setOptimizationFlags(QGraphicsView::DontSavePainterState | QGraphicsView::DontAdjustForAntialiasing);
     setCacheMode(QGraphicsView::CacheBackground);
@@ -272,6 +276,7 @@ void SchematicView::wheelEvent(QWheelEvent *event) {
 }
 
 void SchematicView::mousePressEvent(QMouseEvent *event) {
+    setFocus();
     if (m_currentTool) m_currentTool->ensureView(this);
     if (event->button() == Qt::MiddleButton) {
         m_isPanning = true;
@@ -753,6 +758,22 @@ void SchematicView::keyPressEvent(QKeyEvent *event) {
     }
     
     // Global hotkey handling (if not consumed by tool)
+    if (event->modifiers() == Qt::NoModifier) {
+        QWidget* fw = QApplication::focusWidget();
+        if (!qobject_cast<QLineEdit*>(fw) && !qobject_cast<QTextEdit*>(fw)) {
+            if (event->key() == Qt::Key_L) {
+                setCurrentTool("Inductor");
+                event->accept();
+                return;
+            }
+            if (event->key() == Qt::Key_S) {
+                setCurrentTool("Switch");
+                event->accept();
+                return;
+            }
+        }
+    }
+
     if (event->key() == Qt::Key_Space) {
         // Rotate selection if tool didn't consume it
         if (!scene()->selectedItems().isEmpty()) {
@@ -813,6 +834,9 @@ QString SchematicView::getNextReference(const QString& prefix) {
 
 #include "schematic_menu_registry.h"
 #include "../../core/config_manager.h"
+#include "../dialogs/led_properties_dialog.h"
+#include "../dialogs/switch_properties_dialog.h"
+#include "../items/switch_item.h"
 #include <QGuiApplication>
 
 void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
@@ -850,18 +874,8 @@ void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
     // SPECIAL: Direct dialog for Voltage Sources on right-click (LTspice style)
     if (targetSItem && targetSItem->itemType() == SchematicItem::VoltageSourceType) {
         if (auto* vsrc = dynamic_cast<VoltageSourceItem*>(targetSItem)) {
-            if (vsrc->sourceType() == VoltageSourceItem::Behavioral) {
-                bool ok;
-                QString val = QInputDialog::getText(this, "Behavioral Voltage Source", 
-                                                   "Expression (e.g. V=V(in)*2):", QLineEdit::Normal, 
-                                                   vsrc->value(), &ok);
-                if (ok) {
-                    vsrc->setValue(val);
-                }
-            } else {
-                VoltageSourceLTSpiceDialog dlg(vsrc, m_undoStack, scene(), QString(), this);
-                dlg.exec();
-            }
+            VoltageSourceLTSpiceDialog dlg(vsrc, m_undoStack, scene(), QString(), this);
+            dlg.exec();
             return;
         }
     }
@@ -872,6 +886,28 @@ void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
             SpiceDirectiveDialog dlg(spice, m_undoStack, scene(), this);
             dlg.exec();
             return;
+        }
+    }
+
+    // SPECIAL: Direct dialog for LEDs (LTspice style)
+    if (targetSItem) {
+        const QString t = targetSItem->itemTypeName();
+        if (t == "LED" || t == "Blinking LED") {
+            LedPropertiesDialog dlg(targetSItem, scene(), this);
+            dlg.exec();
+            return;
+        }
+    }
+
+    // SPECIAL: Direct dialog for Switches (LTspice style)
+    if (targetSItem) {
+        const QString t = targetSItem->itemTypeName();
+        if (t == "Switch") {
+            if (auto* sw = dynamic_cast<SwitchItem*>(targetSItem)) {
+                SwitchPropertiesDialog dlg(sw, this);
+                dlg.exec();
+                return;
+            }
         }
     }
 
@@ -889,6 +925,13 @@ void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
     auto actions = (ConfigManager::instance().isFeatureEnabled("ux.context_menu_v2", true))
                    ? SchematicMenuRegistry::instance().getActions(selectedItems)
                    : std::vector<ContextAction>();
+    bool hasWireInfoAction = false;
+    for (const auto& actionData : actions) {
+        if (actionData.label == "Info...") {
+            hasWireInfoAction = true;
+            break;
+        }
+    }
     
     if (actions.empty()) {
         // Fallback for empty canvas if no global actions registered
@@ -916,6 +959,77 @@ void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
             connect(act, &QAction::triggered, this, [this, actionData, selectedItems]() {
                 actionData.handler(this, selectedItems);
             });
+        }
+    }
+
+    auto showWireInfo = [this](WireItem* wire) {
+        if (!wire || !scene()) return;
+        const QList<QPointF> pts = wire->points();
+        if (pts.isEmpty()) return;
+
+        NetManager* nm = netManager();
+        QString netName = "N/A";
+        QString netEndName;
+        QPointF startScene = wire->mapToScene(pts.first());
+        QPointF endScene = wire->mapToScene(pts.last());
+        if (nm) {
+            nm->updateNets(scene());
+            netName = nm->findNetAtPoint(startScene);
+            netEndName = nm->findNetAtPoint(endScene);
+            if (netName.isEmpty()) netName = "N/A";
+            if (!netEndName.isEmpty() && netEndName != netName) {
+                netName = QString("%1 -> %2").arg(netName, netEndName);
+            }
+        }
+
+        double totalLength = 0.0;
+        for (int i = 0; i < pts.size() - 1; ++i) {
+            const QPointF a = wire->mapToScene(pts[i]);
+            const QPointF b = wire->mapToScene(pts[i + 1]);
+            totalLength += QLineF(a, b).length();
+        }
+
+        QString wireType = (wire->wireType() == WireItem::PowerWire) ? "Power" : "Signal";
+        QString styleStr = "Solid";
+        if (wire->pen().style() == Qt::DashLine) styleStr = "Dash";
+        else if (wire->pen().style() == Qt::DotLine) styleStr = "Dot";
+
+        QString info = QString(
+            "Net: %1\n"
+            "Type: %2\n"
+            "Points: %3\n"
+            "Segments: %4\n"
+            "Length (scene units): %5\n"
+            "Start: (%6, %7)\n"
+            "End: (%8, %9)\n"
+            "Junctions: %10\n"
+            "Jump-overs: %11\n"
+            "Line width: %12\n"
+            "Line style: %13")
+            .arg(netName)
+            .arg(wireType)
+            .arg(pts.size())
+            .arg(qMax(0, pts.size() - 1))
+            .arg(QString::number(totalLength, 'f', 2))
+            .arg(QString::number(startScene.x(), 'f', 2))
+            .arg(QString::number(startScene.y(), 'f', 2))
+            .arg(QString::number(endScene.x(), 'f', 2))
+            .arg(QString::number(endScene.y(), 'f', 2))
+            .arg(wire->junctions().size())
+            .arg(wire->jumpOvers().size())
+            .arg(QString::number(wire->pen().widthF(), 'f', 2))
+            .arg(styleStr);
+
+        QMessageBox::information(this, "Wire Info", info);
+    };
+
+    const bool singleWireSelected =
+        (selectedItems.size() == 1 && selectedItems.first()->itemType() == SchematicItem::WireType);
+    if (singleWireSelected && !hasWireInfoAction) {
+        auto* wire = dynamic_cast<WireItem*>(selectedItems.first());
+        if (wire) {
+            menu.addSeparator();
+            menu.addAction("Info...", [showWireInfo, wire]() { showWireInfo(wire); });
         }
     }
 

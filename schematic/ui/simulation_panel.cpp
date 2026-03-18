@@ -129,10 +129,6 @@ SimulationPanel::SimulationPanel(QGraphicsScene* scene, NetManager* netManager, 
     : QWidget(parent), m_scene(scene), m_netManager(netManager), m_projectDir(projectDir) {
     setupUI();
     
-    auto& sim = SimulationManager::instance();
-    connect(&sim, &SimulationManager::outputReceived, this, &SimulationPanel::onLogReceived);
-    connect(&sim, &SimulationManager::simulationFinished, this, &SimulationPanel::onSimulationFinished);
-
     auto& builtin = SimManager::instance();
     connect(&builtin, &SimManager::logMessage, this, &SimulationPanel::onLogReceived);
     connect(&builtin, &SimManager::simulationFinished, this, &SimulationPanel::onSimResultsReady);
@@ -412,6 +408,52 @@ void SimulationPanel::clearAllProbesPreserveX() {
     clearAllProbes();
 }
 
+void SimulationPanel::clearResults() {
+    if (m_chart) {
+        m_chart->removeAllSeries();
+    }
+    if (m_spectrumChart) {
+        m_spectrumChart->removeAllSeries();
+    }
+    if (m_waveformViewer) {
+        m_waveformViewer->clear();
+    }
+    m_lastResults = SimResults();
+    m_previousResults = SimResults();
+    m_hasLastResults = false;
+    m_hasPreviousResults = false;
+    m_realTimeSeries.clear();
+    m_realTimePointCounter = 0;
+    if (m_timelineSlider) m_timelineSlider->setValue(0);
+    if (m_timelineLabel) m_timelineLabel->setText("t = 0");
+}
+
+void SimulationPanel::setTargetScene(QGraphicsScene* scene, NetManager* netManager, const QString& projectDir, bool clearState) {
+    if (!scene || !netManager) return;
+    if (m_scene == scene && m_netManager == netManager && m_projectDir == projectDir && !clearState) return;
+
+    m_scene = scene;
+    m_netManager = netManager;
+    m_projectDir = projectDir;
+
+    if (clearState) {
+        clearAllProbes();
+        if (m_signalList) m_signalList->clear();
+        if (m_issueList) m_issueList->clear();
+        if (m_chart) m_chart->removeAllSeries();
+        if (m_spectrumChart) m_spectrumChart->removeAllSeries();
+        m_lastResults = SimResults();
+        m_previousResults = SimResults();
+        m_hasLastResults = false;
+        m_hasPreviousResults = false;
+        m_realTimeSeries.clear();
+        m_realTimePointCounter = 0;
+        if (m_timelineSlider) m_timelineSlider->setValue(0);
+        if (m_timelineLabel) m_timelineLabel->setText("t = 0");
+        if (m_measurementsTable) m_measurementsTable->clearContents();
+    }
+}
+
 void SimulationPanel::setupUI() {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -575,11 +617,6 @@ void SimulationPanel::setupUI() {
     m_analysisType->setCurrentIndex(1);
     m_analysisType->setStyleSheet("QComboBox { background: #121214; color: #eee; }");
     configForm->addRow("Type:", m_analysisType);
-
-    m_useBuiltin = new QCheckBox("Native Engine");
-    m_useBuiltin->setChecked(true);
-    m_useBuiltin->setStyleSheet("QCheckBox { color: #eee; }");
-    configForm->addRow("", m_useBuiltin);
 
     m_param1 = new QLineEdit("1u");
     m_param2 = new QLineEdit("10m");
@@ -1104,126 +1141,78 @@ void SimulationPanel::onRunSimulation() {
     m_logOutput->clear();
     if (m_issueList) m_issueList->clear();
 
-    if (m_useBuiltin->isChecked()) {
-        if (m_waveformViewer && (!m_overlayPreviousRun || !m_overlayPreviousRun->isChecked())) {
-            m_waveformViewer->beginBatchUpdate();
-            m_waveformViewer->clear();
+    // Preflight diagnostics
+    {
+        SimNetlist preflightNetlist;
+        const QStringList diagnostics = SimManager::instance().preflightCheck(m_scene, m_netManager, preflightNetlist);
+        for (const QString& msg : diagnostics) {
+            const QString line = QString("[Preflight] %1").arg(msg);
+            m_logOutput->append(line);
+            appendIssueItem(line);
         }
+    }
 
-        m_currentNetlist = SimSchematicBridge::buildNetlist(m_scene, m_netManager);
-        for (const auto& sig : m_currentNetlist.autoProbes()) {
-            addProbe(QString::fromStdString(sig));
-        }
+    if (m_waveformViewer && (!m_overlayPreviousRun || !m_overlayPreviousRun->isChecked())) {
+        m_waveformViewer->beginBatchUpdate();
+        m_waveformViewer->clear();
+    }
 
-        if (m_waveformViewer) {
-            m_waveformViewer->endBatchUpdate();
-            // Force a plot update to ensure axes and legend are ready
-            m_waveformViewer->updatePlot(true);
-        }
+    m_currentNetlist = SimSchematicBridge::buildNetlist(m_scene, m_netManager);
+    for (const auto& sig : m_currentNetlist.autoProbes()) {
+        addProbe(QString::fromStdString(sig));
+    }
 
-        // Initialize real-time series tracking
-        m_realTimeSeries.clear();
-        m_realTimePointCounter = 0;
-        
-        // If Transient, pre-init the main chart for real-time streaming
-        int analysisIdx = m_analysisType->currentIndex();
-        if (analysisIdx == 0 && m_chart) {
-            m_chart->removeAllSeries();
-            for (auto* ax : m_chart->axes()) m_chart->removeAxis(ax);
-            
-            auto* axisX = new QValueAxis();
-            axisX->setTitleText("Time (s)");
-            axisX->setRange(0, parseValue(m_param2->text(), 10e-3));
-            m_chart->addAxis(axisX, Qt::AlignBottom);
-            
-            auto* axisY = new QValueAxis();
-            axisY->setTitleText("Value");
-            axisY->setRange(-1, 1);
-            m_chart->addAxis(axisY, Qt::AlignLeft);
-            
-            const QList<QColor> colors = {Qt::red, Qt::blue, QColor("#00aa00"), Qt::magenta, Qt::darkCyan};
-            int cIdx = 0;
+    if (m_waveformViewer) {
+        m_waveformViewer->endBatchUpdate();
+        m_waveformViewer->updatePlot(true);
+    }
 
-            for (int i = 0; i < m_signalList->count(); ++i) {
-                if (m_signalList->item(i)->checkState() == Qt::Checked) {
-                    QString name = m_signalList->item(i)->text();
-                    QLineSeries* series = new QLineSeries();
-                    series->setName(name);
-                    series->setPen(QPen(colors[cIdx % colors.size()], 1.5));
-                    m_chart->addSeries(series);
-                    series->attachAxis(axisX);
-                    series->attachAxis(axisY);
-                    m_realTimeSeries[name] = series;
-                    cIdx++;
-                }
-            }
-        }
-
-        int idx = m_analysisType->currentIndex();
-        if (idx == 0) { // Transient
-            double tStop = parseValue(m_param2->text(), 10e-3);
-            double tStep = parseValue(m_param1->text(), 1e-6); // Use 1us as default, not 1.0
-            SimManager::instance().runTransient(m_scene, m_netManager, tStop, tStep);
-        } else if (idx == 1) { // DC OP
-            SimManager::instance().runDCOP(m_scene, m_netManager);
-        } else if (idx == 2) { // AC
-            double fStart = parseValue(m_param1->text(), 10);
-            double fStop = parseValue(m_param2->text(), 1e6);
-            int pts = m_param3->text().toInt();
-            if (pts <= 0) pts = 10;
-            SimManager::instance().runAC(m_scene, m_netManager, fStart, fStop, pts);
-        } else if (idx == 3) { // Monte Carlo
-            int runs = m_param1->text().toInt();
-            if (runs <= 0) runs = 10;
-            SimManager::instance().runMonteCarlo(m_scene, m_netManager, runs);
-        } else if (idx == 4) { // Parametric Sweep
-            QString comp = m_param1->text();
-            QString param = m_param2->text();
-            double start = parseValue(m_param3->text(), 0);
-            double stop = parseValue(m_param4->text(), 0);
-            int steps = m_param5->text().toInt();
-            if (steps <= 0) steps = 5;
-            SimManager::instance().runParametricSweep(m_scene, m_netManager, comp, param, start, stop, steps);
-        } else if (idx == 5) { // Sensitivity
-            QString target = m_param1->text();
-            SimManager::instance().runSensitivity(m_scene, m_netManager, target);
-        } else if (idx == 6) { // Real-time
-            int interval = m_param1->text().toInt();
-            if (interval < 10) interval = 10; // Min 10ms
-            SimManager::instance().runRealTime(m_scene, m_netManager, interval);
-        }
+    // Initialize real-time series tracking if needed
+    m_realTimeSeries.clear();
+    m_realTimePointCounter = 0;
+    
+    int idx = m_analysisType->currentIndex();
+    m_acceptRealTimeStream = (idx == 6);
+    if (idx == 6) { // Real-time
+        int interval = m_param1->text().toInt();
+        if (interval < 10) interval = 10;
+        SimManager::instance().runRealTime(m_scene, m_netManager, interval);
         return;
     }
 
-    if (!SimulationManager::instance().isAvailable()) {
-        m_logOutput->append("Error: Ngspice not found. Please install libngspice.");
-        return;
-    }
-
-    m_logOutput->append("Generating netlist for ngspice...");
-    QString netlist = generateSpiceNetlist();
-    if (netlist.isEmpty()) {
-        m_logOutput->append("Error: Failed to generate netlist.");
-        return;
-    }
-
-    // Save to temp file as ngspice shared lib 'source' command works best with files
-    QTemporaryFile* temp = new QTemporaryFile(this);
-    if (temp->open()) {
-        temp->write(netlist.toUtf8());
-        m_lastNetlistPath = temp->fileName();
-        temp->close();
-        temp->setAutoRemove(false); // Keep it for the duration of the simulation
-
-        SimulationManager::instance().runSimulation(m_lastNetlistPath);
-    } else {
-        m_logOutput->append("Error: Could not create temporary netlist file.");
+    auto& sim = SimManager::instance();
+    if (idx == 0) { // Transient
+        sim.runTransient(m_scene, m_netManager, parseValue(m_param2->text(), 10e-3), parseValue(m_param1->text(), 1e-6));
+    } else if (idx == 1) { // DC OP
+        sim.runDCOP(m_scene, m_netManager);
+    } else if (idx == 2) { // AC
+        sim.runAC(m_scene, m_netManager, parseValue(m_param1->text(), 10), parseValue(m_param2->text(), 1e6), m_param3->text().toInt());
+    } else if (idx == 3) { // Monte Carlo
+        int runs = m_param1->text().toInt();
+        if (runs <= 0) runs = 10;
+        sim.runMonteCarlo(m_scene, m_netManager, runs);
+    } else if (idx == 4) { // Parametric Sweep
+        QString comp = m_param1->text();
+        QString param = m_param2->text();
+        double start = parseValue(m_param3->text(), 0);
+        double stop = parseValue(m_param4->text(), 0);
+        int steps = m_param5->text().toInt();
+        if (steps <= 0) steps = 5;
+        sim.runParametricSweep(m_scene, m_netManager, comp, param, start, stop, steps);
+    } else if (idx == 5) { // Sensitivity
+        QString target = m_param1->text();
+        sim.runSensitivity(m_scene, m_netManager, target);
     }
 }
 
 void SimulationPanel::onLogReceived(const QString& msg) {
     qDebug() << "Log:" << msg;
     m_logOutput->append(msg);
+    appendIssueItem(msg);
+}
+
+void SimulationPanel::appendIssueItem(const QString& msg) {
+    if (!m_issueList) return;
 
     const auto target = SimSchematicBridge::extractDiagnosticTarget(msg);
     QString targetType;
@@ -1233,42 +1222,37 @@ void SimulationPanel::onLogReceived(const QString& msg) {
         targetType = "net";
     }
 
-    if (m_issueList) {
-        bool isIssue = msg.contains("Error", Qt::CaseInsensitive) || 
-                       msg.contains("Warn", Qt::CaseInsensitive) || 
-                       msg.contains("Fail", Qt::CaseInsensitive) ||
-                       msg.contains("[Diag]", Qt::CaseInsensitive) ||
-                       msg.contains("[Fix]", Qt::CaseInsensitive);
+    const bool isIssue =
+        msg.contains("Error", Qt::CaseInsensitive) ||
+        msg.contains("Warn", Qt::CaseInsensitive) ||
+        msg.contains("Fail", Qt::CaseInsensitive) ||
+        msg.contains("[Diag]", Qt::CaseInsensitive) ||
+        msg.contains("[Fix]", Qt::CaseInsensitive) ||
+        msg.contains("[Preflight]", Qt::CaseInsensitive);
 
-        if (isIssue || !targetType.isEmpty()) {
-            QListWidgetItem* item = new QListWidgetItem(msg);
-            if (!targetType.isEmpty() && !target.id.trimmed().isEmpty()) {
-                item->setData(Qt::UserRole + 1, targetType);
-                item->setData(Qt::UserRole + 2, target.id.trimmed());
-                item->setToolTip(QString("Navigate to %1: %2").arg(targetType, target.id));
-                item->setForeground(QColor(msg.contains("Error", Qt::CaseInsensitive) ? "#ff3333" : "#ffcc00"));
-            } else {
-                item->setForeground(QColor("#cccccc"));
-            }
-            m_issueList->addItem(item);
-        }
+    if (!isIssue && targetType.isEmpty()) return;
+
+    QListWidgetItem* item = new QListWidgetItem(msg);
+    if (!targetType.isEmpty() && !target.id.trimmed().isEmpty()) {
+        item->setData(Qt::UserRole + 1, targetType);
+        item->setData(Qt::UserRole + 2, target.id.trimmed());
+        item->setToolTip(QString("Navigate to %1: %2").arg(targetType, target.id));
     }
+
+    if (msg.contains("Error", Qt::CaseInsensitive) || msg.contains("[error]", Qt::CaseInsensitive)) {
+        item->setForeground(QColor("#ff3333"));
+    } else if (msg.contains("Warn", Qt::CaseInsensitive) || msg.contains("[warn]", Qt::CaseInsensitive)) {
+        item->setForeground(QColor("#ffcc00"));
+    } else {
+        item->setForeground(QColor("#cccccc"));
+    }
+
+    m_issueList->addItem(item);
 }
 
 void SimulationPanel::onSimulationFinished() {
     qDebug() << "SimulationPanel::onSimulationFinished() called";
     m_logOutput->append("\nSimulation finished (Ngspice).");
-    
-    // Show detailed log dialog
-    if (m_logOutput->toPlainText().length() > 0) {
-        QTimer::singleShot(500, this, [this]() {
-            SimulationLogDialog* dlg = new SimulationLogDialog(m_logOutput->toPlainText(), this);
-            dlg->setAttribute(Qt::WA_DeleteOnClose);
-            dlg->show();
-            dlg->raise();
-            dlg->activateWindow();
-        });
-    }
     
     if (!m_lastNetlistPath.isEmpty()) {
         QString rawPath = m_lastNetlistPath;
@@ -1515,6 +1499,7 @@ void SimulationPanel::updateChartRealTime(const QString& name, double t, double 
 }
 
 void SimulationPanel::onRealTimePointReceived(double t, const std::vector<double>& values) {
+    if (!m_acceptRealTimeStream) return;
     if (!m_waveformViewer) return;
 
     // Use the cached netlist built at the start of onRunSimulation
@@ -1529,7 +1514,12 @@ void SimulationPanel::onRealTimePointReceived(double t, const std::vector<double
         }
     }
 
-    // Update V-Source Branch Currents
+    /* 
+     * Branch current updates via SimComponentFactory are disabled because the internal solver is removed.
+     * Ngspice branch current mapping needs to be implemented in SimNetlist/SimulationManager 
+     * to support real-time current plots.
+     */
+    /*
     int vSrcOffset = nodes - 1;
     int vSrcIdx = 0;
     for (const auto& comp : m_currentNetlist.components()) {
@@ -1548,6 +1538,7 @@ void SimulationPanel::onRealTimePointReceived(double t, const std::vector<double
             vSrcIdx += count;
         }
     }
+    */
 }
 
 void SimulationPanel::onTimelineValueChanged(int value) {

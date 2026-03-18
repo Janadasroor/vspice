@@ -5,6 +5,7 @@
 #include "schematic_editor.h"
 #include "symbol_editor.h"
 #include "calculator_dialog.h"
+#include "spice_model_manager_dialog.h"
 #include "plugin_manager_dialog.h"
 #include "../schematic/ui/netlist_editor.h"
 #include "csv_viewer.h"
@@ -287,6 +288,7 @@ QWidget* ProjectManager::createLauncherArea() {
 
     createAndStoreTile("Schematic Editor", "Capture and edit circuit schematics", ":/icons/schematic_editor.png", &ProjectManager::openSchematicEditor);
     createAndStoreTile("Symbol Editor", "Create and manage schematic symbol libraries", ":/icons/symbol_editor.png", &ProjectManager::openSymbolEditor);
+    createAndStoreTile("SPICE Model Manager", "Manage simulation models and subcircuit libraries", ":/icons/toolbar_netlist.png", &ProjectManager::openSpiceModelManager);
     createAndStoreTile("Calculator Tools", "Resistance, trace width, and impedance calculators", ":/icons/calculator_tools.png", &ProjectManager::openCalculatorTools);
     createAndStoreTile("Plugins Manager", "Manage extensions, importers, and add-ons", ":/icons/plugins_manager.png", &ProjectManager::openPluginsManager);
     createAndStoreTile("Help Documentation", "Software guides, tutorials, and documentation", ":/icons/tool_search.svg", &ProjectManager::showHelp);
@@ -1061,7 +1063,9 @@ void ProjectManager::openSchematicEditor() {
 }
 
 void ProjectManager::openSymbolEditor() {
-    SymbolEditor* editor = new SymbolEditor(this);
+    SymbolEditor* editor = new SymbolEditor(nullptr);
+    editor->setAttribute(Qt::WA_DeleteOnClose);
+    editor->setProjectKey(m_activeProjectFile);
     editor->show();
 }
 
@@ -1096,6 +1100,11 @@ void ProjectManager::onProjectAudit() {
 
 void ProjectManager::openPluginsManager() {
     PluginManagerDialog dlg(this);
+    dlg.exec();
+}
+
+void ProjectManager::openSpiceModelManager() {
+    SpiceModelManagerDialog dlg(this);
     dlg.exec();
 }
 

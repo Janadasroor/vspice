@@ -35,7 +35,7 @@ ResistorItem::ResistorItem(QPointF pos, QString value, ResistorStyle style, QGra
     m_brush = QBrush(theme->schematicComponent());
     
     buildPrimitives();
-    createLabels(QPointF(-22.5, -27), QPointF(-22.5, 30));
+    createLabels(QPointF(-22.5, -37.5), QPointF(-22.5, 37.5));
 }
 
 ResistorItem::ResistorItem(SchematicComponentModel* model, QGraphicsItem *parent)
@@ -51,7 +51,7 @@ ResistorItem::ResistorItem(SchematicComponentModel* model, QGraphicsItem *parent
     m_brush = QBrush(theme->schematicComponent());
     
     buildPrimitives();
-    createLabels(QPointF(-22.5, -27), QPointF(-22.5, 30));
+    createLabels(QPointF(-22.5, -37.5), QPointF(-22.5, 37.5));
 }
 
 ResistorItem::~ResistorItem() {
@@ -68,19 +68,19 @@ void ResistorItem::buildPrimitives() {
         
         QList<QPointF> zigzag;
         zigzag << QPointF(-45, 0)
-               << QPointF(-37.5, -12)
-               << QPointF(-22.5, 12)
-               << QPointF(-7.5, -12)
-               << QPointF(7.5, 12)
-               << QPointF(22.5, -12)
-               << QPointF(37.5, 12)
+               << QPointF(-37.5, -22.5)
+               << QPointF(-22.5, 22.5)
+               << QPointF(-7.5, -22.5)
+               << QPointF(7.5, 22.5)
+               << QPointF(22.5, -22.5)
+               << QPointF(37.5, 22.5)
                << QPointF(45, 0);
         m_primitives.push_back(std::make_unique<PolylinePrimitive>(zigzag));
         
         m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(45, 0), QPointF(60, 0)));
     } else {
         m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(-60, 0), QPointF(-22.5, 0)));
-        m_primitives.push_back(std::make_unique<RectPrimitive>(QRectF(-22.5, -9, 45, 18)));
+        m_primitives.push_back(std::make_unique<RectPrimitive>(QRectF(-22.5, -22.5, 45, 45)));
         m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(22.5, 0), QPointF(60, 0)));
     }
     

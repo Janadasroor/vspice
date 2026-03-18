@@ -3,12 +3,14 @@ import re
 from ..services.simulation_adapter.engine import SimulationAdapter
 from ..services.power_metrics.compute import compute_average_power
 from ..services.waveform_viz.plot_service import PlotService
+from ..services.supply_chain.service import SupplyChainService
 
 
 class ToolRegistry:
-    def __init__(self, schematic_path, adapter=None):
+    def __init__(self, schematic_path, adapter=None, octopart_api_key=None):
         self.schematic_path = schematic_path
         self.adapter = adapter or SimulationAdapter()
+        self.supply_chain = SupplyChainService(api_key=octopart_api_key)
 
     def _load_schematic_items(self):
         with open(self.schematic_path, "r", encoding="utf-8") as f:
@@ -309,14 +311,13 @@ class ToolRegistry:
     def web_search(self, query):
         """
         Performs a search for electronic components, datasheets, or technical specs.
-        Returns a list of matching components with brief summaries.
+        Returns a list of matching components with real-time price and stock if available.
         """
-        # Note: In a real implementation, this would call a search API.
-        # Here, we return a hint for Gemini to use its internal knowledge to fulfill the 'Research' role.
+        results = self.supply_chain.search_component(query)
         return {
             "query": query,
-            "status": "search_simulated",
-            "message": "Search executed. Please use your internal knowledge to provide 3-5 specific component recommendations (Part Numbers, Manufacturers, and key specs) based on this query."
+            "results": results,
+            "status": "search_success" if results else "no_results"
         }
 
     def lookup_component_data(self, part_number):
@@ -324,11 +325,18 @@ class ToolRegistry:
         Retrieves detailed technical data for a specific part number, including pinout and key parameters.
         Returns a structured JSON object with component specifications.
         """
-        # Again, this simulates a datasheet lookup.
+        results = self.supply_chain.search_component(part_number)
+        if results:
+            return {
+                "part_number": part_number,
+                "data": results[0],
+                "status": "lookup_success"
+            }
+        
         return {
             "part_number": part_number,
             "status": "lookup_simulated",
-            "message": f"Technical data for {part_number} requested. Please use your internal knowledge to provide: 1) Pinout (Pin Name/Number), 2) Operating Voltages, 3) Key performance metrics, and 4) Package type."
+            "message": f"Technical data for {part_number} requested. Please use your internal knowledge."
         }
 
 

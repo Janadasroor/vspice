@@ -39,6 +39,7 @@ public:
     SymbolDefinition symbolDefinition() const;
     void setSymbolDefinition(const SymbolDefinition& def);
     void applySymbolDefinition(const SymbolDefinition& def);
+    void setProjectKey(const QString& key);
 
     bool importKicadSymbol(const QString& path, const QString& symbolName = QString());
     bool importLtspiceSymbol(const QString& path);
@@ -52,6 +53,8 @@ private slots:
     void onToolSelected();
     void onSave();
     void onSaveToLibrary();
+    void onExportVioSym();
+    void onRefreshLibraries();
     void onClear();
     void onUndo();
     void onRedo();
@@ -118,6 +121,7 @@ private:
     void createMenuBar();
     void createToolBar();
     void rebuildPanelsMenu();
+    void tryAutoDetectModelName();
     void createStatusBar();
     void setEditingUnlocked(bool unlocked, const QString& message = QString());
     QString promptForTargetLibrary();
@@ -150,6 +154,7 @@ private:
 protected:
     void keyPressEvent(QKeyEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
     // Current editing state
     enum Tool { Select, Line, Rect, Circle, Arc, Text, Pin, Polygon, Erase, ZoomArea, Anchor, Bezier, Image };
@@ -181,6 +186,9 @@ protected:
     QLineEdit* m_prefixEdit = nullptr;
     QLineEdit* m_footprintEdit = nullptr;
     QTextEdit* m_codePreview = nullptr;
+    QComboBox* m_modelSourceCombo = nullptr;
+    QLineEdit* m_modelPathEdit = nullptr;
+    QLineEdit* m_modelNameEdit = nullptr;
     
     // Library Browser
     QLineEdit* m_libSearchEdit = nullptr;
@@ -220,6 +228,7 @@ protected:
     QString m_previewOrientation = "Right";
     bool m_editingUnlocked = false;
     QString m_targetLibraryName;
+    QString m_projectKey;
 
     friend class AddPrimitiveCommand;
     friend class RemovePrimitiveCommand;

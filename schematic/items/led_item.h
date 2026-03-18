@@ -25,8 +25,12 @@ public:
     bool fromJson(const QJsonObject& json) override;
     SchematicItem* clone() const override;
 
+    void setThreshold(double v) { m_threshold = v; }
+    double threshold() const { return m_threshold; }
+
 private:
     double m_voltage;
+    double m_threshold = 1.5;
 };
 
 #endif // LEDITEM_H

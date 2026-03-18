@@ -16,7 +16,7 @@ VoltageSourcePropertiesDialog::VoltageSourcePropertiesDialog(VoltageSourceItem* 
     typeField.name = "sourceType";
     typeField.label = "Waveform Type";
     typeField.type = PropertyField::Choice;
-    typeField.choices = {"DC", "Sine", "Pulse"};
+    typeField.choices = {"DC", "Sine", "Pulse", "Behavioral"};
     typeField.defaultValue = (int)item->sourceType();
     mainTab.fields.append(typeField);
 
@@ -51,6 +51,30 @@ VoltageSourcePropertiesDialog::VoltageSourcePropertiesDialog(VoltageSourceItem* 
     pulseTab.fields.append({"pulsePeriod", "Period (Tperiod)", PropertyField::EngineeringValue, item->pulsePeriod(), {}, "s"});
     addTab(pulseTab);
 
+    // Behavioral Settings (BV)
+    PropertyTab behavioralTab;
+    behavioralTab.title = "Behavioral (BV)";
+    PropertyField exprField;
+    exprField.name = "behavioralExpr";
+    exprField.label = "Expression (V=...)";
+    exprField.type = PropertyField::MultilineText;
+    exprField.defaultValue = item->value();
+    exprField.tooltip = "Behavioral voltage: V=<expression>, e.g. V=V(in)*2 or V=if(V(in)>0,1,0)";
+    exprField.validator = [](const QVariant& value) -> QString {
+        const QString v = value.toString().trimmed();
+        if (v.isEmpty()) return "Expression is empty.";
+        int depth = 0;
+        for (const QChar& c : v) {
+            if (c == '(') depth++;
+            else if (c == ')') depth--;
+            if (depth < 0) break;
+        }
+        if (depth != 0) return "Unbalanced parentheses.";
+        return QString();
+    };
+    behavioralTab.fields.append(exprField);
+    addTab(behavioralTab);
+
     // Sync initial visibility
     updateTabVisibility();
 }
@@ -63,10 +87,11 @@ void VoltageSourcePropertiesDialog::onFieldChanged() {
 void VoltageSourcePropertiesDialog::updateTabVisibility() {
     QString type = getPropertyValue("sourceType").toString();
     
-    // DC tab is index 1, Sine is 2, Pulse is 3
+    // DC tab is index 1, Sine is 2, Pulse is 3, Behavioral is 4
     setTabVisible(1, type == "DC");
     setTabVisible(2, type == "Sine");
     setTabVisible(3, type == "Pulse");
+    setTabVisible(4, type == "Behavioral");
 }
 
 void VoltageSourcePropertiesDialog::onApply() {
@@ -90,6 +115,13 @@ void VoltageSourcePropertiesDialog::onApply() {
     newState["pulseFall"] = getPropertyValue("pulseFall").toString();
     newState["pulseWidth"] = getPropertyValue("pulseWidth").toString();
     newState["pulsePeriod"] = getPropertyValue("pulsePeriod").toString();
+
+    if (getPropertyValue("sourceType").toString() == "Behavioral") {
+        QString expr = getPropertyValue("behavioralExpr").toString().trimmed();
+        if (expr.isEmpty()) expr = "V=0";
+        if (!expr.startsWith("V=", Qt::CaseInsensitive)) expr = "V=" + expr;
+        newState["value"] = expr;
+    }
 
     m_undoStack->push(new BulkChangePropertyCommand(m_scene, m_item, newState));
     m_undoStack->endMacro();
@@ -116,6 +148,11 @@ void VoltageSourcePropertiesDialog::applyPreview() {
         m_item->setPulseFall(getPropertyValue("pulseFall").toString());
         m_item->setPulseWidth(getPropertyValue("pulseWidth").toString());
         m_item->setPulsePeriod(getPropertyValue("pulsePeriod").toString());
+    } else if (type == VoltageSourceItem::Behavioral) {
+        QString expr = getPropertyValue("behavioralExpr").toString().trimmed();
+        if (expr.isEmpty()) expr = "V=0";
+        if (!expr.startsWith("V=", Qt::CaseInsensitive)) expr = "V=" + expr;
+        m_item->setValue(expr);
     }
     
     m_item->update();

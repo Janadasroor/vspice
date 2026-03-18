@@ -20,7 +20,7 @@
 #include <QVariantMap>
 #include <QDateTime>
 #include "../../simulator/bridge/sim_manager.h"
-#include "../../simulator/core/sim_engine.h"
+#include "../../simulator/core/sim_results.h"
 
 class QGraphicsScene;
 class SchematicEditor;
@@ -38,6 +38,7 @@ public:
     void removeProbe(const QString& signalName);
     void clearAllProbes();
     void clearAllProbesPreserveX();
+    void clearResults();
     bool hasProbe(const QString& signalName) const;
     void onRunSimulation();
 
@@ -50,6 +51,7 @@ public:
         int pts;
     };
     void setAnalysisConfig(const AnalysisConfig& cfg);
+    void setTargetScene(QGraphicsScene* scene, NetManager* netManager, const QString& projectDir, bool clearState = true);
     QWidget* getOscilloscopeContainer() const;
     bool hasResults() const { return m_hasLastResults; }
 
@@ -69,6 +71,7 @@ private slots:
     void onViewNetlist();
     void onSimResultsReady(const SimResults& results);
     void onRealTimePointReceived(double t, const std::vector<double>& values);
+    void onRealTimeDataBatchReceived(const std::vector<double>& times, const std::vector<std::vector<double>>& values);
     void onTimelineValueChanged(int value);
     void onGeneratorTypeChanged(int index);
     void onApplyGeneratorToSelection();
@@ -107,10 +110,12 @@ private:
     double estimateFrequency(const SimWaveform& wave) const;
     double estimateFftPeakHz(const SimWaveform& wave) const;
     void updateChartRealTime(const QString& name, double t, double value);
+    void appendIssueItem(const QString& msg);
 
     QGraphicsScene* m_scene;
     NetManager* m_netManager;
     QString m_projectDir;
+    bool m_acceptRealTimeStream = false;
 
     // Signal Selection
     QListWidget* m_signalList;
@@ -173,7 +178,6 @@ private:
     QWidget* m_scopeContainer;
     
     QString m_lastNetlistPath;
-    QCheckBox* m_useBuiltin;
     QCheckBox* m_overlayPreviousRun;
     double m_cursorAFrac = 0.25;
     double m_cursorBFrac = 0.75;

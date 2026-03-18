@@ -21,6 +21,7 @@
 #include "symbol_editor.h"
 #include "symbol_library.h"
 #include "kicad_symbol_importer.h"
+#include "ltspice_symbol_importer.h"
 #include "../core/library_index.h"
 #include <QGraphicsTextItem>
 #include "theme_manager.h"
@@ -31,8 +32,42 @@
 #include "../../core/ui/text_properties_dialog.h"
 
 #include <QGraphicsDropShadowEffect>
+#include <QFileDialog>
 #include <QStyleOptionGraphicsItem>
 #include <QPainterPathStroker>
+
+namespace {
+QString runThemedOpenFileDialog(QWidget* parent, const QString& title, const QString& filter) {
+    QFileDialog dlg(parent, title);
+    dlg.setFileMode(QFileDialog::ExistingFile);
+    dlg.setNameFilter(filter);
+    dlg.setOption(QFileDialog::DontUseNativeDialog, true);
+    if (auto* theme = ThemeManager::theme(); theme && theme->type() == PCBTheme::Light) {
+        dlg.setStyleSheet(
+            "QWidget { selection-background-color: #e2e8f0; selection-color: #111111; }"
+            "QLineEdit, QComboBox { background-color: #ffffff; color: #1f2937; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 6px; }"
+        );
+    }
+    if (dlg.exec() != QDialog::Accepted) return QString();
+    return dlg.selectedFiles().value(0);
+}
+
+QString runThemedSaveFileDialog(QWidget* parent, const QString& title, const QString& filter, const QString& suggested) {
+    QFileDialog dlg(parent, title);
+    dlg.setAcceptMode(QFileDialog::AcceptSave);
+    dlg.setNameFilter(filter);
+    if (!suggested.isEmpty()) dlg.selectFile(suggested);
+    dlg.setOption(QFileDialog::DontUseNativeDialog, true);
+    if (auto* theme = ThemeManager::theme(); theme && theme->type() == PCBTheme::Light) {
+        dlg.setStyleSheet(
+            "QWidget { selection-background-color: #e2e8f0; selection-color: #111111; }"
+            "QLineEdit, QComboBox { background-color: #ffffff; color: #1f2937; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 6px; }"
+        );
+    }
+    if (dlg.exec() != QDialog::Accepted) return QString();
+    return dlg.selectedFiles().value(0);
+}
+} // namespace
 
 // --- Helper classes to suppress default selection drawing ---
 class FilteredRectItem : public QGraphicsRectItem {
@@ -147,6 +182,86 @@ public:
 #include <QUndoStack>
 #include <QUndoCommand>
 #include <QTreeWidget>
+#include <QRegularExpression>
+#include "../../core/config_manager.h"
+
+namespace {
+QString resolveModelPathForEditor(const QString& rawPath, const QString& source) {
+    const QString trimmed = rawPath.trimmed();
+    if (trimmed.isEmpty()) return QString();
+
+    QFileInfo fi(trimmed);
+    if (fi.isAbsolute()) {
+        return fi.exists() ? fi.absoluteFilePath() : QString();
+    }
+
+    if (source == "project") {
+        // Symbol editor doesn't know the project directory.
+        return QString();
+    }
+
+    QStringList roots = ConfigManager::instance().libraryRoots();
+    for (const QString& root : roots) {
+        if (root.trimmed().isEmpty()) continue;
+        QString candidate = QDir(root).filePath(trimmed);
+        if (QFileInfo::exists(candidate)) return candidate;
+    }
+
+    QString baseName = QFileInfo(trimmed).fileName();
+    QStringList modelDirs = ConfigManager::instance().modelPaths();
+    for (const QString& dir : modelDirs) {
+        QString candidate = QDir(dir).filePath(trimmed);
+        if (QFileInfo::exists(candidate)) return candidate;
+        if (!baseName.isEmpty()) {
+            candidate = QDir(dir).filePath(baseName);
+            if (QFileInfo::exists(candidate)) return candidate;
+        }
+    }
+
+    return QString();
+}
+
+QString detectModelNameFromFile(const QString& filePath, const QString& prefix) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return QString();
+
+    QRegularExpression subcktRe("^\\s*\\.subckt\\s+([^\\s]+)", QRegularExpression::CaseInsensitiveOption);
+    QRegularExpression modelRe("^\\s*\\.model\\s+([^\\s]+)", QRegularExpression::CaseInsensitiveOption);
+
+    QString foundSubckt;
+    QString foundModel;
+    QTextStream in(&file);
+    while (!in.atEnd()) {
+        const QString line = in.readLine();
+        if (foundSubckt.isEmpty()) {
+            auto m = subcktRe.match(line);
+            if (m.hasMatch()) foundSubckt = m.captured(1).trimmed();
+        }
+        if (foundModel.isEmpty()) {
+            auto m = modelRe.match(line);
+            if (m.hasMatch()) foundModel = m.captured(1).trimmed();
+        }
+        if (!foundSubckt.isEmpty() && !foundModel.isEmpty()) break;
+    }
+
+    const QString base = QFileInfo(filePath).completeBaseName();
+    if (!base.isEmpty()) {
+        if (foundSubckt.compare(base, Qt::CaseInsensitive) == 0) return foundSubckt;
+        if (foundModel.compare(base, Qt::CaseInsensitive) == 0) return foundModel;
+    }
+
+    const QString p = prefix.trimmed().toUpper();
+    const bool preferSubckt = (p == "X");
+    const bool preferModel = (p == "D" || p == "Q" || p == "M" || p == "J");
+
+    if (preferSubckt && !foundSubckt.isEmpty()) return foundSubckt;
+    if (preferModel && !foundModel.isEmpty()) return foundModel;
+
+    if (!foundSubckt.isEmpty()) return foundSubckt;
+    if (!foundModel.isEmpty()) return foundModel;
+    return QString();
+}
+}
 #include <QTableWidget>
 #include <QListWidget>
 #include <QTextEdit>
@@ -154,17 +269,32 @@ public:
 #include <QTreeWidgetItem>
 #include <QFont>
 #include <QPointer>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QShowEvent>
+#include <QCryptographicHash>
 #include <algorithm>
 #include <cmath>
+#include "core/config_manager.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  SymbolEditor – Construction
 // ─────────────────────────────────────────────────────────────────────────────
 
+namespace {
+QString symbolEditorStateKey(const QString& projectKey) {
+    const QString trimmed = projectKey.trimmed();
+    if (trimmed.isEmpty()) return QStringLiteral("SymbolEditor");
+    const QByteArray hash = QCryptographicHash::hash(trimmed.toUtf8(), QCryptographicHash::Sha1).toHex();
+    return QStringLiteral("SymbolEditor_") + QString::fromLatin1(hash);
+}
+}
+
 SymbolEditor::SymbolEditor(QWidget* parent)
     : QMainWindow(parent)
     , m_undoStack(new QUndoStack(this)) {
     setupUI();
+    setProjectKey(QString());
     applyTheme();
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, &SymbolEditor::applyTheme);
 }
@@ -174,6 +304,7 @@ SymbolEditor::SymbolEditor(const SymbolDefinition& symbol, QWidget* parent)
     , m_symbol(symbol)
     , m_undoStack(new QUndoStack(this)) {
     setupUI();
+    setProjectKey(QString());
     setSymbolDefinition(symbol);
     applyTheme();
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, &SymbolEditor::applyTheme);
@@ -204,8 +335,69 @@ void SymbolEditor::applyTheme() {
     QString inputBg = (theme->type() == PCBTheme::Light) ? "#ffffff" : "#121212";
     QString btnBg = (theme->type() == PCBTheme::Light) ? "#f8fafc" : "#2d2d30";
     QString btnHover = (theme->type() == PCBTheme::Light) ? "#e2e8f0" : "#3c3c3c";
+    QString selBg = (theme->type() == PCBTheme::Light) ? "#e2e8f0" : "#3c3c3c";
+    QString selText = (theme->type() == PCBTheme::Light) ? "#111111" : "#ffffff";
+    QString btnPressed = (theme->type() == PCBTheme::Light) ? "#e2e8f0" : accent;
+
+    if (theme->type() == PCBTheme::Light) {
+        QPalette pal = palette();
+        pal.setColor(QPalette::Button, QColor(inputBg));
+        pal.setColor(QPalette::ButtonText, QColor(fg));
+        pal.setColor(QPalette::Highlight, QColor(selBg));
+        pal.setColor(QPalette::HighlightedText, QColor(selText));
+        setPalette(pal);
+
+        const QString comboStyle = QString(
+            "QComboBox { background-color: %1; color: %2; border: 1px solid %3; border-radius: 4px; padding: 4px 8px; }"
+            "QComboBox::drop-down { border: none; }"
+            "QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %4; selection-color: %5; }"
+        ).arg(inputBg, fg, border, selBg, selText);
+
+        const QString spinStyle = QString(
+            "QSpinBox, QDoubleSpinBox { background-color: %1; color: %2; border: 1px solid %3; border-radius: 4px; padding: 4px 8px; }"
+            "QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { border: none; }"
+        ).arg(inputBg, fg, border);
+
+        for (auto* cb : findChildren<QComboBox*>()) {
+            cb->setStyleSheet(comboStyle);
+            QPalette p = cb->palette();
+            p.setColor(QPalette::Button, QColor(inputBg));
+            p.setColor(QPalette::Base, QColor(inputBg));
+            p.setColor(QPalette::Window, QColor(inputBg));
+            p.setColor(QPalette::Text, QColor(fg));
+            p.setColor(QPalette::ButtonText, QColor(fg));
+            p.setColor(QPalette::Highlight, QColor(selBg));
+            p.setColor(QPalette::HighlightedText, QColor(selText));
+            cb->setPalette(p);
+        }
+        for (auto* sb : findChildren<QSpinBox*>()) {
+            sb->setStyleSheet(spinStyle);
+            QPalette p = sb->palette();
+            p.setColor(QPalette::Button, QColor(inputBg));
+            p.setColor(QPalette::Base, QColor(inputBg));
+            p.setColor(QPalette::Window, QColor(inputBg));
+            p.setColor(QPalette::Text, QColor(fg));
+            p.setColor(QPalette::ButtonText, QColor(fg));
+            p.setColor(QPalette::Highlight, QColor(selBg));
+            p.setColor(QPalette::HighlightedText, QColor(selText));
+            sb->setPalette(p);
+        }
+        for (auto* dsb : findChildren<QDoubleSpinBox*>()) {
+            dsb->setStyleSheet(spinStyle);
+            QPalette p = dsb->palette();
+            p.setColor(QPalette::Button, QColor(inputBg));
+            p.setColor(QPalette::Base, QColor(inputBg));
+            p.setColor(QPalette::Window, QColor(inputBg));
+            p.setColor(QPalette::Text, QColor(fg));
+            p.setColor(QPalette::ButtonText, QColor(fg));
+            p.setColor(QPalette::Highlight, QColor(selBg));
+            p.setColor(QPalette::HighlightedText, QColor(selText));
+            dsb->setPalette(p);
+        }
+    }
 
     setStyleSheet(QString(
+        "QWidget { selection-background-color: %10; selection-color: %11; }"
         "QMainWindow { background-color: %1; }"
         "QDockWidget { color: %3; font-weight: bold; }"
         "QDockWidget::title { background-color: %2; padding: 6px; border-bottom: 1px solid %5; }"
@@ -213,14 +405,62 @@ void SymbolEditor::applyTheme() {
         "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
         "QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background-color: %7; border: 1px solid %5; padding: 4px 8px; color: %3; border-radius: 3px; }"
         "QLineEdit:focus, QComboBox:focus { border-color: %6; }"
+        "QLineEdit::selection, QComboBox::selection, QSpinBox::selection, QDoubleSpinBox::selection { background: %10; color: %11; }"
+        "QComboBox QAbstractItemView { background: %7; selection-background-color: %10; selection-color: %11; }"
         "QPushButton { background-color: %8; border: 1px solid %5; padding: 6px 12px; color: %3; border-radius: 4px; }"
         "QPushButton:hover { background-color: %9; border-color: %6; }"
-        "QPushButton:pressed { background-color: %6; color: white; }"
+        "QPushButton:pressed { background-color: %12; color: %3; border-color: %5; }"
+        "QPushButton:default { background-color: %8; border-color: %5; }"
+        "QPushButton:default:pressed { background-color: %12; border-color: %5; }"
         "QScrollArea { border: none; background-color: %1; }"
-    ).arg(bg, panelBg, fg, textSec, border, accent, inputBg, btnBg, btnHover));
+    ).arg(bg, panelBg, fg, textSec, border, accent, inputBg, btnBg, btnHover, selBg, selText, btnPressed));
 
-    if (m_toolbar) m_toolbar->setStyleSheet(theme->toolbarStylesheet());
-    if (m_leftToolbar) m_leftToolbar->setStyleSheet(theme->toolbarStylesheet());
+    QString toolbarStyle = theme->toolbarStylesheet();
+    if (theme->type() == PCBTheme::Light) {
+        QString toolBtnHover = "#f1f5f9";
+        QString toolBtnChecked = "#e2e8f0";
+        toolbarStyle = QString(
+            "QToolBar {"
+            "   background: %1;"
+            "   border: none;"
+            "   border-bottom: 1px solid %2;"
+            "   padding: 6px;"
+            "   spacing: 6px;"
+            "}"
+            "QToolButton {"
+            "   background-color: transparent;"
+            "   border: 1px solid transparent;"
+            "   border-radius: 6px;"
+            "   padding: 6px;"
+            "   color: %7;"
+            "}"
+            "QToolButton:hover {"
+            "   background-color: %3;"
+            "   border-color: %2;"
+            "}"
+            "QToolButton:checked, QToolButton:pressed {"
+            "   background-color: %4;"
+            "   border: 1px solid %2;"
+            "}"
+            "QToolBar QComboBox {"
+            "   background-color: %5;"
+            "   color: %7;"
+            "   border: 1px solid %2;"
+            "   border-radius: 4px;"
+            "   padding: 3px 8px;"
+            "}"
+            "QToolBar QComboBox QAbstractItemView {"
+            "   background: %5;"
+            "   color: %7;"
+            "   selection-background-color: %4;"
+            "   selection-color: %7;"
+            "}"
+        ).arg(bg, border, toolBtnHover, toolBtnChecked, inputBg, fg, textSec);
+    }
+    toolbarStyle += QString("QToolButton { color: %1; } QToolButton:checked { color: %1; }")
+                        .arg(theme->type() == PCBTheme::Light ? textSec : fg);
+    if (m_toolbar) m_toolbar->setStyleSheet(toolbarStyle);
+    if (m_leftToolbar) m_leftToolbar->setStyleSheet(toolbarStyle);
     
     if (m_statusBar) m_statusBar->setStyleSheet(theme->statusBarStylesheet());
     
@@ -798,6 +1038,14 @@ void SymbolEditor::applySymbolDefinition(const SymbolDefinition& def) {
     m_categoryCombo->setCurrentText(def.category());
     m_prefixEdit->setText(def.referencePrefix());
     m_footprintEdit->setText(def.defaultFootprint());
+    {
+        const QString src = def.modelSource().isEmpty() ? "none" : def.modelSource().toLower();
+        int srcIdx = m_modelSourceCombo->findData(src);
+        if (srcIdx < 0) srcIdx = m_modelSourceCombo->findData("none");
+        m_modelSourceCombo->setCurrentIndex(srcIdx >= 0 ? srcIdx : 0);
+    }
+    m_modelPathEdit->setText(def.modelPath());
+    m_modelNameEdit->setText(def.modelName());
 
     // Update Unit Selector if needed
     if (m_unitCombo) {
@@ -862,6 +1110,9 @@ SymbolDefinition SymbolEditor::symbolDefinition() const {
     def.setDescription(m_descriptionEdit->text());
     def.setCategory(m_categoryCombo->currentText());
     def.setReferencePrefix(m_prefixEdit->text());
+    def.setModelSource(m_modelSourceCombo->currentData().toString());
+    def.setModelPath(m_modelPathEdit->text());
+    def.setModelName(m_modelNameEdit->text());
     return def;
 }
 
@@ -888,9 +1139,18 @@ QIcon SymbolEditor::getThemeIcon(const QString& path) {
 void SymbolEditor::setupUI() {
     setWindowTitle("Symbol Editor");
     resize(1280, 850);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setMinimumSize(800, 600);
+    setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
 
-    // Ensure standard window decorations including maximize/minimize buttons
-    setWindowFlags(Qt::Window | Qt::WindowMaximizeButtonHint | Qt::WindowMinimizeButtonHint | Qt::WindowCloseButtonHint);
+    // Ensure standard window decorations and working maximize/minimize buttons (XFCE needs explicit hints)
+    setWindowFlags(windowFlags()
+                   | Qt::Window
+                   | Qt::WindowTitleHint
+                   | Qt::WindowSystemMenuHint
+                   | Qt::WindowMaximizeButtonHint
+                   | Qt::WindowMinimizeButtonHint
+                   | Qt::WindowCloseButtonHint);
 
     // ── Main Canvas ─────────────────────────────────────────────────────────
     m_scene = new QGraphicsScene(this);
@@ -938,6 +1198,35 @@ void SymbolEditor::setupUI() {
     connect(fpBrowse, &QPushButton::clicked, this, &SymbolEditor::onBrowseFootprint);
     infoForm->addRow("Desc:", m_descriptionEdit);
     infoLayout->addWidget(infoGroup);
+
+    auto* modelGroup = new QGroupBox("Model Binding");
+    auto* modelForm = new QFormLayout(modelGroup);
+    modelForm->addRow("Source:", m_modelSourceCombo);
+
+    QHBoxLayout* modelPathLayout = new QHBoxLayout();
+    QPushButton* modelBrowse = new QPushButton("...");
+    modelBrowse->setFixedWidth(30);
+    modelPathLayout->addWidget(m_modelPathEdit);
+    modelPathLayout->addWidget(modelBrowse);
+    modelForm->addRow("Model File:", modelPathLayout);
+    modelForm->addRow("Model Name:", m_modelNameEdit);
+    infoLayout->addWidget(modelGroup);
+
+    connect(modelBrowse, &QPushButton::clicked, this, [this]() {
+        QString path = runThemedOpenFileDialog(this, "Select Model File", "SPICE Models (*.lib *.sub *.cmp *.cir *.sp *.txt);;All Files (*)");
+        if (!path.isEmpty()) {
+            m_modelPathEdit->setText(path);
+            tryAutoDetectModelName();
+        }
+    });
+
+    auto updateModelPathState = [this]() {
+        const QString src = m_modelSourceCombo->currentData().toString();
+        const bool enablePath = (src != "none");
+        m_modelPathEdit->setEnabled(enablePath);
+    };
+    connect(m_modelSourceCombo, &QComboBox::currentIndexChanged, this, updateModelPathState);
+    updateModelPathState();
 
     auto* actionGroup = new QGroupBox("Component Actions");
     auto* actionLayout = new QVBoxLayout(actionGroup);
@@ -998,6 +1287,9 @@ void SymbolEditor::setupUI() {
     auto* importBtn = new QPushButton("Import KiCad Symbol");
     connect(importBtn, &QPushButton::clicked, this, &SymbolEditor::onImportKicadSymbol);
     wizLayout->addWidget(importBtn);
+    auto* importLtBtn = new QPushButton("Import LTspice Symbol");
+    connect(importLtBtn, &QPushButton::clicked, this, &SymbolEditor::onImportLtspiceSymbol);
+    wizLayout->addWidget(importLtBtn);
     wizLayout->addStretch();
     wizDock->setWidget(wizContainer);
     addDockWidget(Qt::LeftDockWidgetArea, wizDock);
@@ -1466,6 +1758,8 @@ void SymbolEditor::createMenuBar() {
     QMenu* fileMenu = mb->addMenu("&File");
     fileMenu->addAction(getThemeIcon(":/icons/toolbar_new.png"), "&New Symbol", this, &SymbolEditor::onNewSymbol, QKeySequence::New);
     fileMenu->addAction(getThemeIcon(":/icons/check.svg"), "&Save to Library", this, &SymbolEditor::onSaveToLibrary, QKeySequence::Save);
+    fileMenu->addAction(getThemeIcon(":/icons/toolbar_file.png"), "Save As...", this, &SymbolEditor::onExportVioSym);
+    fileMenu->addAction(getThemeIcon(":/icons/toolbar_refresh.png"), "Refresh Libraries", this, &SymbolEditor::onRefreshLibraries, QKeySequence::Refresh);
     fileMenu->addSeparator();
     fileMenu->addAction(getThemeIcon(":/icons/schematic_editor.png"), "&Place in Schematic", this, &SymbolEditor::onPlaceInSchematic);
     fileMenu->addSeparator();
@@ -1543,6 +1837,19 @@ void SymbolEditor::createMenuBar() {
     });
     viewMenu->addAction("Zoom Fit", this, &SymbolEditor::onZoomFit, QKeySequence("F"));
     viewMenu->addAction("Zoom Selection", this, &SymbolEditor::onZoomSelection, QKeySequence("Ctrl+0"));
+    viewMenu->addSeparator();
+    auto* toggleMaxAct = viewMenu->addAction("Toggle Maximize", this, [this]() {
+        if (isMaximized()) {
+            showNormal();
+            return;
+        }
+        setWindowState(windowState() | Qt::WindowMaximized);
+        if (!isMaximized()) {
+            if (QScreen* s = window()->screen()) {
+                setGeometry(s->availableGeometry());
+            }
+        }
+    }, QKeySequence("F11"));
     
     viewMenu->addSeparator();
     viewMenu->addAction("Reset Default Layout", [this]() {
@@ -1681,6 +1988,10 @@ void SymbolEditor::createToolBar() {
     saveAction->setShortcut(QKeySequence::Save);
     saveAction->setToolTip("Save to Library (Ctrl+S)");
     connect(saveAction, &QAction::triggered, this, &SymbolEditor::onSaveToLibrary);
+
+    QAction* exportAction = m_toolbar->addAction(getThemeIcon(":/icons/toolbar_file.png"), "Save As...");
+    exportAction->setToolTip("Save symbol to a .viosym file");
+    connect(exportAction, &QAction::triggered, this, &SymbolEditor::onExportVioSym);
 
     auto* openSchAct = m_toolbar->addAction(getThemeIcon(":/icons/schematic_editor.png"), "Open in Schematic");
     openSchAct->setToolTip("Place this symbol in the current schematic");
@@ -1889,7 +2200,9 @@ void SymbolEditor::createStatusBar() {
     m_statusBar->addPermanentWidget(new QLabel(" Unit: "));
     auto* unitCombo = new QComboBox();
     unitCombo->addItems({"mm", "mil", "in"});
-    unitCombo->setStyleSheet("QComboBox { background: #1e1e1e; color: white; border: 1px solid #3c3c3c; font-size: 10px; height: 18px; }");
+    if (auto* theme = ThemeManager::theme(); theme && theme->type() != PCBTheme::Light) {
+        unitCombo->setStyleSheet("QComboBox { background: #1e1e1e; color: white; border: 1px solid #3c3c3c; font-size: 10px; height: 18px; }");
+    }
     connect(unitCombo, &QComboBox::currentTextChanged, this, [this](const QString& unit) {
         m_view->setProperty("currentUnit", unit);
         updateCoordinates(m_view->mapToScene(m_view->mapFromGlobal(QCursor::pos())));
@@ -1985,6 +2298,9 @@ void SymbolEditor::createSymbolInfoPanel() {
     m_descriptionEdit = new QLineEdit();
     m_categoryCombo   = new QComboBox();
     m_prefixEdit      = new QLineEdit("U");
+    m_modelSourceCombo = new QComboBox();
+    m_modelPathEdit = new QLineEdit();
+    m_modelNameEdit = new QLineEdit();
 
     m_nameEdit->setPlaceholderText("Enter symbol name");
     m_descriptionEdit->setPlaceholderText("Description");
@@ -1993,6 +2309,12 @@ void SymbolEditor::createSymbolInfoPanel() {
                                "Integrated Circuits", "Connectors",
                                "Power", "Other"});
     m_prefixEdit->setMaximumWidth(50);
+    m_modelPathEdit->setPlaceholderText("e.g. sub/my_model.lib or cmp/standard.cmp");
+    m_modelNameEdit->setPlaceholderText("Model/Subckt name (e.g. 2N3904)");
+    m_modelSourceCombo->addItem("None", "none");
+    m_modelSourceCombo->addItem("Library Root (sym/sub/cmp/lib)", "library");
+    m_modelSourceCombo->addItem("Project Relative", "project");
+    m_modelSourceCombo->addItem("Absolute File", "absolute");
 
     // Live updates for canvas labels when sidebar edits change
     connect(m_nameEdit, &QLineEdit::textChanged, this, &SymbolEditor::updateOverlayLabels);
@@ -2001,6 +2323,11 @@ void SymbolEditor::createSymbolInfoPanel() {
     connect(m_prefixEdit, &QLineEdit::textChanged, this, &SymbolEditor::updateCodePreview);
     connect(m_descriptionEdit, &QLineEdit::textChanged, this, &SymbolEditor::updateCodePreview);
     connect(m_categoryCombo, &QComboBox::currentTextChanged, this, &SymbolEditor::updateCodePreview);
+    connect(m_modelSourceCombo, &QComboBox::currentIndexChanged, this, &SymbolEditor::updateCodePreview);
+    connect(m_modelPathEdit, &QLineEdit::textChanged, this, &SymbolEditor::updateCodePreview);
+    connect(m_modelNameEdit, &QLineEdit::textChanged, this, &SymbolEditor::updateCodePreview);
+    connect(m_modelPathEdit, &QLineEdit::editingFinished, this, &SymbolEditor::tryAutoDetectModelName);
+    connect(m_modelSourceCombo, &QComboBox::currentIndexChanged, this, &SymbolEditor::tryAutoDetectModelName);
 }
 
 void SymbolEditor::createLibraryBrowser() {
@@ -2386,19 +2713,32 @@ void SymbolEditor::onSave() {
     m_symbol.setDescription(m_descriptionEdit->text());
     m_symbol.setCategory(m_categoryCombo->currentText());
     m_symbol.setReferencePrefix(m_prefixEdit->text());
+    m_symbol.setModelSource(m_modelSourceCombo->currentData().toString());
+    m_symbol.setModelPath(m_modelPathEdit->text());
+    m_symbol.setModelName(m_modelNameEdit->text());
     emit symbolSaved(m_symbol);
 }
 
 void SymbolEditor::onSaveToLibrary() {
-    if (m_nameEdit->text().isEmpty()) {
-        QMessageBox::warning(this, "Error", "Please enter a symbol name.");
-        return;
+    if (m_nameEdit->text().trimmed().isEmpty()) {
+        bool ok = false;
+        QString name = QInputDialog::getText(this, "Symbol Name",
+                                             "Enter symbol name:", QLineEdit::Normal,
+                                             "", &ok);
+        if (!ok || name.trimmed().isEmpty()) {
+            QMessageBox::warning(this, "Error", "Please enter a symbol name.");
+            return;
+        }
+        m_nameEdit->setText(name.trimmed());
     }
 
-    m_symbol.setName(m_nameEdit->text());
+    m_symbol.setName(m_nameEdit->text().trimmed());
     m_symbol.setDescription(m_descriptionEdit->text());
     m_symbol.setCategory(m_categoryCombo->currentText());
     m_symbol.setReferencePrefix(m_prefixEdit->text());
+    m_symbol.setModelSource(m_modelSourceCombo->currentData().toString());
+    m_symbol.setModelPath(m_modelPathEdit->text());
+    m_symbol.setModelName(m_modelNameEdit->text());
 
     QStringList libNames;
     for (SymbolLibrary* lib : SymbolLibraryManager::instance().libraries())
@@ -2416,7 +2756,7 @@ void SymbolEditor::onSaveToLibrary() {
             if (!ok || libName.isEmpty()) return;
 
             auto* userLib = new SymbolLibrary(libName, false);
-            userLib->setPath(QDir::homePath() + "/.viora_eda/symbols/" + libName.toLower().replace(" ", "_") + ".sclib");
+            userLib->setPath(QDir::homePath() + "/ViospiceLib/sym/" + libName.toLower().replace(" ", "_") + ".sclib");
             SymbolLibraryManager::instance().addLibrary(userLib);
         } else {
             return;
@@ -2436,7 +2776,7 @@ void SymbolEditor::onSaveToLibrary() {
             if (!ok2 || libName.isEmpty()) return;
 
             auto* userLib = new SymbolLibrary(libName, false);
-            userLib->setPath(QDir::homePath() + "/.viora_eda/symbols/" + libName.toLower().replace(" ", "_") + ".sclib");
+            userLib->setPath(QDir::homePath() + "/ViospiceLib/sym/" + libName.toLower().replace(" ", "_") + ".sclib");
             SymbolLibraryManager::instance().addLibrary(userLib);
         } else {
             libName = selection;
@@ -2447,7 +2787,7 @@ void SymbolEditor::onSaveToLibrary() {
     if (!lib) return;
 
     lib->addSymbol(m_symbol);
-    QDir dir(QDir::homePath() + "/.viora_eda/symbols");
+    QDir dir(QDir::homePath() + "/ViospiceLib/sym");
     if (!dir.exists()) dir.mkpath(".");
 
     if (lib->save()) {
@@ -2464,6 +2804,49 @@ void SymbolEditor::onSaveToLibrary() {
     } else {
         QMessageBox::critical(this, "Error", "Failed to save library file.");
     }
+}
+
+void SymbolEditor::onExportVioSym() {
+    if (m_nameEdit->text().trimmed().isEmpty()) {
+        bool ok = false;
+        QString name = QInputDialog::getText(this, "Symbol Name",
+                                             "Enter symbol name:", QLineEdit::Normal,
+                                             "", &ok);
+        if (!ok || name.trimmed().isEmpty()) {
+            QMessageBox::warning(this, "Export", "Please enter a symbol name before exporting.");
+            return;
+        }
+        m_nameEdit->setText(name.trimmed());
+    }
+
+    QString baseDir = QDir::homePath() + "/ViospiceLib/sym";
+    QDir().mkpath(baseDir);
+    QString suggested = QDir(baseDir).filePath(m_nameEdit->text().trimmed() + ".viosym");
+
+    QString path = runThemedSaveFileDialog(this, "Export Symbol (.viosym)", "Viora Symbol (*.viosym)", suggested);
+    if (path.isEmpty()) return;
+    if (!path.endsWith(".viosym", Qt::CaseInsensitive)) path += ".viosym";
+
+    SymbolDefinition def = symbolDefinition();
+    QJsonDocument doc(def.toJson());
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        QMessageBox::critical(this, "Export Failed", "Could not write symbol file.");
+        return;
+    }
+    file.write(doc.toJson(QJsonDocument::Indented));
+    file.close();
+
+    SymbolLibraryManager::instance().reloadUserLibraries();
+    populateLibraryTree();
+    statusBar()->showMessage("Exported symbol to " + path, 4000);
+    if (m_undoStack) m_undoStack->setClean();
+}
+
+void SymbolEditor::onRefreshLibraries() {
+    SymbolLibraryManager::instance().reloadUserLibraries();
+    populateLibraryTree();
+    statusBar()->showMessage("Libraries refreshed.", 3000);
 }
 
 void SymbolEditor::onRotateCW() {
@@ -3358,7 +3741,7 @@ void SymbolEditor::onBrowseFootprint() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void SymbolEditor::onImportKicadSymbol() {
-    QString path = QFileDialog::getOpenFileName(this, "Import KiCad Symbol", "", "KiCad Symbols (*.kicad_sym)");
+    QString path = runThemedOpenFileDialog(this, "Import KiCad Symbol", "KiCad Symbols (*.kicad_sym)");
     if (path.isEmpty()) return;
 
     QStringList names = KicadSymbolImporter::getSymbolNames(path);
@@ -3379,10 +3762,16 @@ void SymbolEditor::onImportKicadSymbol() {
     }
 }
 
+void SymbolEditor::onImportLtspiceSymbol() {
+    const QString path = runThemedOpenFileDialog(this, "Import LTspice Symbol", "LTspice Symbols (*.asy)");
+    if (path.isEmpty()) return;
+    importLtspiceSymbol(path);
+}
+
 #include <QBuffer>
 
 void SymbolEditor::onImportImage() {
-    QString path = QFileDialog::getOpenFileName(this, "Import Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.svg)");
+    QString path = runThemedOpenFileDialog(this, "Import Image", "Images (*.png *.jpg *.jpeg *.bmp *.svg)");
     if (path.isEmpty()) return;
 
     QImage img(path);
@@ -3639,23 +4028,76 @@ void SymbolEditor::keyPressEvent(QKeyEvent* event) {
     QMainWindow::keyPressEvent(event);
 }
 
+void SymbolEditor::setProjectKey(const QString& key) {
+    m_projectKey = key.trimmed();
+    const QString stateKey = symbolEditorStateKey(m_projectKey);
+    QByteArray geom = ConfigManager::instance().windowGeometry(stateKey);
+    QByteArray state = ConfigManager::instance().windowState(stateKey);
+    if (geom.isEmpty()) {
+        // Fall back to global editor state
+        geom = ConfigManager::instance().windowGeometry("SymbolEditor");
+        state = ConfigManager::instance().windowState("SymbolEditor");
+    }
+    if (!geom.isEmpty()) {
+        restoreGeometry(geom);
+    } else {
+        resize(1100, 720);
+        if (QScreen* screen = QGuiApplication::primaryScreen()) {
+            const QRect area = screen->availableGeometry();
+            move(area.center() - QPoint(width() / 2, height() / 2));
+        }
+    }
+    if (!state.isEmpty()) restoreState(state);
+}
+
 void SymbolEditor::closeEvent(QCloseEvent* event) {
     if (m_undoStack && !m_undoStack->isClean()) {
-        QMessageBox::StandardButton reply = QMessageBox::question(this, "Unsaved Changes",
-            "You have unsaved changes. Would you like to save them before closing?",
-            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
-        
-        if (reply == QMessageBox::Save) {
+        QMessageBox msg(this);
+        msg.setWindowTitle("Unsaved Changes");
+        msg.setText("You have unsaved changes. Would you like to save them before closing?");
+        QPushButton* saveAsBtn = msg.addButton("Save As...", QMessageBox::AcceptRole);
+        QPushButton* saveLibBtn = msg.addButton("Save to Library", QMessageBox::AcceptRole);
+        QPushButton* discardBtn = msg.addButton("Discard", QMessageBox::DestructiveRole);
+        msg.addButton("Cancel", QMessageBox::RejectRole);
+        msg.setDefaultButton(saveAsBtn);
+
+        msg.exec();
+        QAbstractButton* clicked = msg.clickedButton();
+        if (clicked == saveAsBtn) {
+            onExportVioSym();
+            if (m_undoStack->isClean()) event->accept();
+            else event->ignore();
+        } else if (clicked == saveLibBtn) {
             onSaveToLibrary();
             if (m_undoStack->isClean()) event->accept();
             else event->ignore();
-        } else if (reply == QMessageBox::Discard) {
+        } else if (clicked == discardBtn) {
             event->accept();
         } else {
             event->ignore();
         }
     } else {
         event->accept();
+    }
+    if (event->isAccepted()) {
+        ConfigManager::instance().saveWindowState(symbolEditorStateKey(m_projectKey), saveGeometry(), saveState());
+    }
+}
+
+void SymbolEditor::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    if (QScreen* screen = window()->screen()) {
+        const QRect area = screen->availableGeometry();
+        QRect g = frameGeometry();
+        if (g.height() > area.height() || g.width() > area.width()) {
+            const int w = qMin(g.width(), area.width());
+            const int h = qMin(g.height(), area.height());
+            resize(w, h);
+            g = frameGeometry();
+        }
+        if (!area.contains(g.center())) {
+            move(area.center() - QPoint(width() / 2, height() / 2));
+        }
     }
 }
 
@@ -3794,6 +4236,7 @@ void SymbolEditor::onCanvasContextMenu(const QPoint& pos) {
         // Empty space context menu
         menu.addAction(getThemeIcon(":/icons/toolbar_new.png"), "New Symbol", this, &SymbolEditor::onNewSymbol);
         menu.addAction(getThemeIcon(":/icons/check.svg"), "Save to Library", this, &SymbolEditor::onSaveToLibrary);
+        menu.addAction(getThemeIcon(":/icons/toolbar_file.png"), "Save As...", this, &SymbolEditor::onExportVioSym);
         menu.addAction(getThemeIcon(":/icons/schematic_editor.png"), "Place in Schematic", this, &SymbolEditor::onPlaceInSchematic);
         
         menu.addSeparator();
@@ -3843,9 +4286,36 @@ void SymbolEditor::updateCodePreview() {
     m_codePreview->setPlainText(doc.toJson(QJsonDocument::Indented));
 }
 
+void SymbolEditor::tryAutoDetectModelName() {
+    if (!m_modelNameEdit || !m_modelPathEdit || !m_modelSourceCombo) return;
+    if (!m_modelNameEdit->text().trimmed().isEmpty()) return;
+    const QString rawPath = m_modelPathEdit->text().trimmed();
+    if (rawPath.isEmpty()) return;
+    const QString source = m_modelSourceCombo->currentData().toString();
+    const QString resolved = resolveModelPathForEditor(rawPath, source);
+    if (resolved.isEmpty()) return;
+    const QString prefix = m_prefixEdit ? m_prefixEdit->text() : QString();
+    const QString detected = detectModelNameFromFile(resolved, prefix);
+    if (!detected.isEmpty()) {
+        m_modelNameEdit->setText(detected);
+    }
+}
+
 void SymbolEditor::onMoveExactly() {}
 void SymbolEditor::onAddPrimitiveExact() {}
-void SymbolEditor::onImportLtspiceSymbol() {}
 bool SymbolEditor::importKicadSymbol(const QString&, const QString&) { return false; }
-bool SymbolEditor::importLtspiceSymbol(const QString&) { return false; }
+bool SymbolEditor::importLtspiceSymbol(const QString& path) {
+    if (path.isEmpty()) return false;
+    auto result = LtspiceSymbolImporter::importSymbolDetailed(path);
+    if (!result.success || !result.symbol.isValid()) {
+        const QString msg = result.errorMessage.isEmpty()
+                                ? "Failed to import LTspice symbol."
+                                : result.errorMessage;
+        QMessageBox::critical(this, "Import Error", msg);
+        return false;
+    }
+    setSymbolDefinition(result.symbol);
+    tryAutoDetectModelName();
+    return true;
+}
 bool SymbolEditor::loadLibrary(const QString&) { return false; }

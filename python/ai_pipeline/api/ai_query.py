@@ -16,7 +16,8 @@ def run_ai_query(prompt, schematic_path, debug=False):
     client = genai.Client(api_key=api_key)
     model_name = "gemini-2.0-flash-thinking-exp-01-21"
 
-    registry = ToolRegistry(schematic_path)
+    octopart_key = os.environ.get("OCTOPART_API_KEY")
+    registry = ToolRegistry(schematic_path, octopart_api_key=octopart_key)
     tools = get_tools_schema()
 
     system_instruction = """

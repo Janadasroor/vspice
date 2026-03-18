@@ -2,6 +2,7 @@
 #define SCHEMATICSELECTTOOL_H
 
 #include "schematic_tool.h"
+#include <QSet>
 
 class SchematicSelectTool : public SchematicTool {
     Q_OBJECT
@@ -30,10 +31,29 @@ private:
         int anchorPointIndex;
         bool isHorizontal; 
         bool isVertical;
-        QPointF initialNeighborPos; // Store neighbor position at drag start
+        QPointF neighborScenePos; // Immediate neighbor position at drag start
+        QPointF externalAnchorScenePos; // External anchor (if any)
         bool neighborExternallyAnchored = false;
+        bool lockNeighborElbow = false;
+        bool neighborAnchorIsSegment = false;
+        bool neighborAnchorSegmentHorizontal = false;
+        bool neighborAnchorSegmentVertical = false;
+        QPointF neighborAnchorSegmentA;
+        QPointF neighborAnchorSegmentB;
     };
     QList<AttachedWire> m_attachedWires;
+
+    struct WireEndpointAnchor {
+        bool startAnchored = false;
+        class SchematicItem* startItem = nullptr;
+        int startPinIndex = -1;
+        QPointF startScene;
+        bool endAnchored = false;
+        class SchematicItem* endItem = nullptr;
+        int endPinIndex = -1;
+        QPointF endScene;
+    };
+    QMap<class WireItem*, WireEndpointAnchor> m_initialWireAnchors;
 
     struct TJunctionTracker {
         class WireItem* movingWire;
@@ -47,6 +67,8 @@ private:
     QPoint m_lastMousePosOrigin;
     QPointF m_initialMouseScenePos;
     bool m_isDragging = false;
+    bool m_axisLockActive = false;
+    bool m_axisLockHorizontal = true;
     
     // Rubber band selection
     bool m_rubberBandActive = false;
@@ -56,6 +78,7 @@ private:
     // Undo/Redo tracking
     QMap<class SchematicItem*, QPointF> m_initialPositions;
     QMap<class WireItem*, QList<QPointF>> m_initialWirePoints;
+    QSet<class WireItem*> m_topologyLockedWires;
 
     // Segment drag mode for selected wires
     bool m_segmentDragActive = false;
@@ -90,7 +113,22 @@ private:
 
     void updatePinHoverCue(const QPointF& scenePos);
     void clearPinHoverCue();
+    bool captureEndpointAnchor(SchematicView* view,
+                               WireItem* ownerWire,
+                               const QPointF& endpointScene,
+                               WireEndpointAnchor& anchor,
+                               bool isStart);
+    QPointF resolveAnchorScene(const WireEndpointAnchor& anchor, bool isStart) const;
+    void applyEndpointAnchorsToWire(WireItem* wire, const WireEndpointAnchor& anchor);
     QList<QPointF> simplifyWirePoints(const QList<QPointF>& points) const;
+    void adjustEndpointOrientationForDrag(const AttachedWire& aw,
+                                          const QPointF& currentPinScene,
+                                          bool keepNeighborFixed,
+                                          bool& isHorizontal,
+                                          bool& isVertical) const;
+    QPointF adjustFixedNeighborSceneForSliding(const AttachedWire& aw,
+                                               const QPointF& currentPinScene,
+                                               const QPointF& fixedNeighborScene) const;
 };
 
 #endif // SCHEMATICSELECTTOOL_H

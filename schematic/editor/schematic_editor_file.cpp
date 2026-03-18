@@ -36,6 +36,8 @@
 #include <QTimer>
 #include <QJsonObject>
 #include <QSet>
+#include <QDate>
+#include <QTextStream>
 #include <cmath>
 #include <algorithm>
 
@@ -1193,3 +1195,210 @@ void SchematicEditor::onPlaceSymbolInSchematic(const SymbolDefinition& symbol) {
     
     statusBar()->showMessage(QString("Placed symbol: %1").arg(symbol.name()), 3000);
 }
+
+// ─── Create New Symbol From Schematic ──────────────────────────────────────
+
+#include "../items/generic_component_item.h"
+#include "../../symbols/models/symbol_primitive.h"
+#include "../../core/config_manager.h"
+
+/**
+ * @brief Analyse selected (or all) GenericComponentItem instances on the
+ *        canvas and build a default SymbolDefinition with an LTspice-style
+ *        IC body: input pins on the left, output pins on the right.
+ *
+ *        If the canvas contains no components, a generic 4-pin stub is
+ *        returned (2 input / 2 output).
+ */
+SymbolDefinition SchematicEditor::buildSymbolFromSelection() const {
+    using Flux::Model::SymbolPrimitive;
+
+    // ── 1. Collect pins from selected (or all) GenericComponentItems ─────
+    struct PinInfo {
+        QString name;
+        QString type;  // "Input", "Output", "BiDir", "Power", "Passive", ""
+    };
+    QList<PinInfo> inputPins, outputPins, otherPins;
+
+    auto* scene = m_scene ? m_scene : nullptr;
+    if (!scene) {
+        // Return minimal stub if no scene
+        SymbolDefinition stub("NewSymbol");
+        return stub;
+    }
+
+    QList<QGraphicsItem*> candidates;
+    QList<QGraphicsItem*> selected = scene->selectedItems();
+    if (!selected.isEmpty()) {
+        candidates = selected;
+    } else {
+        candidates = scene->items();
+    }
+
+    for (QGraphicsItem* gi : candidates) {
+        auto* comp = dynamic_cast<GenericComponentItem*>(gi);
+        if (!comp) continue;
+
+        const SymbolDefinition& sym = comp->symbol();
+        for (const SymbolPrimitive& prim : sym.primitives()) {
+            if (prim.type != SymbolPrimitive::Pin) continue;
+
+            PinInfo info;
+            info.name = prim.data.value("name").toString();
+            if (info.name.isEmpty()) info.name = prim.data.value("label").toString();
+            if (info.name.isEmpty()) info.name = QString("P%1").arg(outputPins.size() + inputPins.size() + otherPins.size() + 1);
+            info.type = prim.data.value("type").toString();
+
+            const QString lo = info.type.toLower();
+            if (lo == "input" || lo == "in") {
+                inputPins.append(info);
+            } else if (lo == "output" || lo == "out") {
+                outputPins.append(info);
+            } else {
+                otherPins.append(info);
+            }
+        }
+    }
+
+    // ── 2. If no pin data found, use a generic 4-pin stub ────────────────
+    if (inputPins.isEmpty() && outputPins.isEmpty() && otherPins.isEmpty()) {
+        inputPins  = { {"IN1", "Input"}, {"IN2", "Input"} };
+        outputPins = { {"OUT1", "Output"}, {"OUT2", "Output"} };
+    }
+
+    // Distribute otherPins evenly between left and right
+    for (int i = 0; i < otherPins.size(); ++i) {
+        if (i % 2 == 0) inputPins.append(otherPins[i]);
+        else            outputPins.append(otherPins[i]);
+    }
+
+    // ── 3. Compute body geometry ─────────────────────────────────────────
+    const int pinCount = qMax(inputPins.size(), outputPins.size());
+    const qreal pinSpacing = 20.0;
+    const qreal bodyH = qMax(60.0, pinCount * pinSpacing + pinSpacing);
+    const qreal bodyW = 60.0;
+    const qreal halfH = bodyH / 2.0;
+    const qreal halfW = bodyW / 2.0;
+
+    SymbolDefinition def;
+    // Name and prefix will be filled in by the dialog before calling this
+
+    // ── 4. Body rectangle ─────────────────────────────────────────────────
+    {
+        SymbolPrimitive rect;
+        rect.type = SymbolPrimitive::Rect;
+        rect.data["x"] = -halfW;
+        rect.data["y"] = -halfH;
+        rect.data["width"]  = bodyW;
+        rect.data["height"] = bodyH;
+        rect.data["filled"] = false;
+        rect.data["lineWidth"] = 1.5;
+        def.addPrimitive(rect);
+    }
+
+    // ── 5. Input pins (left side) ─────────────────────────────────────────
+    auto addPin = [&](const QString& name, const QString& type, qreal x, qreal y, const QString& orientation) {
+        SymbolPrimitive pin;
+        pin.type = SymbolPrimitive::Pin;
+        pin.data["x"] = x;
+        pin.data["y"] = y;
+        pin.data["length"] = 15.0;
+        pin.data["name"]   = name;
+        pin.data["label"]  = name;
+        pin.data["type"]   = type;
+        pin.data["orientation"] = orientation;
+        pin.data["visible"] = true;
+        def.addPrimitive(pin);
+    };
+
+    const qreal topOffset = -halfH + pinSpacing / 2.0;
+    for (int i = 0; i < inputPins.size(); ++i) {
+        qreal y = topOffset + i * pinSpacing;
+        addPin(inputPins[i].name, "Input", -halfW, y, "Right");
+    }
+    for (int i = 0; i < outputPins.size(); ++i) {
+        qreal y = topOffset + i * pinSpacing;
+        addPin(outputPins[i].name, "Output", halfW, y, "Left");
+    }
+
+    return def;
+}
+
+void SchematicEditor::onCreateSymbolFromSchematic() {
+    using Flux::Model::SymbolPrimitive;
+
+    // ── Step 1: Ask for symbol metadata ───────────────────────────────────
+    bool ok = false;
+    QString symbolName = QInputDialog::getText(
+        this, "Create New Symbol from Schematic",
+        "Symbol Name:", QLineEdit::Normal, "MySubckt", &ok);
+    if (!ok || symbolName.trimmed().isEmpty()) return;
+    symbolName = symbolName.trimmed();
+
+    QString prefix = QInputDialog::getText(
+        this, "Symbol Reference Prefix",
+        "Reference Prefix (e.g. X, U, Q):", QLineEdit::Normal, "X", &ok);
+    if (!ok) return;
+    if (prefix.trimmed().isEmpty()) prefix = "X";
+    prefix = prefix.trimmed();
+
+    // Category selection
+    QStringList categories = {"Integrated Circuits", "Subcircuits", "Custom", "Other"};
+    QString category = QInputDialog::getItem(
+        this, "Symbol Category", "Category:", categories, 0, false, &ok);
+    if (!ok) category = "Custom";
+
+    // ── Step 2: Build the SymbolDefinition from selected items ───────────
+    SymbolDefinition def = buildSymbolFromSelection();
+    def.setName(symbolName);
+    def.setReferencePrefix(prefix);
+    def.setCategory(category);
+    def.setDescription(QString("Custom subcircuit created from schematic on %1")
+                       .arg(QDate::currentDate().toString(Qt::ISODate)));
+    def.setModelSource("sub");
+    def.setModelPath(symbolName + ".sub");
+    def.setModelName(symbolName);
+
+    // ── Step 3: Collect pin list for the .sub stub ───────────────────────
+    QStringList pinNames;
+    for (const SymbolPrimitive& prim : def.primitives()) {
+        if (prim.type != SymbolPrimitive::Pin) continue;
+        QString name = prim.data.value("name").toString();
+        if (!name.isEmpty() && !pinNames.contains(name))
+            pinNames.append(name);
+    }
+
+    // ── Step 4: Save a .sub SPICE subcircuit stub ────────────────────────
+    QString libSubDir;
+    const QStringList roots = ConfigManager::instance().libraryRoots();
+    if (!roots.isEmpty()) {
+        libSubDir = QDir(roots.first()).filePath("sub");
+    } else {
+        libSubDir = QDir::homePath() + "/ViospiceLib/sub";
+    }
+    QDir().mkpath(libSubDir);
+
+    const QString subFilePath = QDir(libSubDir).filePath(symbolName + ".sub");
+    QFile subFile(subFilePath);
+    if (subFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream ts(&subFile);
+        ts << "* Subcircuit: " << symbolName << "\n";
+        ts << "* Generated by viospice – " << QDate::currentDate().toString(Qt::ISODate) << "\n";
+        ts << "*\n";
+        ts << ".subckt " << symbolName;
+        for (const QString& pin : pinNames) ts << " " << pin;
+        ts << "\n";
+        ts << "* TODO: add your netlist here\n";
+        ts << ".ends " << symbolName << "\n";
+        subFile.close();
+        statusBar()->showMessage(
+            QString("Stub saved: %1").arg(subFilePath), 4000);
+    } else {
+        QMessageBox::warning(this, "Warning",
+            QString("Could not write subcircuit stub to:\n%1\n\nYou can create it manually later.").arg(subFilePath));
+    }
+
+    // ── Step 5: Open Symbol Editor with the pre-built definition ─────────
+    openSymbolEditorWindow(symbolName, def);
+}
+

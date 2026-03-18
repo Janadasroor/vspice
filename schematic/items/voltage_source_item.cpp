@@ -26,7 +26,7 @@ VoltageSourceItem::VoltageSourceItem(QPointF pos, const QString& value, SourceTy
     m_brush = QBrush(Qt::NoBrush);
     
     rebuildPrimitives();
-    createLabels(QPointF(35, -15), QPointF(35, 15));
+    createLabels(QPointF(30, -15), QPointF(30, 15));
     setValue(value);
 }
 
@@ -179,8 +179,11 @@ void VoltageSourceItem::setSourceType(SourceType type) {
 
 void VoltageSourceItem::updateValue() {
     QString tail;
-    if (m_seriesResistance != "0" && !m_seriesResistance.isEmpty()) tail += " Rser=" + m_seriesResistance;
-    if (m_parallelCapacitance != "0" && !m_parallelCapacitance.isEmpty()) tail += " Cpar=" + m_parallelCapacitance;
+    const bool allowParasitics = (m_sourceType == DC);
+    if (allowParasitics) {
+        if (m_seriesResistance != "0" && !m_seriesResistance.isEmpty()) tail += " Rser=" + m_seriesResistance;
+        if (m_parallelCapacitance != "0" && !m_parallelCapacitance.isEmpty()) tail += " Cpar=" + m_parallelCapacitance;
+    }
 
     QString acStr;
     if (m_acAmplitude != "0" && !m_acAmplitude.isEmpty()) {
@@ -245,27 +248,27 @@ void VoltageSourceItem::rebuildPrimitives() {
     m_primitives.clear();
     
     // leads
-    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(0, -45), QPointF(0, -25)));
-    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(0, 25), QPointF(0, 45)));
+    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(0, -45), QPointF(0, -22.5)));
+    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(0, 22.5), QPointF(0, 45)));
     
     // Outer Circle
-    m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(0, 0), 25, false));
+    m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(0, 0), 22.5, false));
     
     if (m_sourceType == DC) {
-        m_primitives.push_back(std::make_unique<TextPrimitive>("+", QPointF(0, -12), 12));
-        m_primitives.push_back(std::make_unique<TextPrimitive>("-", QPointF(0, 12), 12));
+        m_primitives.push_back(std::make_unique<TextPrimitive>("+", QPointF(0, -10), 12));
+        m_primitives.push_back(std::make_unique<TextPrimitive>("-", QPointF(0, 10), 12));
     } else if (m_sourceType == Sine) {
         QList<QPointF> sineWave;
-        for (int i = -15; i <= 15; ++i) {
-            sineWave.append(QPointF(i, -10 * std::sin(i * M_PI / 15.0)));
+        for (int i = -13; i <= 13; ++i) {
+            sineWave.append(QPointF(i, -9 * std::sin(i * M_PI / 13.0)));
         }
         m_primitives.push_back(std::make_unique<PolygonPrimitive>(sineWave, false)); 
     } else if (m_sourceType == Pulse) {
         QList<QPointF> pulseWave;
-        pulseWave << QPointF(-15, 8) << QPointF(-10, 8) << QPointF(-10, -8) << QPointF(0, -8) << QPointF(0, 8) << QPointF(10, 8) << QPointF(10, -8) << QPointF(15, -8);
+        pulseWave << QPointF(-13, 7) << QPointF(-9, 7) << QPointF(-9, -7) << QPointF(0, -7) << QPointF(0, 7) << QPointF(9, 7) << QPointF(9, -7) << QPointF(13, -7);
         m_primitives.push_back(std::make_unique<PolygonPrimitive>(pulseWave, false));
     } else if (m_sourceType == Behavioral) {
-        m_primitives.push_back(std::make_unique<TextPrimitive>("B", QPointF(0, 0), 16));
+        m_primitives.push_back(std::make_unique<TextPrimitive>("B", QPointF(0, 0), 14));
     }
     
     // Pin markers

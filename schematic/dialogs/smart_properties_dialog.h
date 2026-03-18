@@ -9,6 +9,7 @@
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QMap>
 #include <functional>
@@ -19,6 +20,7 @@
 struct PropertyField {
     enum Type {
         Text,
+        MultilineText,
         Integer,
         Double,
         Boolean,

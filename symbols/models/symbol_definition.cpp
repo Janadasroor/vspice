@@ -314,6 +314,9 @@ QJsonObject SymbolDefinition::toJson() const {
     json["defaultValue"] = m_defaultValue;
     json["defaultFootprint"] = m_defaultFootprint;
     json["spiceModelName"] = m_spiceModelName;
+    json["modelSource"] = m_modelSource;
+    json["modelPath"] = m_modelPath;
+    json["modelName"] = m_modelName;
     json["unitCount"] = m_unitCount;
     json["unitsInterchangeable"] = m_unitsInterchangeable;
     json["isPowerSymbol"] = m_isPowerSymbol;
@@ -358,6 +361,9 @@ SymbolDefinition SymbolDefinition::fromJson(const QJsonObject& json) {
     def.m_defaultValue = json["defaultValue"].toString();
     def.m_defaultFootprint = json["defaultFootprint"].toString();
     def.m_spiceModelName = json["spiceModelName"].toString();
+    def.m_modelSource = json["modelSource"].toString();
+    def.m_modelPath = json["modelPath"].toString();
+    def.m_modelName = json["modelName"].toString();
     def.m_unitCount = json["unitCount"].toInt(1);
     def.m_unitsInterchangeable = json["unitsInterchangeable"].toBool(true);
     def.m_isPowerSymbol = json["isPowerSymbol"].toBool(false);
@@ -414,6 +420,9 @@ SymbolDefinition SymbolDefinition::clone() const {
     copy.m_defaultValue = m_defaultValue;
     copy.m_defaultFootprint = m_defaultFootprint;
     copy.m_spiceModelName = m_spiceModelName;
+    copy.m_modelSource = m_modelSource;
+    copy.m_modelPath = m_modelPath;
+    copy.m_modelName = m_modelName;
     copy.m_spiceNodeMapping = m_spiceNodeMapping;
     copy.m_footprintFilters = m_footprintFilters;
     copy.m_unitCount = m_unitCount;

@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QDir>
+#include <QFileInfo>
 #include <QDebug>
 
 using Flux::Model::SymbolDefinition;
@@ -200,7 +201,7 @@ SymbolLibraryManager& SymbolLibraryManager::instance() {
 
 SymbolLibraryManager::SymbolLibraryManager() {
     loadBuiltInLibrary();
-    loadUserLibraries(QDir::homePath() + "/.viora_eda/symbols");
+    loadUserLibraries(QDir::homePath() + "/ViospiceLib/sym");
 }
 
 SymbolLibraryManager::~SymbolLibraryManager() {
@@ -290,9 +291,10 @@ void SymbolLibraryManager::loadUserLibraries(const QString& userLibPath) {
     QStringList paths = ConfigManager::instance().symbolPaths();
     
     // Add default user path if not present (optional, but good for UX)
-    QString defaultPath = QDir::homePath() + "/.viora_eda/symbols";
+    QString defaultPath = QDir::homePath() + "/ViospiceLib/sym";
     if (!paths.contains(defaultPath)) paths.append(defaultPath);
 
+    QMap<QString, SymbolLibrary*> looseLibs;
     for (const QString& path : paths) {
         QDir dir(path);
         if (!dir.exists()) continue;
@@ -322,7 +324,44 @@ void SymbolLibraryManager::loadUserLibraries(const QString& userLibPath) {
                 qWarning() << "Failed to load library:" << filePath;
             }
         }
+
+        QDirIterator symIt(path, QStringList() << "*.viosym", QDir::Files, QDirIterator::Subdirectories);
+        while (symIt.hasNext()) {
+            QString filePath = symIt.next();
+            QFile file(filePath);
+            if (!file.open(QIODevice::ReadOnly)) continue;
+            QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+            if (!doc.isObject()) continue;
+            QJsonObject obj = doc.object();
+            if (obj.contains("library")) continue;
+            SymbolDefinition sym = SymbolDefinition::fromJson(obj);
+            if (sym.name().trimmed().isEmpty()) {
+                sym.setName(QFileInfo(filePath).completeBaseName());
+            }
+
+            SymbolLibrary* lib = nullptr;
+            const QString libKey = QFileInfo(filePath).absolutePath();
+            if (looseLibs.contains(libKey)) {
+                lib = looseLibs.value(libKey);
+            } else {
+                const QString libName = QString("Symbols: %1").arg(QFileInfo(libKey).fileName());
+                lib = new SymbolLibrary(libName, false);
+                lib->setPath(libKey);
+                addLibrary(lib);
+                looseLibs.insert(libKey, lib);
+            }
+            lib->addSymbol(sym);
+        }
     }
+}
+
+void SymbolLibraryManager::reloadUserLibraries() {
+    for (int i = m_libraries.size() - 1; i >= 0; --i) {
+        if (!m_libraries[i]->isBuiltIn()) {
+            delete m_libraries.takeAt(i);
+        }
+    }
+    loadUserLibraries(QDir::homePath() + "/ViospiceLib/sym");
 }
 
 QStringList SymbolLibraryManager::allCategories() const {
@@ -747,7 +786,7 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
     reg.addPrimitive(SymbolPrimitive::createPin(QPointF(45, 0), 3, "OUT"));
     addSym(reg);
 
-    QString baseDir = QDir::homePath() + "/.viora_eda/symbols";
+    QString baseDir = QDir::homePath() + "/ViospiceLib/sym";
     for (auto it = catLibs.begin(); it != catLibs.end(); ++it) {
         QString cat = it.key();
         SymbolLibrary* lib = it.value();

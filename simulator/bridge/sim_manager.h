@@ -2,7 +2,7 @@
 #define SIM_MANAGER_QT_H
 
 #include <QObject>
-#include "../core/sim_engine.h"
+#include "../core/sim_results.h"
 #include "sim_schematic_bridge.h"
 
 /**
@@ -20,6 +20,9 @@ public:
     void runParametricSweep(QGraphicsScene* scene, NetManager* netMgr, const QString& component, const QString& param, double start, double stop, int steps);
     void runSensitivity(QGraphicsScene* scene, NetManager* netMgr, const QString& targetSignal);
     
+    // Ngspice Integration
+    void runNgspiceSimulation(QGraphicsScene* scene, NetManager* netMgr, const SimAnalysisConfig& config);
+
     // Debugger / Pre-flight check
     QStringList preflightCheck(QGraphicsScene* scene, NetManager* netMgr, SimNetlist& outNetlist);
     void runWithNetlist(const SimNetlist& netlist);
@@ -36,12 +39,14 @@ signals:
     void simulationFinished(const SimResults& results);
     void simulationPaused(bool paused);
     void realTimePointReceived(double t, const std::vector<double>& values);
+    void realTimeDataBatchReceived(const std::vector<double>& times, const std::vector<std::vector<double>>& values);
     void errorOccurred(const QString& msg);
     void logMessage(const QString& msg);
 
 private slots:
     void onInteractiveStateChanged();
     void onRealTimeTick();
+    void cleanupSimulation();
 
 private:
     explicit SimManager(QObject* parent = nullptr);

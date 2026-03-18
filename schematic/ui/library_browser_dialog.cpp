@@ -360,7 +360,7 @@ void LibraryBrowserDialog::performSymbolSearch(const QString& query) {
         {"Diode", "Semiconductors"}, {"NPN Transistor", "Semiconductors"}, {"PNP Transistor", "Semiconductors"},
         {"NMOS Transistor", "Semiconductors"}, {"PMOS Transistor", "Semiconductors"},
         {"IC", "Integrated Circuits"}, {"RAM", "Integrated Circuits"}, {"OpAmp", "Integrated Circuits"},
-        {"Switch", "Interactive"}, {"LED", "Interactive"}, {"GND", "Power"}, {"VCC", "Power"},
+        {"Switch", "Interactive"}, {"LED", "Interactive"}, {"Blinking LED", "Interactive"}, {"GND", "Power"}, {"VCC", "Power"},
         {"Oscilloscope Instrument", "Simulation"}, {"Logic Analyzer", "Simulation"},
         {"Voltage Source (DC)", "Simulation"}, {"Voltage Source (Sine)", "Simulation"}
     };

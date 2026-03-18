@@ -74,6 +74,18 @@ void SimulationDebuggerDialog::setupUi() {
 }
 
 void SimulationDebuggerDialog::populateDiagnostics(const QStringList& diagnostics) {
+    if (diagnostics.isEmpty()) {
+        m_table->setRowCount(1);
+        auto* levelItem = new QTableWidgetItem("INFO");
+        levelItem->setForeground(QColor("#94a3b8"));
+        levelItem->setFont(QFont("Inter", 10, QFont::Bold));
+        m_table->setItem(0, 0, levelItem);
+
+        auto* msgItem = new QTableWidgetItem("No issues detected. You can run the simulation.");
+        m_table->setItem(0, 1, msgItem);
+        return;
+    }
+
     m_table->setRowCount(diagnostics.size());
     bool hasError = false;
 

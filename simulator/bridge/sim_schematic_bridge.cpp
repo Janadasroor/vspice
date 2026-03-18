@@ -651,6 +651,14 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
             nets[i].pins = filteredPins;
         }
     }
+
+    bool hasGroundNet = false;
+    for (const auto& net : nets) {
+        if (isGroundNet(net.name)) {
+            hasGroundNet = true;
+            break;
+        }
+    }
     
     // 3. Identify and register nodes
     for (const auto& net : nets) {
@@ -681,6 +689,10 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
     // Load optional project-local model libraries before mapping components.
     QStringList mappingWarnings;
     loadProjectModelLibraries(netlist, mappingWarnings);
+
+    if (!hasGroundNet) {
+        netlist.addDiagnostic("[warn] No ground reference found (GND/0). Simulation may fail.");
+    }
 
     // 4. Map components to simulator instances
     for (const auto& comp : pkg.components) {

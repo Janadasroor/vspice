@@ -15,7 +15,7 @@ DiodeItem::DiodeItem(QPointF pos, QString value, QGraphicsItem *parent)
     m_brush = QBrush(theme->schematicComponent());
     
     buildPrimitives();
-    createLabels(QPointF(-15, -27), QPointF(-22.5, 37.5));
+    createLabels(QPointF(-15, -37.5), QPointF(-22.5, 37.5));
 }
 
 void DiodeItem::buildPrimitives() {
@@ -27,11 +27,11 @@ void DiodeItem::buildPrimitives() {
     
     // Triangle (Anode -> Cathode)
     QList<QPointF> triangle;
-    triangle << QPointF(-15, -15) << QPointF(-15, 15) << QPointF(15, 0);
+    triangle << QPointF(-15, -22.5) << QPointF(-15, 22.5) << QPointF(15, 0);
     m_primitives.push_back(std::make_unique<PolygonPrimitive>(triangle, false));
     
     // Cathode bar
-    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(15, -15), QPointF(15, 15)));
+    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(15, -22.5), QPointF(15, 22.5)));
     
     // Pins
     m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(-45, 0), 3.75, true));
@@ -106,7 +106,7 @@ bool DiodeItem::fromJson(const QJsonObject& json) {
     loadPinPadMappingFromJson(json);
     setPos(QPointF(json["x"].toDouble(), json["y"].toDouble()));
     buildPrimitives();
-    createLabels(QPointF(-15, -27), QPointF(-22.5, 37.5));
+    createLabels(QPointF(-15, -37.5), QPointF(-22.5, 37.5));
     if (json.contains("refX")) {
         setReferenceLabelPos(QPointF(json["refX"].toDouble(), json["refY"].toDouble()));
     }

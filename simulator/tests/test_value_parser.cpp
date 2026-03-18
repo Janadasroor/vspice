@@ -8,7 +8,13 @@ namespace {
 void expectOk(const char* text, double expected, double tol = 1e-12) {
     double out = 0.0;
     const bool ok = SimValueParser::parseSpiceNumber(QString::fromLatin1(text), out);
+    if (!ok) {
+        std::cerr << "FAILED: parseSpiceNumber(\"" << text << "\") returned false, expected " << expected << std::endl;
+    }
     assert(ok && "expected parse success");
+    if (std::abs(out - expected) > tol * std::max(1.0, std::abs(expected))) {
+        std::cerr << "FAILED: parseSpiceNumber(\"" << text << "\") returned " << out << ", expected " << expected << std::endl;
+    }
     assert(std::abs(out - expected) <= tol * std::max(1.0, std::abs(expected)));
 }
 

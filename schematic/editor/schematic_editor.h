@@ -28,6 +28,8 @@ class SchematicPageItem;
 class NetlistEditor;
 class SymbolEditor;
 class SpiceModelArchitect;
+#include "../../symbols/models/symbol_definition.h"
+using Flux::Model::SymbolDefinition;
 
 class SchematicEditor : public QMainWindow {
     Q_OBJECT
@@ -45,7 +47,8 @@ public:
 
     // Workspace Tab Management
     void addSchematicTab(const QString& name = "Untitled.sch");
-    void openSymbolEditorWindow(const QString& name = "New Symbol");
+    void openSymbolEditorWindow(const QString& name = "New Symbol",
+                                const SymbolDefinition& preBuiltDef = SymbolDefinition());
     void addSimulationTab(const QString& name = "Simulation Results");
     void addModelArchitectTab();
     void closeTab(int index);
@@ -96,6 +99,7 @@ private slots:
     void onGenerateNetlist();
     void onOpenBOM();
     void onOpenSymbolEditor();
+    void onCreateSymbolFromSchematic();
     void onOpenSymbolFieldEditor();
     void onExportPDF();
     void onExportSVG();
@@ -189,6 +193,7 @@ private:
     void onSnippetGenerated(const QString& jsonSnippet);
     QList<ERCViolation> getErcViolations() const;
     void updateCurrentTabTitleFromFilePath(const QString& filePath);
+    SymbolDefinition buildSymbolFromSelection() const;
 
     // UI Components
     QTabWidget *m_workspaceTabs;

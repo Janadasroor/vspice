@@ -77,6 +77,7 @@ public:
     // Loading
     void loadBuiltInLibrary();
     void loadUserLibraries(const QString& userLibPath);
+    void reloadUserLibraries();
     
     // Categories across all libraries
     QStringList allCategories() const;

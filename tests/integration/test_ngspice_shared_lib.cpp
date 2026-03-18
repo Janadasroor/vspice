@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
     qDebug() << "Running simulation with netlist:" << netlistPath;
     
     QSignalSpy startedSpy(&sim, &SimulationManager::simulationStarted);
-    QSignalSpy finishedSpy(&sim, &SimulationManager::simulationFinished);
+    QSignalSpy finishedSpy(&sim, qOverload<>(&SimulationManager::simulationFinished));
     QSignalSpy outputSpy(&sim, &SimulationManager::outputReceived);
 
     sim.runSimulation(netlistPath);
@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     QTimer timer;
     timer.setSingleShot(true);
     QEventLoop loop;
-    QObject::connect(&sim, &SimulationManager::simulationFinished, &loop, &QEventLoop::quit);
+    QObject::connect(&sim, qOverload<>(&SimulationManager::simulationFinished), &loop, &QEventLoop::quit);
     QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
     timer.start(5000); // 5 seconds timeout
     loop.exec();

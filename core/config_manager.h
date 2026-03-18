@@ -26,11 +26,18 @@ public:
     QString geminiApiKey() const;
     void setGeminiApiKey(const QString& key);
 
+    QString octopartApiKey() const;
+    void setOctopartApiKey(const QString& key);
+
     QStringList symbolPaths() const;
+    QStringList rawSymbolPaths() const;
     void setSymbolPaths(const QStringList& paths);
 
     QStringList modelPaths() const;
+    QStringList rawModelPaths() const;
     void setModelPaths(const QStringList& paths);
+    QStringList libraryRoots() const;
+    void setLibraryRoots(const QStringList& roots);
 
     // Simulator Settings
     QString defaultSolver() const;
@@ -82,6 +89,7 @@ private:
     QString m_geminiApiKey;
     QStringList m_symbolPaths;
     QStringList m_modelPaths;
+    QStringList m_libraryRoots;
 
     // Simulator
     QString m_defaultSolver;

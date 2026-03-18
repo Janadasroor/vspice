@@ -8,6 +8,7 @@ LEDItem::LEDItem(QPointF pos, QGraphicsItem *parent) : SchematicItem(parent) {
     setReference("D1");
     setValue("RED");
     m_voltage = 0.0;
+    m_threshold = 1.5;
 }
 
 void LEDItem::setSimState(const QMap<QString, double>& nodeVoltages, const QMap<QString, double>&) {
@@ -38,13 +39,19 @@ void LEDItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*, QWidget*
     else if (colorVal.contains("BLUE")) baseColor = Qt::blue;
     else if (colorVal.contains("YELLOW")) baseColor = QColor(255, 255, 0);
 
-    bool lit = m_voltage > 1.5;
-    double brightness = std::clamp((m_voltage - 1.5) / 0.7, 0.0, 1.0); // 1.5V to 2.2V scaling
+    bool lit = m_voltage > m_threshold;
+    double brightness = std::clamp((m_voltage - m_threshold) / 0.7, 0.0, 1.0);
+
+    // 1.5 Draw leads
+    painter->setPen(QPen(Qt::white, 2));
+    painter->setBrush(Qt::NoBrush);
+    painter->drawLine(-45, 0, -20, 0);
+    painter->drawLine(20, 0, 45, 0);
 
     // 2. Draw Bloom/Halo (Proteus-style emission)
     if (lit) {
         // Core Halo
-        QRadialGradient coreHalo(0, 0, 25);
+        QRadialGradient coreHalo(0, 0, 22);
         QColor c1 = baseColor;
         c1.setAlpha(static_cast<int>(120 * brightness));
         coreHalo.setColorAt(0, c1);
@@ -52,21 +59,21 @@ void LEDItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*, QWidget*
         coreHalo.setColorAt(1, Qt::transparent);
         painter->setBrush(coreHalo);
         painter->setPen(Qt::NoPen);
-        painter->drawEllipse(-25, -25, 50, 50);
+        painter->drawEllipse(-22, -22, 44, 44);
 
         // Outer Glow (faint)
-        QRadialGradient outerGlow(0, 0, 45);
+        QRadialGradient outerGlow(0, 0, 38);
         QColor c2 = baseColor;
         c2.setAlpha(static_cast<int>(40 * brightness));
         outerGlow.setColorAt(0, c2);
         outerGlow.setColorAt(1, Qt::transparent);
         painter->setBrush(outerGlow);
-        painter->drawEllipse(-45, -45, 90, 90);
+        painter->drawEllipse(-38, -38, 76, 76);
     }
 
     // 3. Draw 3D Lens Body
-    QRectF lensRect(-12, -12, 24, 24);
-    QRadialGradient lensGrad(-4, -4, 12);
+    QRectF lensRect(-10, -10, 20, 20);
+    QRadialGradient lensGrad(-3, -3, 10);
     if (lit) {
         lensGrad.setColorAt(0, baseColor.lighter(150));
         lensGrad.setColorAt(1, baseColor);
@@ -81,10 +88,10 @@ void LEDItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*, QWidget*
     // Specular Highlight (Lens Reflection)
     if (lit) {
         painter->setBrush(QColor(255, 255, 255, 180));
-        painter->drawEllipse(-7, -7, 6, 4);
+        painter->drawEllipse(-6, -6, 5, 4);
     } else {
         painter->setBrush(QColor(255, 255, 255, 40));
-        painter->drawEllipse(-7, -7, 5, 3);
+        painter->drawEllipse(-6, -6, 4, 3);
     }
 
     // 4. Draw Diode Symbol (Overlay)
@@ -92,34 +99,39 @@ void LEDItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*, QWidget*
     painter->setBrush(Qt::NoBrush);
     
     QPolygonF poly;
-    poly << QPointF(-6, -6) << QPointF(-6, 6) << QPointF(6, 0);
+    poly << QPointF(-8, -8) << QPointF(-8, 8) << QPointF(8, 0);
     painter->drawPolygon(poly);
-    painter->drawLine(6, -6, 6, 6);
+    painter->drawLine(8, -8, 8, 8);
     
     // Emission Rays (Small visual cues)
     if (lit) {
         painter->setPen(QPen(baseColor.lighter(120), 1));
-        painter->drawLine(8, -8, 14, -14);
-        painter->drawLine(11, -5, 17, -11);
+        painter->drawLine(10, -10, 16, -16);
+        painter->drawLine(13, -7, 19, -13);
     }
 
     drawConnectionPointHighlights(painter);
 }
 
 QList<QPointF> LEDItem::connectionPoints() const {
-    return { QPointF(-15, 0), QPointF(15, 0) };
+    return { QPointF(-45, 0), QPointF(45, 0) };
 }
 
 QJsonObject LEDItem::toJson() const {
     QJsonObject j = SchematicItem::toJson();
     j["type"] = "LED";
+    j["threshold"] = m_threshold;
     return j;
 }
 
 bool LEDItem::fromJson(const QJsonObject& j) {
-    return SchematicItem::fromJson(j);
+    if (!SchematicItem::fromJson(j)) return false;
+    if (j.contains("threshold")) m_threshold = j["threshold"].toDouble(1.5);
+    return true;
 }
 
 SchematicItem* LEDItem::clone() const {
-    return new LEDItem(pos());
+    auto* item = new LEDItem(pos());
+    item->fromJson(this->toJson());
+    return item;
 }

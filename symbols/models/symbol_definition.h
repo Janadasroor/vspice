@@ -56,6 +56,14 @@ public:
     QMap<int, QString> spiceNodeMapping() const { return m_spiceNodeMapping; }
     void setSpiceNodeMapping(const QMap<int, QString>& mapping) { m_spiceNodeMapping = mapping; }
 
+    // Model linkage (LTspice-style)
+    QString modelSource() const { return m_modelSource; } // "cmp", "sub", "lib", "builtin", "project"
+    void setModelSource(const QString& source) { m_modelSource = source; }
+    QString modelPath() const { return m_modelPath; } // relative to library root
+    void setModelPath(const QString& path) { m_modelPath = path; }
+    QString modelName() const { return m_modelName; } // .model or .subckt name
+    void setModelName(const QString& name) { m_modelName = name; }
+
     QStringList footprintFilters() const { return m_footprintFilters; }
     void setFootprintFilters(const QStringList& filters) { m_footprintFilters = filters; }
 
@@ -117,6 +125,9 @@ private:
     QString m_defaultFootprint;
     QString m_spiceModelName;
     QMap<int, QString> m_spiceNodeMapping;
+    QString m_modelSource;
+    QString m_modelPath;
+    QString m_modelName;
     QStringList m_footprintFilters;
     int m_unitCount = 1;
     bool m_unitsInterchangeable = true;

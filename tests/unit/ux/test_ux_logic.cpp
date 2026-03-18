@@ -24,6 +24,23 @@ public:
     using SchematicView::mouseReleaseEvent;
 };
 
+class TestObstacleItem : public SchematicItem {
+public:
+    explicit TestObstacleItem(const QRectF& rect, QGraphicsItem* parent = nullptr)
+        : SchematicItem(parent), m_rect(rect) {}
+
+    QString itemTypeName() const override { return "Obstacle"; }
+    ItemType itemType() const override { return SchematicItem::ComponentType; }
+    QList<QPointF> connectionPoints() const override { return {}; }
+    SchematicItem* clone() const override { return new TestObstacleItem(m_rect); }
+
+    QRectF boundingRect() const override { return m_rect; }
+    void paint(QPainter*, const QStyleOptionGraphicsItem*, QWidget*) override {}
+
+private:
+    QRectF m_rect;
+};
+
 QPoint sceneToView(const SchematicView& view, const QPointF& scenePos) {
     return view.mapFromScene(scenePos);
 }
@@ -65,6 +82,13 @@ bool near(const QPointF& a, const QPointF& b, qreal eps = 0.5) {
 bool alignedToGrid(qreal value, qreal grid = 15.0, qreal eps = 0.01) {
     const qreal rem = std::fmod(std::abs(value), grid);
     return rem <= eps || std::abs(rem - grid) <= eps;
+}
+
+bool pointsGridAligned(const QList<QPointF>& points, qreal grid = 15.0, qreal eps = 0.01) {
+    for (const QPointF& p : points) {
+        if (!alignedToGrid(p.x(), grid, eps) || !alignedToGrid(p.y(), grid, eps)) return false;
+    }
+    return true;
 }
 
 bool wireSegmentsOrthogonal(const WireItem* wire, qreal tol = 1.0) {
@@ -477,6 +501,48 @@ private slots:
         assertAttached();
     }
 
+    void testSelectDrag_HorizontalMovePrefersHorizontalFirstElbow() {
+        ConfigManager::instance().setRealtimeWireUpdateEnabled(true);
+
+        QGraphicsScene scene;
+        TestSchematicView view;
+        view.resize(900, 700);
+        view.setScene(&scene);
+        view.setCurrentTool("Select");
+
+        auto* resistor = new ResistorItem(QPointF(150.0, 150.0), "10k", ResistorItem::US);
+        scene.addItem(resistor);
+
+        const QPointF leftPin = resistor->mapToScene(resistor->connectionPoints().first());
+        const QPointF junction = leftPin + QPointF(-45.0, 0.0);
+
+        auto* verticalWire = new WireItem();
+        verticalWire->setPoints({junction, leftPin});
+        scene.addItem(verticalWire);
+
+        auto* horizontalWire = new WireItem();
+        horizontalWire->setPoints({junction, junction + QPointF(60.0, 0.0)});
+        scene.addItem(horizontalWire);
+
+        const QPoint pressPos = sceneToView(view, resistor->scenePos());
+        const QPoint releasePos = sceneToView(view, resistor->scenePos() + QPointF(45.0, 0.0));
+
+        sendMousePress(view, pressPos);
+        sendMouseMoveWithLeftButton(view, releasePos);
+        sendMouseRelease(view, releasePos);
+
+        const QPointF newPin = resistor->mapToScene(resistor->connectionPoints().first());
+        const QPointF expectedElbow(newPin.x(), junction.y());
+        const QPointF undesiredElbow(junction.x(), newPin.y());
+
+        const QList<QPointF> pts = verticalWire->points();
+        QVERIFY2(pts.size() >= 3, "Dragged vertical wire should keep an elbow after horizontal move.");
+        QVERIFY2(containsPointNear(pts, verticalWire->mapFromScene(expectedElbow)),
+                 "Elbow should align horizontally from junction to the moved pin.");
+        QVERIFY2(!containsPointNear(pts, verticalWire->mapFromScene(undesiredElbow)),
+                 "Elbow should not remain at the old pin x after horizontal move.");
+    }
+
     void testConnectivity_JunctionDotsFollowRules() {
         QGraphicsScene scene;
 
@@ -583,6 +649,307 @@ private slots:
         assertAnchored();
         dragBy(QPointF(30.0, 0.0));
         assertAnchored();
+    }
+
+    void testSelectDrag_RebuildsSimpleLWireBetweenComponents() {
+        ConfigManager::instance().setRealtimeWireUpdateEnabled(true);
+
+        QGraphicsScene scene;
+        TestSchematicView view;
+        view.resize(1000, 700);
+        view.setScene(&scene);
+        view.setCurrentTool("Select");
+
+        auto* leftRes = new ResistorItem(QPointF(225.0, 225.0), "10k", ResistorItem::US);
+        auto* rightRes = new ResistorItem(QPointF(405.0, 285.0), "10k", ResistorItem::US);
+        scene.addItem(leftRes);
+        scene.addItem(rightRes);
+
+        const QList<QPointF> leftPins = leftRes->connectionPoints();
+        const QList<QPointF> rightPins = rightRes->connectionPoints();
+        const QPointF leftP0 = leftRes->mapToScene(leftPins.first());
+        const QPointF leftP1 = leftRes->mapToScene(leftPins.last());
+        const QPointF rightP0 = rightRes->mapToScene(rightPins.first());
+        const QPointF rightP1 = rightRes->mapToScene(rightPins.last());
+
+        const QPointF leftPin = (leftP0.x() > leftP1.x()) ? leftP0 : leftP1;
+        const QPointF rightPin = (rightP0.x() < rightP1.x()) ? rightP0 : rightP1;
+
+        // Simple L wire (3 points).
+        const QPointF elbow(leftPin.x(), rightPin.y());
+        auto* linkWire = new WireItem();
+        linkWire->setPoints({leftPin, elbow, rightPin});
+        scene.addItem(linkWire);
+
+        auto assertShape = [&]() {
+            const QList<QPointF> pts = linkWire->points();
+            QVERIFY2(pts.size() <= 3, "Simple L wire should remain at most 3 points.");
+            QVERIFY2(wireSegmentsOrthogonal(linkWire), "Simple L wire must remain orthogonal.");
+            QVERIFY2(pointsGridAligned(pts), "Simple L wire points must stay grid aligned.");
+
+            const QPointF leftPinAfter = leftRes->mapToScene(leftRes->connectionPoints().first());
+            const QPointF leftPinAfter2 = leftRes->mapToScene(leftRes->connectionPoints().last());
+            const QPointF rightPinAfter = rightRes->mapToScene(rightRes->connectionPoints().first());
+            const QPointF rightPinAfter2 = rightRes->mapToScene(rightRes->connectionPoints().last());
+
+            const QPointF leftAnchor = (leftPinAfter.x() > leftPinAfter2.x()) ? leftPinAfter : leftPinAfter2;
+            const QPointF rightAnchor = (rightPinAfter.x() < rightPinAfter2.x()) ? rightPinAfter : rightPinAfter2;
+
+            const QPointF startScene = linkWire->mapToScene(pts.first());
+            const QPointF endScene = linkWire->mapToScene(pts.last());
+            QVERIFY2(near(startScene, leftAnchor), "L-wire start must stay attached to moved left pin.");
+            QVERIFY2(near(endScene, rightAnchor), "L-wire end must stay attached to stationary right pin.");
+        };
+
+        auto dragBy = [&](const QPointF& delta) {
+            const QPoint pressPos = sceneToView(view, leftRes->scenePos());
+            const QPoint releasePos = sceneToView(view, leftRes->scenePos() + delta);
+            sendMousePress(view, pressPos);
+            sendMouseMoveWithLeftButton(view, releasePos);
+            sendMouseRelease(view, releasePos);
+        };
+
+        dragBy(QPointF(0.0, -30.0));
+        assertShape();
+        dragBy(QPointF(30.0, 0.0));
+        assertShape();
+    }
+
+    void testSelectDrag_WirePointsRemainGridAlignedAfterMoves() {
+        ConfigManager::instance().setRealtimeWireUpdateEnabled(true);
+
+        QGraphicsScene scene;
+        TestSchematicView view;
+        view.resize(1000, 700);
+        view.setScene(&scene);
+        view.setCurrentTool("Select");
+
+        auto* resistor = new ResistorItem(QPointF(240.0, 240.0), "10k", ResistorItem::US);
+        scene.addItem(resistor);
+
+        const QPointF leftPin = resistor->mapToScene(resistor->connectionPoints().first());
+        const QPointF junction = leftPin + QPointF(-30.0, 0.0);
+
+        auto* wire = new WireItem();
+        wire->setPoints({leftPin, junction, junction + QPointF(0.0, 45.0)});
+        scene.addItem(wire);
+
+        auto dragBy = [&](const QPointF& delta) {
+            const QPoint pressPos = sceneToView(view, resistor->scenePos());
+            const QPoint releasePos = sceneToView(view, resistor->scenePos() + delta);
+            sendMousePress(view, pressPos);
+            sendMouseMoveWithLeftButton(view, releasePos);
+            sendMouseRelease(view, releasePos);
+        };
+
+        dragBy(QPointF(30.0, 0.0));
+        QVERIFY2(pointsGridAligned(wire->points()), "Wire points must stay grid aligned after drag.");
+        dragBy(QPointF(0.0, 30.0));
+        QVERIFY2(pointsGridAligned(wire->points()), "Wire points must stay grid aligned after second drag.");
+    }
+
+    void testSelectDrag_MultiSegmentWirePreservesPointCount() {
+        ConfigManager::instance().setRealtimeWireUpdateEnabled(true);
+
+        QGraphicsScene scene;
+        TestSchematicView view;
+        view.resize(1000, 700);
+        view.setScene(&scene);
+        view.setCurrentTool("Select");
+
+        auto* resistor = new ResistorItem(QPointF(225.0, 225.0), "10k", ResistorItem::US);
+        scene.addItem(resistor);
+
+        const QPointF leftPin = resistor->mapToScene(resistor->connectionPoints().first());
+        const QPointF p1 = leftPin + QPointF(-30.0, 0.0);
+        const QPointF p2 = p1 + QPointF(0.0, 30.0);
+        const QPointF p3 = p2 + QPointF(-30.0, 0.0);
+        const QPointF p4 = p3 + QPointF(0.0, 30.0);
+
+        auto* wire = new WireItem();
+        wire->setPoints({leftPin, p1, p2, p3, p4});
+        scene.addItem(wire);
+
+        const int originalCount = wire->points().size();
+
+        auto dragBy = [&](const QPointF& delta) {
+            const QPoint pressPos = sceneToView(view, resistor->scenePos());
+            const QPoint releasePos = sceneToView(view, resistor->scenePos() + delta);
+            sendMousePress(view, pressPos);
+            sendMouseMoveWithLeftButton(view, releasePos);
+            sendMouseRelease(view, releasePos);
+        };
+
+        dragBy(QPointF(30.0, 0.0));
+        QCOMPARE(wire->points().size(), originalCount);
+        dragBy(QPointF(0.0, 30.0));
+        QCOMPARE(wire->points().size(), originalCount);
+    }
+
+    void testSelectDrag_LWireAvoidsObstacleByFlippingElbow() {
+        ConfigManager::instance().setRealtimeWireUpdateEnabled(true);
+
+        QGraphicsScene scene;
+        TestSchematicView view;
+        view.resize(1200, 800);
+        view.setScene(&scene);
+        view.setCurrentTool("Select");
+
+        auto* leftRes = new ResistorItem(QPointF(225.0, 225.0), "10k", ResistorItem::US);
+        auto* rightRes = new ResistorItem(QPointF(405.0, 285.0), "10k", ResistorItem::US);
+        scene.addItem(leftRes);
+        scene.addItem(rightRes);
+
+        // Deterministic obstacle placed on the horizontal-first path.
+        auto* obstacle = new TestObstacleItem(QRectF(-10.0, -10.0, 20.0, 20.0));
+        obstacle->setPos(QPointF(330.0, 225.0));
+        scene.addItem(obstacle);
+
+        const QPointF leftPin = leftRes->mapToScene(leftRes->connectionPoints().last());
+        const QPointF rightPin = rightRes->mapToScene(rightRes->connectionPoints().first());
+
+        const QPointF elbowA(rightPin.x(), leftPin.y()); // horizontal-first
+        auto* wire = new WireItem();
+        wire->setPoints({leftPin, elbowA, rightPin});
+        scene.addItem(wire);
+
+        const QPoint pressPos = sceneToView(view, leftRes->scenePos());
+        const QPoint releasePos = sceneToView(view, leftRes->scenePos() + QPointF(15.0, 0.0));
+        sendMousePress(view, pressPos);
+        sendMouseMoveWithLeftButton(view, releasePos);
+        sendMouseRelease(view, releasePos);
+
+        const QList<QPointF> pts = wire->points();
+        QVERIFY2(pts.size() == 3, "L wire must remain 3 points after obstacle avoid.");
+
+        const QRectF obstacleRect = obstacle->sceneBoundingRect().adjusted(-2, -2, 2, 2);
+        auto segIntersects = [](const QPointF& a, const QPointF& b, const QRectF& rect) {
+            if (rect.contains(a) || rect.contains(b)) return true;
+            QLineF seg(a, b);
+            QPointF inter;
+            const QPointF tl = rect.topLeft();
+            const QPointF tr = rect.topRight();
+            const QPointF br = rect.bottomRight();
+            const QPointF bl = rect.bottomLeft();
+            if (seg.intersects(QLineF(tl, tr), &inter) == QLineF::BoundedIntersection) return true;
+            if (seg.intersects(QLineF(tr, br), &inter) == QLineF::BoundedIntersection) return true;
+            if (seg.intersects(QLineF(br, bl), &inter) == QLineF::BoundedIntersection) return true;
+            if (seg.intersects(QLineF(bl, tl), &inter) == QLineF::BoundedIntersection) return true;
+            return false;
+        };
+
+        const QPointF startScene = wire->mapToScene(pts.first());
+        const QPointF elbowScene = wire->mapToScene(pts[1]);
+        const QPointF endScene = wire->mapToScene(pts.last());
+        const bool collides =
+            segIntersects(startScene, elbowScene, obstacleRect) ||
+            segIntersects(elbowScene, endScene, obstacleRect);
+
+        QVERIFY2(!collides, "L wire should avoid obstacle after drag.");
+    }
+
+    void testSelectDrag_LWireNudgesWhenBothPathsBlocked() {
+        ConfigManager::instance().setRealtimeWireUpdateEnabled(true);
+
+        QGraphicsScene scene;
+        TestSchematicView view;
+        view.resize(1200, 800);
+        view.setScene(&scene);
+        view.setCurrentTool("Select");
+
+        auto* leftRes = new ResistorItem(QPointF(225.0, 225.0), "10k", ResistorItem::US);
+        auto* rightRes = new ResistorItem(QPointF(405.0, 285.0), "10k", ResistorItem::US);
+        scene.addItem(leftRes);
+        scene.addItem(rightRes);
+
+        // Block both L paths.
+        auto* obstacleA = new TestObstacleItem(QRectF(-10.0, -10.0, 20.0, 20.0));
+        obstacleA->setPos(QPointF(330.0, 225.0));
+        scene.addItem(obstacleA);
+
+        auto* obstacleB = new TestObstacleItem(QRectF(-10.0, -10.0, 20.0, 20.0));
+        obstacleB->setPos(QPointF(225.0, 270.0));
+        scene.addItem(obstacleB);
+
+        const QPointF leftPin = leftRes->mapToScene(leftRes->connectionPoints().last());
+        const QPointF rightPin = rightRes->mapToScene(rightRes->connectionPoints().first());
+
+        const QPointF elbowA(rightPin.x(), leftPin.y());
+        auto* wire = new WireItem();
+        wire->setPoints({leftPin, elbowA, rightPin});
+        scene.addItem(wire);
+
+        const QPoint pressPos = sceneToView(view, leftRes->scenePos());
+        const QPoint releasePos = sceneToView(view, leftRes->scenePos() + QPointF(15.0, 0.0));
+        sendMousePress(view, pressPos);
+        sendMouseMoveWithLeftButton(view, releasePos);
+        sendMouseRelease(view, releasePos);
+
+        const QList<QPointF> pts = wire->points();
+        QVERIFY2(pts.size() == 3, "L wire must remain 3 points after nudge.");
+
+        const QRectF rectA = obstacleA->sceneBoundingRect().adjusted(-2, -2, 2, 2);
+        const QRectF rectB = obstacleB->sceneBoundingRect().adjusted(-2, -2, 2, 2);
+        auto segIntersects = [](const QPointF& a, const QPointF& b, const QRectF& rect) {
+            if (rect.contains(a) || rect.contains(b)) return true;
+            QLineF seg(a, b);
+            QPointF inter;
+            const QPointF tl = rect.topLeft();
+            const QPointF tr = rect.topRight();
+            const QPointF br = rect.bottomRight();
+            const QPointF bl = rect.bottomLeft();
+            if (seg.intersects(QLineF(tl, tr), &inter) == QLineF::BoundedIntersection) return true;
+            if (seg.intersects(QLineF(tr, br), &inter) == QLineF::BoundedIntersection) return true;
+            if (seg.intersects(QLineF(br, bl), &inter) == QLineF::BoundedIntersection) return true;
+            if (seg.intersects(QLineF(bl, tl), &inter) == QLineF::BoundedIntersection) return true;
+            return false;
+        };
+
+        const QPointF startScene = wire->mapToScene(pts.first());
+        const QPointF elbowScene = wire->mapToScene(pts[1]);
+        const QPointF endScene = wire->mapToScene(pts.last());
+        const bool collides =
+            segIntersects(startScene, elbowScene, rectA) ||
+            segIntersects(elbowScene, endScene, rectA) ||
+            segIntersects(startScene, elbowScene, rectB) ||
+            segIntersects(elbowScene, endScene, rectB);
+
+        QVERIFY2(!collides, "L wire should nudge to avoid obstacles when both paths blocked.");
+    }
+
+    void testSelectDrag_CollinearChainMovesWithEndpoint() {
+        ConfigManager::instance().setRealtimeWireUpdateEnabled(true);
+
+        QGraphicsScene scene;
+        TestSchematicView view;
+        view.resize(1000, 700);
+        view.setScene(&scene);
+        view.setCurrentTool("Select");
+
+        auto* resistor = new ResistorItem(QPointF(225.0, 225.0), "10k", ResistorItem::US);
+        scene.addItem(resistor);
+
+        const QPointF leftPin = resistor->mapToScene(resistor->connectionPoints().first());
+        const QPointF p1 = leftPin + QPointF(-30.0, 0.0);
+        const QPointF p2 = p1 + QPointF(-30.0, 0.0);
+        const QPointF p3 = p2 + QPointF(-30.0, 0.0);
+
+        auto* wire = new WireItem();
+        wire->setPoints({leftPin, p1, p2, p3});
+        scene.addItem(wire);
+
+        const QPoint pressPos = sceneToView(view, resistor->scenePos());
+        const QPoint releasePos = sceneToView(view, resistor->scenePos() + QPointF(0.0, 30.0));
+        sendMousePress(view, pressPos);
+        sendMouseMoveWithLeftButton(view, releasePos);
+        sendMouseRelease(view, releasePos);
+
+        const QList<QPointF> pts = wire->points();
+        QVERIFY2(pts.size() == 4, "Chain wire should preserve point count.");
+        const qreal y0 = pts[0].y();
+        QVERIFY2(qAbs(pts[1].y() - y0) < 0.5, "Collinear point 1 should move with endpoint.");
+        QVERIFY2(qAbs(pts[2].y() - y0) < 0.5, "Collinear point 2 should move with endpoint.");
+        QVERIFY2(qAbs(pts[3].y() - y0) < 0.5, "Collinear point 3 should move with endpoint.");
     }
 
     void testTransistor_PinsAreGridAligned() {

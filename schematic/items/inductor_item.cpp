@@ -15,7 +15,7 @@ InductorItem::InductorItem(QPointF pos, QString value, QGraphicsItem *parent)
     m_brush = QBrush(theme->schematicComponent());
     
     buildPrimitives();
-    createLabels(QPointF(-22.5, -22.5), QPointF(-22.5, 30));
+    createLabels(QPointF(-22.5, -37.5), QPointF(-22.5, 37.5));
 }
 
 void InductorItem::buildPrimitives() {
@@ -27,7 +27,7 @@ void InductorItem::buildPrimitives() {
     for (int i = 0; i < 4; ++i) {
         qreal x = -45 + i * 22.5;
         m_primitives.push_back(std::make_unique<ArcPrimitive>(
-            QRectF(x, -11.25, 22.5, 22.5), 0, 180));
+            QRectF(x, -22.5, 22.5, 45), 0, 180));
     }
     
     m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(45, 0), QPointF(60, 0)));
@@ -107,7 +107,7 @@ bool InductorItem::fromJson(const QJsonObject& json) {
     setPos(QPointF(json["x"].toDouble(), json["y"].toDouble()));
     if (json.contains("rotation")) setRotation(json["rotation"].toDouble());
     buildPrimitives();
-    createLabels(QPointF(-22.5, -22.5), QPointF(-22.5, 30));
+    createLabels(QPointF(-22.5, -37.5), QPointF(-22.5, 37.5));
     
     if (json.contains("refX")) {
         setReferenceLabelPos(QPointF(json["refX"].toDouble(), json["refY"].toDouble()));

@@ -28,6 +28,10 @@ void PythonManager::runScript(const QString& scriptName, const QStringList& args
     if (!apiKey.isEmpty()) {
         env.insert("GEMINI_API_KEY", apiKey);
     }
+    QString octoKey = ConfigManager::instance().octopartApiKey();
+    if (!octoKey.isEmpty()) {
+        env.insert("OCTOPART_API_KEY", octoKey);
+    }
     process->setProcessEnvironment(env);
     
     connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {

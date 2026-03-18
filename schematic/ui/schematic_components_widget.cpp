@@ -302,6 +302,7 @@ void SchematicComponentsWidget::populate() {
         {"NMOS Transistor", "Semiconductors"}, {"PMOS Transistor", "Semiconductors"},
         {"IC", "Integrated Circuits"}, {"RAM", "Integrated Circuits"}, {"OpAmp", "Integrated Circuits"},
         {"Switch", "Interactive"}, {"Push Button", "Interactive"}, {"LED", "Interactive"},
+        {"Blinking LED", "Interactive"},
         {"Gate_AND", "Logic"}, {"Gate_OR", "Logic"}, {"Gate_XOR", "Logic"},
         {"Gate_NAND", "Logic"}, {"Gate_NOR", "Logic"}, {"Gate_NOT", "Logic"},
         {"VoltageRegulator", "Power Symbols"},
