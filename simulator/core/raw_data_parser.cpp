@@ -9,39 +9,69 @@
 bool RawDataParser::loadRawAscii(const QString& path, RawData* out, QString* error) {
     if (!out) return false;
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!file.open(QIODevice::ReadOnly)) {
         if (error) *error = "Could not open raw file: " + path;
         return false;
     }
 
-    QTextStream in(&file);
-    QString line;
+    QByteArray allData = file.readAll();
+    file.close();
+
+    if (allData.isEmpty()) {
+        if (error) *error = "Raw file is empty: " + path;
+        return false;
+    }
+
+    const char* dataPtr = allData.constData();
+    const char* endPtr = dataPtr + allData.size();
+
+    auto readLine = [&]() -> QByteArray {
+        const char* start = dataPtr;
+        while (dataPtr < endPtr && *dataPtr != '\n' && *dataPtr != '\r') {
+            dataPtr++;
+        }
+        QByteArray line(start, dataPtr - start);
+        // Skip \r\n or \n\r or just \n
+        if (dataPtr < endPtr && *dataPtr == '\r') dataPtr++;
+        if (dataPtr < endPtr && *dataPtr == '\n') dataPtr++;
+        return line.trimmed();
+    };
+
     bool collectingData = false;
+    bool isBinary = false;
     int numVariables = 0;
     int numPoints = 0;
     QStringList varNames;
 
-    while (!in.atEnd()) {
-        line = in.readLine().trimmed();
+    while (dataPtr < endPtr) {
+        QByteArray line = readLine();
+        if (line.isEmpty()) continue;
+
         if (line.startsWith("No. Variables:")) {
-            numVariables = line.section(':', 1).trimmed().toInt();
+            numVariables = line.mid(14).trimmed().toInt();
         } else if (line.startsWith("No. Points:")) {
-            numPoints = line.section(':', 1).trimmed().toInt();
+            numPoints = line.mid(11).trimmed().toInt();
         } else if (line.startsWith("Variables:")) {
             for (int i = 0; i < numVariables; ++i) {
-                QString vLine = in.readLine().trimmed();
-                QStringList parts = vLine.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+                QByteArray vLine = readLine();
+                QStringList parts = QString::fromLatin1(vLine).split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
                 if (parts.size() >= 2) varNames << parts[1];
                 else if (parts.size() == 1 && i == 0) varNames << "time";
             }
         } else if (line.startsWith("Values:")) {
             collectingData = true;
+            isBinary = false;
+            break;
+        } else if (line.startsWith("Binary:")) {
+            collectingData = true;
+            isBinary = true;
+            qDebug() << "RawDataParser: Using binary parsing mode";
             break;
         }
     }
 
     if (!collectingData || varNames.isEmpty() || numVariables <= 0) {
-        if (error) *error = "Raw file missing Variables/Values sections: " + path;
+        if (error) *error = "Raw file missing Variables/Values/Binary sections: " + path;
         return false;
     }
 
@@ -55,33 +85,45 @@ bool RawDataParser::loadRawAscii(const QString& path, RawData* out, QString* err
         data.y.resize(numVariables - 1);
         for (int i = 0; i < data.y.size(); ++i) data.y[i].reserve(numPoints);
 
-        auto nextNonEmpty = [&](QString* outLine) -> bool {
-            while (!in.atEnd()) {
-                const QString l = in.readLine().trimmed();
-                if (!l.isEmpty()) {
-                    if (outLine) *outLine = l;
-                    return true;
+        if (isBinary) {
+            qint64 totalDoubles = (qint64)numPoints * numVariables;
+            qint64 remainingBytes = endPtr - dataPtr;
+            if (remainingBytes >= totalDoubles * (qint64)sizeof(double)) {
+                for (int p = 0; p < numPoints; ++p) {
+                    double val;
+                    memcpy(&val, dataPtr, sizeof(double));
+                    dataPtr += sizeof(double);
+                    data.x.push_back(val);
+                    for (int v = 1; v < numVariables; ++v) {
+                        memcpy(&val, dataPtr, sizeof(double));
+                        dataPtr += sizeof(double);
+                        data.y[v - 1].push_back(val);
+                    }
                 }
+            } else {
+                if (error) *error = QString("Raw file binary payload is incomplete: %1 (Expected %2 bytes, got %3)").arg(path).arg(totalDoubles * sizeof(double)).arg(remainingBytes);
+                return false;
             }
-            return false;
-        };
+        } else {
+            static const QRegularExpression spaceRe("\\s+");
+            auto getNextValue = [&]() -> double {
+                while (dataPtr < endPtr) {
+                    const char* start = dataPtr;
+                    while (dataPtr < endPtr && !isspace(*dataPtr)) dataPtr++;
+                    QByteArray word(start, dataPtr - start);
+                    while (dataPtr < endPtr && isspace(*dataPtr)) dataPtr++;
+                    if (!word.isEmpty()) return word.toDouble();
+                }
+                return 0.0;
+            };
 
-        for (int p = 0; p < numPoints; ++p) {
-            QString xLine;
-            if (!nextNonEmpty(&xLine)) break;
-            QStringList xParts = xLine.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-            if (xParts.size() < 2) break;
-            const double xVal = xParts[1].toDouble();
-            data.x.push_back(xVal);
-
-            for (int v = 1; v < numVariables; ++v) {
-                QString vLine;
-                if (!nextNonEmpty(&vLine)) break;
-                // Some formats might have "index value" for every variable, 
-                // but usually after the first one it's just the value.
-                QStringList vParts = vLine.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-                const double yVal = vParts.last().toDouble();
-                data.y[v - 1].push_back(yVal);
+            for (int p = 0; p < numPoints; ++p) {
+                // In Values: format, the first variable is prefixed by an index
+                getNextValue(); // skip index
+                data.x.push_back(getNextValue());
+                for (int v = 1; v < numVariables; ++v) {
+                    data.y[v - 1].push_back(getNextValue());
+                }
             }
         }
     }

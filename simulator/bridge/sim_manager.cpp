@@ -67,6 +67,16 @@ void SimManager::runSensitivity(QGraphicsScene* scene, NetManager* netMgr, const
      runNgspiceSimulation(scene, netMgr, config);
 }
 
+void SimManager::runNetlistText(const QString& netlistContent) {
+    if (m_control) {
+        emit logMessage("A simulation is already running.");
+        return;
+    }
+    emit simulationStarted();
+    emit logMessage("Running ngspice netlist...");
+    startNgspiceWithNetlist(netlistContent);
+}
+
 void SimManager::runNgspiceSimulation(QGraphicsScene* scene, NetManager* netMgr, const SimAnalysisConfig& config) {
     if (m_control) {
         emit logMessage("A simulation is already running.");
@@ -98,7 +108,10 @@ void SimManager::runNgspiceSimulation(QGraphicsScene* scene, NetManager* netMgr,
     }
 
     QString netlistContent = SpiceNetlistGenerator::generate(scene, "", netMgr, params);
-    
+    startNgspiceWithNetlist(netlistContent);
+}
+
+void SimManager::startNgspiceWithNetlist(const QString& netlistContent) {
     // Create a temporary file that auto-deletes when the object is destroyed.
     // However, we need it to persist until simulation load.
     // We'll manage it via a member or just use a transient one and pass path.
@@ -127,26 +140,47 @@ void SimManager::runNgspiceSimulation(QGraphicsScene* scene, NetManager* netMgr,
     connect(&sm, &SimulationManager::realTimePointReceived, this, &SimManager::realTimePointReceived, Qt::UniqueConnection);
     connect(&sm, &SimulationManager::realTimeDataBatchReceived, this, &SimManager::realTimeDataBatchReceived, Qt::UniqueConnection);
     
-    connect(&sm, &SimulationManager::rawResultsReady, this, [this, tempFile](const QString& path) {
-        RawData rd;
-        QString err;
-        if (RawDataParser::loadRawAscii(path, &rd, &err)) {
-            emit simulationFinished(rd.toSimResults());
-        } else {
-             emit logMessage("Ngspice: Parsed results."); 
-             emit logMessage("Data parse error: " + err);
-        }
-        
-        tempFile->deleteLater();
-        cleanupSimulation();
+    QPointer<QTemporaryFile> safeTempFile(tempFile);
+    
+    // Connect RAW results ready signal - this is the "happy path" for data
+    connect(&sm, &SimulationManager::rawResultsReady, this, [this, safeTempFile](const QString& path) {
+        auto* watcher = new QFutureWatcher<std::pair<bool, SimResults>>(this);
+        connect(watcher, &QFutureWatcher<std::pair<bool, SimResults>>::finished, this, [this, watcher, safeTempFile]() {
+            auto result = watcher->result();
+            watcher->deleteLater();
+            
+            if (result.first) {
+                emit simulationFinished(result.second);
+            } else {
+                emit logMessage("Ngspice: Data parse error or empty results.");
+            }
+            
+            if (safeTempFile) safeTempFile->deleteLater();
+            cleanupSimulation();
+        });
+
+        watcher->setFuture(QtConcurrent::run([path]() {
+            RawData rd;
+            QString err;
+            if (RawDataParser::loadRawAscii(path, &rd, &err)) {
+                return std::make_pair(true, rd.toSimResults());
+            }
+            qDebug() << "RawDataParser error:" << err;
+            return std::make_pair(false, SimResults());
+        }));
     });
     
-    // Handle error or simple finish
-    connect(&sm, &SimulationManager::simulationFinished, this, [this, tempFile]() {
-        if (m_control) {
-            tempFile->deleteLater();
-            cleanupSimulation();
-        }
+    // Handle the simulation engine finishing (it fires regardless of result parsing)
+    connect(&sm, &SimulationManager::simulationFinished, this, [this, safeTempFile]() {
+        // If we don't have results coming (e.g. error), we must clean up here.
+        // If results ARE coming, rawResultsReady watcher will handle it.
+        // We use a small delay or a state check to be safe.
+        QTimer::singleShot(500, this, [this, safeTempFile]() {
+            if (m_control) { // Still running? Then no results were ready or they failed
+                if (safeTempFile) safeTempFile->deleteLater();
+                cleanupSimulation();
+            }
+        });
     });
 
     sm.runSimulation(tempFile->fileName(), m_control);

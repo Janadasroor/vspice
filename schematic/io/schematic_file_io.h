@@ -51,6 +51,7 @@ public:
                               QMap<QString, QList<QString>>* busAliases = nullptr,
                               QSet<QString>* ercExclusions = nullptr,
                               QJsonObject* simulationSetup = nullptr);
+    static bool loadSchematicFromJson(QGraphicsScene* scene, const QJsonObject& root, QString* errorOut = nullptr);
     
     /**
      * @brief Get the last error message

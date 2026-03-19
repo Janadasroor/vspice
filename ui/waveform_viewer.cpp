@@ -446,87 +446,13 @@ void WaveformViewer::appendPoints(const QString& name, const std::vector<double>
     
     if (m_blockUpdates) return;
 
-    // Fast check for signal existence in chart
-    QLineSeries* lineSeries = nullptr;
-    for (auto* series : m_chart->series()) {
-        if (series->name() == name) {
-            lineSeries = qobject_cast<QLineSeries*>(series);
-            break;
-        }
-    }
-
-    // If series not in chart but signal is checked, add it now
-    if (!lineSeries) {
-        bool checked = false;
-        for (int i = 0; i < m_nodeList->count(); ++i) {
-            if (m_nodeList->item(i)->text() == name) {
-                checked = (m_nodeList->item(i)->checkState() == Qt::Checked);
-                break;
-            }
-        }
-        
-        if (checked) {
-            lineSeries = new QLineSeries();
-            lineSeries->setName(name);
-            m_chart->addSeries(lineSeries);
-            auto axesX = m_chart->axes(Qt::Horizontal);
-            auto axesY = m_chart->axes(Qt::Vertical);
-            if (axesX.isEmpty() || axesY.isEmpty()) {
-                updatePlot(true); // Re-init axes
-                return; 
-            }
-            lineSeries->attachAxis(axesX[0]);
-            lineSeries->attachAxis(axesY[0]);
-        }
-    }
-
-    if (lineSeries) {
-        QList<QPointF> points;
-        points.reserve(times.size());
-        for(size_t i=0; i<times.size(); ++i) {
-            points.append(QPointF(times[i], values[i]));
-        }
-        lineSeries->append(points);
-        
-        // If it's the very first points, set a reasonable range immediately
-        if (lineSeries->count() < std::max(10, (int)times.size() + 5)) {
-            auto axesX = m_chart->axes(Qt::Horizontal);
-            auto axesY = m_chart->axes(Qt::Vertical);
-            if (!axesX.isEmpty() && !axesY.isEmpty()) {
-                auto* ax = qobject_cast<QValueAxis*>(axesX[0]);
-                auto* ay = qobject_cast<QValueAxis*>(axesY[0]);
-                double firstX = times.front();
-                double firstY = values.front();
-                ax->setRange(std::min(0.0, firstX), std::max(1e-3, firstX * 1.5));
-                ay->setRange(firstY - 1.0, firstY + 1.0);
-            }
-        }
-
-        // Throttled auto-scale: only update every N points (aggregated)
-        int& count = m_pointCounters[name];
-        count += times.size();
-        if ((count % 500) < times.size()) { // Roughly trigger if we crossed a 500-point boundary
-             auto axesX = m_chart->axes(Qt::Horizontal);
-             auto axesY = m_chart->axes(Qt::Vertical);
-             if (!axesX.isEmpty() && !axesY.isEmpty()) {
-                 auto* ax = qobject_cast<QValueAxis*>(axesX[0]);
-                 auto* ay = qobject_cast<QValueAxis*>(axesY[0]);
-                 
-                 double lastX = times.back();
-                 
-                 // Check bounds in the new batch
-                 double minVal = values[0];
-                 double maxVal = values[0];
-                 for(double v : values) {
-                     if (v < minVal) minVal = v;
-                     if (v > maxVal) maxVal = v;
-                 }
-
-                 if (lastX > ax->max()) ax->setMax(lastX * 1.1);
-                 if (maxVal > ay->max()) ay->setMax(maxVal > 0 ? maxVal * 1.2 : maxVal * 0.8);
-                 if (minVal < ay->min()) ay->setMin(minVal < 0 ? minVal * 1.2 : minVal * 0.8);
-             }
-        }
+    // Throttle the actual chart redraws so we don't spam QLineSeries with millions of points
+    // during real-time streaming. We just update the bounds roughly.
+    int& count = m_pointCounters[name];
+    count += times.size();
+    if ((count % 1000) < times.size() || count < 100) { 
+        // We only trigger updatePlot periodically to use its fast Min-Max bucket decimation
+        QMetaObject::invokeMethod(this, "updatePlot", Qt::QueuedConnection, Q_ARG(bool, false));
     }
 }
 
@@ -742,11 +668,16 @@ void WaveformViewer::updatePlot(bool autoScale) {
                 const int totalSize = static_cast<int>(data.time.size());
                 
                 if (totalSize <= maxBuckets) {
+                    QList<QPointF> points;
+                    points.reserve(totalSize);
                     for (int j = 0; j < totalSize; ++j) {
-                        series->append(data.time[j], data.values[j]);
+                        points.append(QPointF(data.time[j], data.values[j]));
                     }
+                    series->append(points);
                 } else {
                     int bucketSize = totalSize / maxBuckets;
+                    QList<QPointF> points;
+                    points.reserve(maxBuckets * 2 + 1);
                     for (int b = 0; b < maxBuckets; ++b) {
                         int start = b * bucketSize;
                         int end = (b == maxBuckets - 1) ? totalSize : (b + 1) * bucketSize;
@@ -760,19 +691,20 @@ void WaveformViewer::updatePlot(bool autoScale) {
                         
                         // Append min and max in their original time order
                         if (minIdx < maxIdx) {
-                            series->append(data.time[minIdx], data.values[minIdx]);
-                            series->append(data.time[maxIdx], data.values[maxIdx]);
+                            points.append(QPointF(data.time[minIdx], data.values[minIdx]));
+                            points.append(QPointF(data.time[maxIdx], data.values[maxIdx]));
                         } else if (minIdx > maxIdx) {
-                            series->append(data.time[maxIdx], data.values[maxIdx]);
-                            series->append(data.time[minIdx], data.values[minIdx]);
+                            points.append(QPointF(data.time[maxIdx], data.values[maxIdx]));
+                            points.append(QPointF(data.time[minIdx], data.values[minIdx]));
                         } else {
-                            series->append(data.time[minIdx], data.values[minIdx]);
+                            points.append(QPointF(data.time[minIdx], data.values[minIdx]));
                         }
                     }
                     // Always ensure we include the absolute last point
-                    if (series->count() > 0 && series->at(series->count()-1).x() < data.time.back()) {
-                        series->append(data.time.back(), data.values.back());
+                    if (!points.isEmpty() && points.last().x() < data.time.back()) {
+                        points.append(QPointF(data.time.back(), data.values.back()));
                     }
+                    series->append(points);
                 }
                 
                 const QList<QColor> colors = {QColor(0, 204, 0), QColor(0, 0, 255), QColor(255, 0, 0), QColor(0, 255, 255), QColor(255, 0, 255), QColor(255, 255, 0)};

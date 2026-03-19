@@ -71,6 +71,10 @@ void SimulationManager::runSimulation(const QString& netlist, SimControl* contro
         std::lock_guard<std::mutex> lock(m_bufferMutex);
         m_simBuffer.clear();
     }
+    {
+        std::lock_guard<std::mutex> lock(m_logMutex);
+        m_logBuffer.clear();
+    }
     m_bufferTimer->start();
 
     emit simulationStarted();
@@ -81,7 +85,7 @@ void SimulationManager::runSimulation(const QString& netlist, SimControl* contro
         if (!error.isEmpty()) emit errorOccurred(error);
         return;
     }
-    
+    ngSpice_Command(const_cast<char*>("set filetype=binary"));
     ngSpice_Command((char*)"bg_run");
 #endif
 }
@@ -228,12 +232,34 @@ void SimulationManager::stopSimulation() {
 #endif
 }
 
+void SimulationManager::shutdown() {
+#ifdef HAVE_NGSPICE
+    ngSpice_Command((char*)"bg_halt");
+    ngSpice_Command((char*)"quit");
+    QMetaObject::invokeMethod(m_bufferTimer, "stop", Qt::QueuedConnection);
+    QMetaObject::invokeMethod(this, "processBufferedData", Qt::QueuedConnection);
+    m_isInitialized = false;
+#endif
+}
+
 void SimulationManager::processBufferedData() {
     std::vector<SimDataPoint> batch;
+    std::vector<QString> logBatch;
     {
         std::lock_guard<std::mutex> lock(m_bufferMutex);
-        if (m_simBuffer.empty()) return;
-        m_simBuffer.swap(batch);
+        if (!m_simBuffer.empty()) {
+            m_simBuffer.swap(batch);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_logMutex);
+        if (!m_logBuffer.empty()) {
+            m_logBuffer.swap(logBatch);
+        }
+    }
+
+    for (const QString& msg : logBatch) {
+        emit outputReceived(msg);
     }
 
     if (batch.empty()) return;
@@ -267,7 +293,10 @@ int SimulationManager::cbSendChar(char* output, int id, void* userData) {
         }
         
         qDebug() << "[Ngspice]" << msg.trimmed();
-        emit self->outputReceived(msg);
+        {
+            std::lock_guard<std::mutex> lock(self->m_logMutex);
+            self->m_logBuffer.push_back(msg);
+        }
     }
     return 0;
 }
@@ -281,7 +310,10 @@ int SimulationManager::cbSendStat(char* stat, int id, void* userData) {
 
         QString msg = QString::fromLatin1(stat);
         // Usually contains "% complete" or time info
-        emit self->outputReceived(msg); 
+        {
+            std::lock_guard<std::mutex> lock(self->m_logMutex);
+            self->m_logBuffer.push_back(msg);
+        }
     }
     return 0;
 }

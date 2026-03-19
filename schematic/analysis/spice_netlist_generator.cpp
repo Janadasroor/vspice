@@ -146,6 +146,31 @@ QString formatPwlValueForNetlist(const QString& value, int maxLen = 140) {
     return lines.join("\n");
 }
 
+struct VoltageParasitics {
+    QString value;
+    QString rser;
+    QString cpar;
+};
+
+static VoltageParasitics stripVoltageParasitics(const QString& value) {
+    VoltageParasitics out{value, "", ""};
+    QRegularExpression rserRe("\\bRser\\s*=\\s*([^\\s]+)", QRegularExpression::CaseInsensitiveOption);
+    QRegularExpression cparRe("\\bCpar\\s*=\\s*([^\\s]+)", QRegularExpression::CaseInsensitiveOption);
+
+    auto rserMatch = rserRe.match(out.value);
+    if (rserMatch.hasMatch()) {
+        out.rser = rserMatch.captured(1).trimmed();
+        out.value.remove(rserRe);
+    }
+    auto cparMatch = cparRe.match(out.value);
+    if (cparMatch.hasMatch()) {
+        out.cpar = cparMatch.captured(1).trimmed();
+        out.value.remove(cparRe);
+    }
+    out.value = out.value.simplified();
+    return out;
+}
+
 QString resolveModelPath(const QString& modelPath, const QString& projectDir) {
     if (modelPath.trimmed().isEmpty()) return QString();
     QFileInfo fi(modelPath);
@@ -419,6 +444,32 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                     if (net.isEmpty()) net = "NC_" + ref;
                     nodes.append(net.replace(" ", "_"));
                 }
+            }
+        }
+
+        // Strip unsupported voltage parasitics and emit separate elements for ngspice.
+        const bool isVoltageSource = (type == SchematicItem::VoltageSourceType) ||
+                                     comp.typeName.startsWith("Voltage_Source", Qt::CaseInsensitive);
+        if (isVoltageSource) {
+            VoltageParasitics paras = stripVoltageParasitics(value);
+            value = paras.value;
+            const bool hasRser = !paras.rser.isEmpty() && paras.rser != "0" && paras.rser != "0.0";
+            const bool hasCpar = !paras.cpar.isEmpty() && paras.cpar != "0" && paras.cpar != "0.0";
+            if ((hasRser || hasCpar) && nodes.size() >= 2) {
+                QString n1 = nodes.value(0, "0");
+                QString n2 = nodes.value(1, "0");
+                QString srcPos = n1;
+                if (hasRser) {
+                    QString nInt = QString("VSR_%1").arg(ref);
+                    nInt.replace(QRegularExpression("[^A-Za-z0-9_]"), "_");
+                    netlist += QString("R_%1 %2 %3 %4\n").arg(ref, n1, nInt, paras.rser);
+                    srcPos = nInt;
+                }
+                if (hasCpar) {
+                    netlist += QString("C_%1 %2 %3 %4\n").arg(ref, srcPos, n2, paras.cpar);
+                }
+                nodes[0] = srcPos;
+                nodes[1] = n2;
             }
         }
 

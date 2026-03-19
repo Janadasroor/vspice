@@ -29,6 +29,7 @@ public:
     void runSimulation(const QString& netlist, SimControl* control = nullptr);
     bool validateNetlist(const QString& netlist, QString* errorOut = nullptr);
     void stopSimulation();
+    void shutdown();
 
 signals:
     void outputReceived(const QString& text);
@@ -62,6 +63,10 @@ private:
     std::vector<SimDataPoint> m_simBuffer;
     std::mutex m_bufferMutex;
     QTimer* m_bufferTimer = nullptr;
+
+    std::vector<QString> m_logBuffer;
+    std::mutex m_logMutex;
+
     
     // Vector mapping for real-time streaming
     struct VectorMap {

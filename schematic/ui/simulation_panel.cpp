@@ -8,6 +8,9 @@
 #include "../items/schematic_item.h"
 #include "../items/voltage_source_item.h"
 #include "../analysis/spice_netlist_generator.h"
+#include "../io/schematic_file_io.h"
+#include "../../simulator/bridge/sim_schematic_bridge.h"
+#include "../analysis/net_manager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -38,6 +41,18 @@
 #include <QTabWidget>
 #include <QScrollArea>
 #include <QFileDialog>
+#include <QtConcurrent>
+#include <QFutureWatcher>
+
+namespace {
+struct SimBuildResult {
+    bool ok = false;
+    QString error;
+    SimNetlist netlist;
+    QStringList diagnostics;
+    QString netlistText;
+};
+}
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -135,6 +150,23 @@ SimulationPanel::SimulationPanel(QGraphicsScene* scene, NetManager* netManager, 
     connect(&builtin, &SimManager::realTimePointReceived, this, &SimulationPanel::onRealTimePointReceived);
     connect(&builtin, &SimManager::realTimeDataBatchReceived, this, &SimulationPanel::onRealTimeDataBatchReceived);
     connect(&builtin, &SimManager::errorOccurred, this, &SimulationPanel::onLogReceived);
+
+    m_logFlushTimer = new QTimer(this);
+    m_logFlushTimer->setInterval(100);
+    connect(m_logFlushTimer, &QTimer::timeout, this, [this]() {
+        if (m_logBuffer.isEmpty()) {
+            m_logFlushTimer->stop();
+            return;
+        }
+        const QStringList batch = m_logBuffer;
+        m_logBuffer.clear();
+        if (m_logOutput) {
+            m_logOutput->append(batch.join("\n"));
+        }
+        for (const QString& msg : batch) {
+            appendIssueItem(msg);
+        }
+    });
 }
 
 SimulationPanel::~SimulationPanel() {
@@ -1141,16 +1173,12 @@ void SimulationPanel::setAnalysisConfig(const AnalysisConfig& cfg) {
 void SimulationPanel::onRunSimulation() {
     m_logOutput->clear();
     if (m_issueList) m_issueList->clear();
+    m_logBuffer.clear();
+    if (m_logFlushTimer) m_logFlushTimer->stop();
 
-    // Preflight diagnostics
-    {
-        SimNetlist preflightNetlist;
-        const QStringList diagnostics = SimManager::instance().preflightCheck(m_scene, m_netManager, preflightNetlist);
-        for (const QString& msg : diagnostics) {
-            const QString line = QString("[Preflight] %1").arg(msg);
-            m_logOutput->append(line);
-            appendIssueItem(line);
-        }
+    if (m_buildInProgress) {
+        m_logOutput->append("Simulation build already in progress...");
+        return;
     }
 
     if (m_waveformViewer && (!m_overlayPreviousRun || !m_overlayPreviousRun->isChecked())) {
@@ -1158,24 +1186,7 @@ void SimulationPanel::onRunSimulation() {
         m_waveformViewer->clear();
     }
 
-    m_currentNetlist = SimSchematicBridge::buildNetlist(m_scene, m_netManager);
-    for (const auto& sig : m_currentNetlist.autoProbes()) {
-        addProbe(QString::fromStdString(sig));
-    }
-
-    if (m_waveformViewer) {
-        m_waveformViewer->endBatchUpdate();
-        m_waveformViewer->updatePlot(true);
-    }
-
-    // Initialize real-time series tracking if needed
-    m_realTimeSeries.clear();
-    m_realTimePointCounter = 0;
-    
-    int idx = m_analysisType->currentIndex();
-    // Enable real-time streaming for Transient (0) and Real-Time Mode (6)
-    m_acceptRealTimeStream = (idx == 6 || idx == 0);
-    
+    const int idx = m_analysisType->currentIndex();
     if (idx == 6) { // Real-time
         int interval = m_param1->text().toInt();
         if (interval < 10) interval = 10;
@@ -1183,35 +1194,101 @@ void SimulationPanel::onRunSimulation() {
         return;
     }
 
-    auto& sim = SimManager::instance();
-    if (idx == 0) { // Transient
-        sim.runTransient(m_scene, m_netManager, parseValue(m_param2->text(), 10e-3), parseValue(m_param1->text(), 1e-6));
-    } else if (idx == 1) { // DC OP
-        sim.runDCOP(m_scene, m_netManager);
-    } else if (idx == 2) { // AC
-        sim.runAC(m_scene, m_netManager, parseValue(m_param1->text(), 10), parseValue(m_param2->text(), 1e6), m_param3->text().toInt());
-    } else if (idx == 3) { // Monte Carlo
-        int runs = m_param1->text().toInt();
-        if (runs <= 0) runs = 10;
-        sim.runMonteCarlo(m_scene, m_netManager, runs);
-    } else if (idx == 4) { // Parametric Sweep
-        QString comp = m_param1->text();
-        QString param = m_param2->text();
-        double start = parseValue(m_param3->text(), 0);
-        double stop = parseValue(m_param4->text(), 0);
-        int steps = m_param5->text().toInt();
-        if (steps <= 0) steps = 5;
-        sim.runParametricSweep(m_scene, m_netManager, comp, param, start, stop, steps);
-    } else if (idx == 5) { // Sensitivity
-        QString target = m_param1->text();
-        sim.runSensitivity(m_scene, m_netManager, target);
-    }
+    m_buildInProgress = true;
+    m_logOutput->append("Building netlist in background...");
+
+    const double tStop = parseValue(m_param2->text(), 10e-3);
+    const double tStep = parseValue(m_param1->text(), 1e-6);
+    const double fStart = parseValue(m_param1->text(), 10);
+    const double fStop = parseValue(m_param2->text(), 1e6);
+    const int pts = m_param3->text().toInt();
+    const QString projectDir = m_projectDir;
+    const QJsonObject snapshot = SchematicFileIO::serializeSceneToJson(m_scene, "A4");
+
+    auto* watcher = new QFutureWatcher<SimBuildResult>(this);
+    connect(watcher, &QFutureWatcher<SimBuildResult>::finished, this, [this, watcher, idx]() {
+        const SimBuildResult result = watcher->result();
+        watcher->deleteLater();
+        m_buildInProgress = false;
+
+        if (!result.ok) {
+            const QString msg = "Simulation build failed: " + result.error;
+            m_logOutput->append(msg);
+            appendIssueItem(msg);
+            return;
+        }
+
+        for (const QString& msg : result.diagnostics) {
+            const QString line = QString("[Preflight] %1").arg(msg);
+            m_logOutput->append(line);
+            appendIssueItem(line);
+        }
+
+        m_currentNetlist = result.netlist;
+        for (const auto& sig : m_currentNetlist.autoProbes()) {
+            addProbe(QString::fromStdString(sig));
+        }
+
+        if (m_waveformViewer) {
+            m_waveformViewer->endBatchUpdate();
+            m_waveformViewer->updatePlot(true);
+        }
+
+        // Initialize real-time series tracking if needed
+        m_realTimeSeries.clear();
+        m_realTimePointCounter = 0;
+        m_acceptRealTimeStream = (idx == 0);
+
+        SimManager::instance().runNetlistText(result.netlistText);
+    });
+
+    watcher->setFuture(QtConcurrent::run([snapshot, projectDir, idx, tStop, tStep, fStart, fStop, pts]() {
+        SimBuildResult result;
+        QGraphicsScene tempScene;
+        QString error;
+        if (!SchematicFileIO::loadSchematicFromJson(&tempScene, snapshot, &error)) {
+            result.error = error.isEmpty() ? "Failed to load schematic snapshot" : error;
+            return result;
+        }
+
+        NetManager netMgr;
+        netMgr.updateNets(&tempScene);
+
+        SimNetlist preflight = SimSchematicBridge::buildNetlist(&tempScene, &netMgr);
+        for (const auto& d : preflight.diagnostics()) {
+            result.diagnostics.append(QString::fromStdString(d));
+        }
+
+        SpiceNetlistGenerator::SimulationParams params;
+        if (idx == 0) {
+            params.type = SpiceNetlistGenerator::Transient;
+            params.start = "0";
+            params.stop = QString::number(tStop);
+            params.step = QString::number(tStep);
+        } else if (idx == 1) {
+            params.type = SpiceNetlistGenerator::OP;
+        } else if (idx == 2) {
+            params.type = SpiceNetlistGenerator::AC;
+            params.start = QString::number(fStart);
+            params.stop = QString::number(fStop);
+            params.step = QString::number(pts);
+        } else {
+            params.type = SpiceNetlistGenerator::OP;
+        }
+
+        result.netlistText = SpiceNetlistGenerator::generate(&tempScene, projectDir, &netMgr, params);
+        result.netlist = preflight;
+        result.ok = true;
+        return result;
+    }));
 }
 
 void SimulationPanel::onLogReceived(const QString& msg) {
-    qDebug() << "Log:" << msg;
-    m_logOutput->append(msg);
-    appendIssueItem(msg);
+    if (msg.trimmed().isEmpty()) return;
+    m_logBuffer.append(msg);
+    if (m_logFlushTimer && !m_logFlushTimer->isActive()) {
+        m_logFlushTimer->start();
+    }
 }
 
 void SimulationPanel::appendIssueItem(const QString& msg) {

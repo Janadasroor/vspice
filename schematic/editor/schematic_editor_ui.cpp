@@ -1874,7 +1874,8 @@ void SchematicEditor::onRunSimulation() {
     // Force UI update to show Pause/Stop buttons before heavy netlist building blocks the main thread
     qApp->processEvents();
 
-    m_netManager->updateNets(m_scene);
+    // Netlist generation now happens in the SimulationPanel background worker.
+    // Avoid blocking the UI with a full net rebuild here.
 
     // Keep results in the oscilloscope dock only (no Simulation Results tab)
     for (int i = 0; i < m_workspaceTabs->count(); ++i) {

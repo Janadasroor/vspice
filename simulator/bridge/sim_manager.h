@@ -19,6 +19,7 @@ public:
     void runMonteCarlo(QGraphicsScene* scene, NetManager* netMgr, int runs);
     void runParametricSweep(QGraphicsScene* scene, NetManager* netMgr, const QString& component, const QString& param, double start, double stop, int steps);
     void runSensitivity(QGraphicsScene* scene, NetManager* netMgr, const QString& targetSignal);
+    void runNetlistText(const QString& netlistContent);
     
     // Ngspice Integration
     void runNgspiceSimulation(QGraphicsScene* scene, NetManager* netMgr, const SimAnalysisConfig& config);
@@ -50,6 +51,7 @@ private slots:
 
 private:
     explicit SimManager(QObject* parent = nullptr);
+    void startNgspiceWithNetlist(const QString& netlistContent);
 
     SimControl* m_control = nullptr;
     bool m_paused = false;

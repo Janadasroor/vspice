@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QDebug>
+#include <QColor>
 
 using Flux::Model::SymbolDefinition;
 using Flux::Model::SymbolPrimitive;
@@ -301,6 +302,72 @@ void SymbolLibraryManager::loadUserLibraries(const QString& userLibPath) {
     // Add default user path if not present (optional, but good for UX)
     QString defaultPath = QDir::homePath() + "/ViospiceLib/sym";
     if (!paths.contains(defaultPath)) paths.append(defaultPath);
+
+    auto ensureDefaultVoltageSourceSymbol = [](const QString& baseDir) {
+        QDir dir(baseDir);
+        if (!dir.exists() && !dir.mkpath(".")) return;
+
+        const QString filePath = dir.filePath("Voltage_Source_DC.viosym");
+        bool shouldWrite = !QFile::exists(filePath);
+        if (!shouldWrite) {
+            QFile inFile(filePath);
+            if (inFile.open(QIODevice::ReadOnly)) {
+                QJsonDocument doc = QJsonDocument::fromJson(inFile.readAll());
+                if (doc.isObject()) {
+                    QJsonObject obj = doc.object();
+                    const QString name = obj.value("name").toString();
+                    const QString desc = obj.value("description").toString();
+                    const QJsonObject fields = obj.value("customFields").toObject();
+                    const QString gen = fields.value("generatedBy").toString();
+                    if (name == "Voltage_Source_DC" &&
+                        (gen == "viospice" || (gen.isEmpty() && desc == "Independent voltage source"))) {
+                        shouldWrite = true;
+                    }
+                }
+            }
+        }
+        if (!shouldWrite) return;
+
+        SymbolDefinition sym("Voltage_Source_DC");
+        sym.setDescription("Independent voltage source");
+        sym.setCategory("Simulation");
+        sym.setReferencePrefix("V");
+        sym.setDefaultValue("5");
+        sym.setCustomField("generatedBy", "viospice");
+        sym.setCustomField("generatedVersion", "1");
+
+        sym.addPrimitive(SymbolPrimitive::createLine(QPointF(0, -45), QPointF(0, -22.5)));
+        sym.addPrimitive(SymbolPrimitive::createLine(QPointF(0, 22.5), QPointF(0, 45)));
+        sym.addPrimitive(SymbolPrimitive::createCircle(QPointF(0, 0), 22.5, false));
+        SymbolPrimitive plus = SymbolPrimitive::createText("+", QPointF(0, -10), 12, QColor(Qt::black));
+        plus.data["hAlign"] = "center";
+        plus.data["vAlign"] = "center";
+        sym.addPrimitive(plus);
+
+        SymbolPrimitive minus = SymbolPrimitive::createText("-", QPointF(0, 10), 12, QColor(Qt::black));
+        minus.data["hAlign"] = "center";
+        minus.data["vAlign"] = "center";
+        sym.addPrimitive(minus);
+
+        SymbolPrimitive p1 = SymbolPrimitive::createPin(QPointF(0, -45), 1, "+", "Up", 0.0);
+        p1.data["length"] = 0.0;
+        p1.data["hideNum"] = true;
+        p1.data["hideName"] = true;
+        sym.addPrimitive(p1);
+
+        SymbolPrimitive p2 = SymbolPrimitive::createPin(QPointF(0, 45), 2, "-", "Down", 0.0);
+        p2.data["length"] = 0.0;
+        p2.data["hideNum"] = true;
+        p2.data["hideName"] = true;
+        sym.addPrimitive(p2);
+
+        QJsonDocument doc(sym.toJson());
+        QFile file(filePath);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            file.write(doc.toJson(QJsonDocument::Indented));
+        }
+    };
+    ensureDefaultVoltageSourceSymbol(defaultPath);
 
     QMap<QString, SymbolLibrary*> looseLibs;
     for (const QString& path : paths) {

@@ -1,9 +1,12 @@
 #include "voltage_source_item.h"
 #include "schematic_text_item.h"
 #include "theme_manager.h"
+#include "../../symbols/symbol_library.h"
 #include <QPainter>
 #include <QJsonObject>
-#include <cmath>
+
+using Flux::Model::SymbolPrimitive;
+using Flux::Model::SymbolDefinition;
 
 VoltageSourceItem::VoltageSourceItem(QPointF pos, const QString& value, SourceType type, QGraphicsItem* parent)
     : SchematicItem(parent), m_sourceType(type), m_dcVoltage("5.0"), 
@@ -28,6 +31,10 @@ VoltageSourceItem::VoltageSourceItem(QPointF pos, const QString& value, SourceTy
     rebuildPrimitives();
     createLabels(QPointF(30, -15), QPointF(30, 15));
     setValue(value);
+}
+
+VoltageSourceItem::~VoltageSourceItem() {
+    clearExternalSymbolItems();
 }
 
 QString VoltageSourceItem::itemTypeName() const {
@@ -244,8 +251,78 @@ void VoltageSourceItem::updateLabelText() {
     m_valueLabelItem->setText(display);
 }
 
+QList<SymbolPrimitive> VoltageSourceItem::resolvedExternalPrimitives() const {
+    QList<SymbolPrimitive> out;
+    const QList<SymbolPrimitive> effective = m_externalSymbol.effectivePrimitives();
+    out.reserve(effective.size());
+
+    constexpr int kSchematicBodyStyle = 1; // Match symbol editor "Standard" style.
+    for (const auto& prim : effective) {
+        if (prim.unit() != 0 && prim.unit() != unit()) continue;
+        if (prim.bodyStyle() != 0 && prim.bodyStyle() != kSchematicBodyStyle) continue;
+        out.append(prim);
+    }
+    return out;
+}
+
+void VoltageSourceItem::clearExternalSymbolItems() {
+    for (auto* item : m_symbolItems) delete item;
+    m_symbolItems.clear();
+}
+
+void VoltageSourceItem::rebuildExternalSymbol() {
+    clearExternalSymbolItems();
+    m_externalBounds = QRectF();
+
+    if (!m_useExternalSymbol) return;
+
+    const QList<SymbolPrimitive> primitives = resolvedExternalPrimitives();
+    for (const auto& prim : primitives) {
+        SymbolPrimitiveItem* visual = nullptr;
+        switch (prim.type) {
+            case SymbolPrimitive::Line:    visual = new SymbolLineItem(prim, this); break;
+            case SymbolPrimitive::Rect:    visual = new SymbolRectItem(prim, this); break;
+            case SymbolPrimitive::Circle:  visual = new SymbolCircleItem(prim, this); break;
+            case SymbolPrimitive::Arc:     visual = new SymbolArcItem(prim, this); break;
+            case SymbolPrimitive::Polygon: visual = new SymbolPolygonItem(prim, this); break;
+            case SymbolPrimitive::Text: {
+                auto* t = new SymbolTextItem(prim, this);
+                t->setSymbolContext(name(), reference(), value());
+                visual = t;
+                break;
+            }
+            case SymbolPrimitive::Pin:     visual = new SymbolPinItem(prim, this); break;
+            case SymbolPrimitive::Bezier:  visual = new SymbolBezierItem(prim, this); break;
+            case SymbolPrimitive::Image:   visual = new SymbolImageItem(prim, this); break;
+            default: break;
+        }
+
+        if (visual) {
+            visual->setFlag(ItemIsSelectable, false);
+            visual->setFlag(ItemIsMovable, false);
+            m_symbolItems.append(visual);
+        }
+    }
+
+    m_externalBounds = m_externalSymbol.boundingRect();
+    update();
+}
+
 void VoltageSourceItem::rebuildPrimitives() {
     m_primitives.clear();
+    m_useExternalSymbol = false;
+    clearExternalSymbolItems();
+    m_externalBounds = QRectF();
+
+    SymbolDefinition* def = SymbolLibraryManager::instance().findSymbol(itemTypeName());
+    if (!def) def = SymbolLibraryManager::instance().findSymbol("Voltage_Source_DC");
+    if (!def) def = SymbolLibraryManager::instance().findSymbol("Voltage_Source");
+    if (def && def->isValid()) {
+        m_externalSymbol = def->clone();
+        m_useExternalSymbol = true;
+        rebuildExternalSymbol();
+        return;
+    }
     
     // leads
     m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(0, -45), QPointF(0, -22.5)));
@@ -254,22 +331,8 @@ void VoltageSourceItem::rebuildPrimitives() {
     // Outer Circle
     m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(0, 0), 22.5, false));
     
-    if (m_sourceType == DC) {
-        m_primitives.push_back(std::make_unique<TextPrimitive>("+", QPointF(0, -10), 12));
-        m_primitives.push_back(std::make_unique<TextPrimitive>("-", QPointF(0, 10), 12));
-    } else if (m_sourceType == Sine) {
-        QList<QPointF> sineWave;
-        for (int i = -13; i <= 13; ++i) {
-            sineWave.append(QPointF(i, -9 * std::sin(i * M_PI / 13.0)));
-        }
-        m_primitives.push_back(std::make_unique<PolygonPrimitive>(sineWave, false)); 
-    } else if (m_sourceType == Pulse) {
-        QList<QPointF> pulseWave;
-        pulseWave << QPointF(-13, 7) << QPointF(-9, 7) << QPointF(-9, -7) << QPointF(0, -7) << QPointF(0, 7) << QPointF(9, 7) << QPointF(9, -7) << QPointF(13, -7);
-        m_primitives.push_back(std::make_unique<PolygonPrimitive>(pulseWave, false));
-    } else if (m_sourceType == Behavioral) {
-        m_primitives.push_back(std::make_unique<TextPrimitive>("B", QPointF(0, 0), 14));
-    }
+    m_primitives.push_back(std::make_unique<TextPrimitive>("+", QPointF(0, -10), 12));
+    m_primitives.push_back(std::make_unique<TextPrimitive>("-", QPointF(0, 10), 12));
     
     // Pin markers
     m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(0, -45), 4, true));
@@ -277,6 +340,13 @@ void VoltageSourceItem::rebuildPrimitives() {
 }
 
 QRectF VoltageSourceItem::boundingRect() const {
+    if (m_useExternalSymbol) {
+        QRectF rect = m_externalBounds;
+        if (rect.isNull()) rect = m_externalSymbol.boundingRect();
+        if (rect.isNull()) rect = QRectF(-20, -20, 40, 40);
+        return rect.adjusted(-5, -5, 5, 5);
+    }
+
     QRectF rect;
     for (const auto& prim : m_primitives) {
         rect = rect.united(prim->boundingRect());
@@ -291,12 +361,10 @@ void VoltageSourceItem::paint(QPainter *painter, const QStyleOptionGraphicsItem 
     PCBTheme* theme = ThemeManager::theme();
     m_pen.setColor(theme ? theme->schematicLine() : Qt::white);
     
-    if (m_sourceType == Sine) {
-        // ...
-    }
-    
-    for (const auto& prim : m_primitives) {
-        prim->paint(painter, m_pen, m_brush);
+    if (!m_useExternalSymbol) {
+        for (const auto& prim : m_primitives) {
+            prim->paint(painter, m_pen, m_brush);
+        }
     }
     
     drawConnectionPointHighlights(painter);
@@ -454,5 +522,9 @@ SchematicItem* VoltageSourceItem::clone() const {
 }
 
 QList<QPointF> VoltageSourceItem::connectionPoints() const {
+    if (m_useExternalSymbol) {
+        QList<QPointF> pts = m_externalSymbol.connectionPoints();
+        if (!pts.isEmpty()) return pts;
+    }
     return { QPointF(0, -45), QPointF(0, 45) }; // [0] is positive, [1] is negative
 }

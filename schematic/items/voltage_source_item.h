@@ -3,10 +3,16 @@
 
 #include "schematic_item.h"
 #include "schematic_primitives.h"
+#include "../../symbols/models/symbol_definition.h"
+#include "../../symbols/items/symbol_primitive_item.h"
 #include <QBrush>
 #include <QPen>
 #include <memory>
 #include <vector>
+
+using Flux::Model::SymbolDefinition;
+using Flux::Model::SymbolPrimitive;
+using namespace Flux::Item;
 
 class VoltageSourceItem : public SchematicItem {
 public:
@@ -119,6 +125,8 @@ public:
     bool pwlRepeat() const { return m_pwlRepeat; }
     void setPwlRepeat(bool r) { m_pwlRepeat = r; updateValue(); update(); }
 
+    ~VoltageSourceItem() override;
+
     // AC Analysis
     QString acAmplitude() const { return m_acAmplitude; }
     void setAcAmplitude(const QString& v) { m_acAmplitude = v; updateValue(); update(); }
@@ -147,6 +155,9 @@ public:
 
 private:
     void updateValue();
+    void rebuildExternalSymbol();
+    void clearExternalSymbolItems();
+    QList<SymbolPrimitive> resolvedExternalPrimitives() const;
 
     SourceType m_sourceType;
     QString m_dcVoltage;
@@ -207,6 +218,10 @@ private:
     QPen m_pen;
     QBrush m_brush;
     std::vector<std::unique_ptr<SchematicPrimitive>> m_primitives;
+    bool m_useExternalSymbol = false;
+    SymbolDefinition m_externalSymbol;
+    QList<SymbolPrimitiveItem*> m_symbolItems;
+    QRectF m_externalBounds;
 };
 
 #endif // VOLTAGESOURCEITEM_H

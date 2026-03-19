@@ -152,6 +152,8 @@ private:
     
     QTextEdit* m_logOutput;
     QPushButton* m_runButton;
+    QTimer* m_logFlushTimer = nullptr;
+    QStringList m_logBuffer;
     
     // Timeline / Time-Travel
     QSlider* m_timelineSlider;
@@ -184,6 +186,7 @@ private:
     SimResults m_lastResults;
     SimResults m_previousResults;
     bool m_hasLastResults = false;
+    bool m_buildInProgress = false;
     bool m_hasPreviousResults = false;
     QDateTime m_lastRunTimestampUtc;
     SimNetlist m_currentNetlist;

@@ -167,10 +167,10 @@ bool SchematicFileIO::saveSchematicAI(QGraphicsScene* scene, const QString& file
 }
 
 bool SchematicFileIO::loadSchematic(QGraphicsScene* scene, const QString& filePath,
-                                    QString& pageSize, TitleBlockData& titleBlock, QString* script,
-                                    QMap<QString, QList<QString>>* busAliases,
-                                    QSet<QString>* ercExclusions,
-                                    QJsonObject* simulationSetup) {
+                              QString& pageSize, TitleBlockData& titleBlock, QString* script,
+                              QMap<QString, QList<QString>>* busAliases,
+                              QSet<QString>* ercExclusions,
+                              QJsonObject* simulationSetup) {
     FLUX_DIAG_SCOPE("SchematicFileIO::loadSchematic");
     if (!scene) {
         s_lastError = "Invalid scene pointer";
@@ -271,6 +271,23 @@ bool SchematicFileIO::loadSchematic(QGraphicsScene* scene, const QString& filePa
     }
     
     qDebug() << "Schematic loaded successfully from" << filePath;
+    return true;
+}
+
+bool SchematicFileIO::loadSchematicFromJson(QGraphicsScene* scene, const QJsonObject& root, QString* errorOut) {
+    if (!scene) {
+        if (errorOut) *errorOut = "Missing scene";
+        return false;
+    }
+    if (!root.contains("items") || !root.value("items").isArray()) {
+        if (errorOut) *errorOut = "Invalid schematic JSON: missing items array";
+        return false;
+    }
+    scene->clear();
+    if (!deserializeItems(scene, root.value("items").toArray())) {
+        if (errorOut) *errorOut = s_lastError;
+        return false;
+    }
     return true;
 }
 

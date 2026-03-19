@@ -28,9 +28,10 @@ SchematicItem* SchematicItemFactory::createItem(const QString& typeName, QPointF
         "Power", "GND", "VCC", "VDD", "VSS", "VBAT", "3.3V", "5V", "12V"
     };
     const bool isPowerItem = powerTypes.contains(typeName);
+    const bool isVoltageSource = typeName.startsWith("Voltage_Source", Qt::CaseInsensitive);
 
     // Prefer external symbols if they exist (override built-ins), except for power items.
-    if (!isPowerItem) {
+    if (!isPowerItem && !isVoltageSource) {
         if (SymbolDefinition* def = SymbolLibraryManager::instance().findSymbol(typeName)) {
             item = new GenericComponentItem(*def, parent);
             item->setPos(pos);
