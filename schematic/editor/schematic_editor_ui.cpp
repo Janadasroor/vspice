@@ -1451,8 +1451,7 @@ void SchematicEditor::createDockWidgets() {
 
     // === Oscilloscope Dock ===
     m_oscilloscopeDock = new QDockWidget("Analog Oscilloscope", this);
-    // Leave objectName empty so QMainWindow save/restore ignores this dock.
-    m_oscilloscopeDock->setObjectName(QString());
+    m_oscilloscopeDock->setObjectName("AnalogOscilloscopeDock");
     m_oscilloscopeDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
     m_oscilloscopeDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
 

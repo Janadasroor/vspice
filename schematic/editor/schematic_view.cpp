@@ -367,6 +367,31 @@ void SchematicView::mousePressEvent(QMouseEvent *event) {
             if (m_netManager) {
                 probedNet = m_netManager->findNetAtPoint(scenePos);
                 if (!probedNet.isEmpty()) isWireOrLabel = true;
+                // If nets are stale (often after simulation), refresh once on-demand.
+                if (probedNet.isEmpty() && isWireOrLabel) {
+                    m_netManager->updateNets(scene());
+                    probedNet = m_netManager->findNetAtPoint(scenePos);
+                }
+            }
+
+            // Fallback: if we clicked a wire, try to probe its net directly
+            if (probedNet.isEmpty()) {
+                QGraphicsItem* hit = scene()->itemAt(scenePos, transform());
+                QGraphicsItem* curr = hit;
+                WireItem* wire = nullptr;
+                while (curr) {
+                    wire = dynamic_cast<WireItem*>(curr);
+                    if (wire) break;
+                    curr = curr->parentItem();
+                }
+                if (wire) {
+                    isWireOrLabel = true;
+                    probedNet = wire->pinNet(0);
+                    if (probedNet.isEmpty() && m_netManager) {
+                        m_netManager->updateNets(scene());
+                        probedNet = wire->pinNet(0);
+                    }
+                }
             }
             
             if (isWireOrLabel && !probedNet.isEmpty()) {
@@ -727,6 +752,15 @@ void SchematicView::keyPressEvent(QKeyEvent *event) {
             event->accept();
             return;
         }
+
+        // 3. Fallback: Toggle Scissors Tool
+        if (m_currentTool && m_currentTool->name() == "Scissors") {
+            setCurrentTool("Select");
+        } else {
+            setCurrentTool("Scissors");
+        }
+        event->accept();
+        return;
     }
 
     if (event->key() == Qt::Key_Escape) {

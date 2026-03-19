@@ -1,22 +1,24 @@
-#ifndef SCHEMATICSCISSORSTOOL_H
-#define SCHEMATICSCISSORSTOOL_H
+#ifndef SCHEMATIC_SCISSORS_TOOL_H
+#define SCHEMATIC_SCISSORS_TOOL_H
 
 #include "schematic_tool.h"
+#include <QGraphicsRectItem>
 
-/**
- * @brief Tool for deleting schematic items by clicking on them (Scissors tool)
- */
 class SchematicScissorsTool : public SchematicTool {
     Q_OBJECT
-
 public:
     explicit SchematicScissorsTool(QObject* parent = nullptr);
+    ~SchematicScissorsTool();
 
-    QString tooltip() const override { return "Scissors: Delete components and wires"; }
-    QString iconName() const override { return "tool_scissors"; }
     QCursor cursor() const override;
-
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+
+private:
+    bool m_rubberBandActive;
+    QPointF m_rubberBandOrigin;
+    QGraphicsRectItem* m_rubberBandItem;
 };
 
-#endif // SCHEMATICSCISSORSTOOL_H
+#endif // SCHEMATIC_SCISSORS_TOOL_H

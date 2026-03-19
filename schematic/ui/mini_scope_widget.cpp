@@ -4,6 +4,37 @@
 #include <algorithm>
 
 #include <cmath>
+#include <QRegularExpression>
+
+namespace {
+QString formatValueSI(double val, const QString& unit) {
+    const double absVal = std::abs(val);
+    if (absVal < 1e-18) return "0" + unit;
+
+    static const struct { double mult; const char* sym; } suffixes[] = {
+        {1e12, "T"}, {1e9, "G"}, {1e6, "M"}, {1e3, "k"},
+        {1.0, ""},
+        {1e-3, "m"}, {1e-6, "u"}, {1e-9, "n"}, {1e-12, "p"}, {1e-15, "f"}
+    };
+
+    for (const auto& s : suffixes) {
+        if (absVal >= s.mult * 0.999) {
+            QString num = QString::number(val / s.mult, 'f', 2).remove(QRegularExpression("\\.?0+$"));
+            return num + s.sym + unit;
+        }
+    }
+    return QString::number(val, 'g', 4) + unit;
+}
+
+QString unitForTrace(const QString& name) {
+    const QString n = name.trimmed();
+    if (n.startsWith("I(", Qt::CaseInsensitive)) return "A";
+    if (n.startsWith("V(", Qt::CaseInsensitive)) return "V";
+    if (n.startsWith("I", Qt::CaseInsensitive) && n.contains("(")) return "A";
+    if (n.startsWith("V", Qt::CaseInsensitive) && n.contains("(")) return "V";
+    return "V";
+}
+}
 
 MiniScopeWidget::MiniScopeWidget(QWidget* parent) : QWidget(parent) {
     setBackgroundRole(QPalette::Base);
@@ -175,10 +206,11 @@ void MiniScopeWidget::paintEvent(QPaintEvent*) {
         f.setBold(false);
         painter.setFont(f);
         painter.setPen(QColor(180, 180, 180));
-        painter.drawText(graphW + 10, legendY + 15, QString("Pk-Pk: %1V").arg(data.maxV - data.minV, 0, 'f', 2));
-        painter.drawText(graphW + 10, legendY + 28, QString("RMS:   %1V").arg(data.rms, 0, 'f', 2));
+        const QString unit = unitForTrace(it.key());
+        painter.drawText(graphW + 10, legendY + 15, QString("Pk-Pk: %1").arg(formatValueSI(data.maxV - data.minV, unit)));
+        painter.drawText(graphW + 10, legendY + 28, QString("RMS:   %1").arg(formatValueSI(data.rms, unit)));
         if (data.freq > 0) {
-            QString freqStr = data.freq > 1000 ? QString("%1kHz").arg(data.freq/1000.0, 0, 'f', 1) : QString("%1Hz").arg(data.freq, 0, 'f', 0);
+            QString freqStr = formatValueSI(data.freq, "Hz");
             painter.drawText(graphW + 10, legendY + 41, QString("Freq:  %1").arg(freqStr));
         }
         
@@ -187,7 +219,10 @@ void MiniScopeWidget::paintEvent(QPaintEvent*) {
     
     // Global Labels
     painter.setPen(QColor(150, 150, 150));
-    painter.drawText(5, 12, QString("%1V").arg(m_globalMaxY, 0, 'f', 1));
-    painter.drawText(5, h - 5, QString("%1V").arg(m_globalMinY, 0, 'f', 1));
+    QString globalUnit = "V";
+    if (!m_traces.isEmpty()) {
+        globalUnit = unitForTrace(m_traces.begin().key());
+    }
+    painter.drawText(5, 12, formatValueSI(m_globalMaxY, globalUnit));
+    painter.drawText(5, h - 5, formatValueSI(m_globalMinY, globalUnit));
 }
-

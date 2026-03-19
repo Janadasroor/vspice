@@ -37,8 +37,7 @@ signals:
     void rawResultsReady(const QString& rawPath);
     void simulationStarted();
     void errorOccurred(const QString& error);
-    void realTimePointReceived(double t, const std::vector<double>& values);
-    void realTimeDataBatchReceived(const std::vector<double>& times, const std::vector<std::vector<double>>& values);
+    void realTimeDataBatchReceived(const std::vector<double>& times, const std::vector<std::vector<double>>& values, const QStringList& names);
 
 private slots:
     void handleSimulationFinished(const QString& rawPath);
@@ -63,6 +62,8 @@ private:
     std::vector<SimDataPoint> m_simBuffer;
     std::mutex m_bufferMutex;
     QTimer* m_bufferTimer = nullptr;
+    int m_streamingCounter = 0;
+    int m_skipFactor = 1;
 
     std::vector<QString> m_logBuffer;
     std::mutex m_logMutex;

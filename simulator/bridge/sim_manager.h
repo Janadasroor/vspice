@@ -39,8 +39,7 @@ signals:
     void simulationStarted();
     void simulationFinished(const SimResults& results);
     void simulationPaused(bool paused);
-    void realTimePointReceived(double t, const std::vector<double>& values);
-    void realTimeDataBatchReceived(const std::vector<double>& times, const std::vector<std::vector<double>>& values);
+    void realTimeDataBatchReceived(const std::vector<double>& times, const std::vector<std::vector<double>>& values, const QStringList& names);
     void errorOccurred(const QString& msg);
     void logMessage(const QString& msg);
 

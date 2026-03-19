@@ -186,7 +186,7 @@ void VoltageSourceItem::setSourceType(SourceType type) {
 
 void VoltageSourceItem::updateValue() {
     QString tail;
-    const bool allowParasitics = (m_sourceType == DC);
+    const bool allowParasitics = true;
     if (allowParasitics) {
         if (m_seriesResistance != "0" && !m_seriesResistance.isEmpty()) tail += " Rser=" + m_seriesResistance;
         if (m_parallelCapacitance != "0" && !m_parallelCapacitance.isEmpty()) tail += " Cpar=" + m_parallelCapacitance;

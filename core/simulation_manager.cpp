@@ -75,6 +75,8 @@ void SimulationManager::runSimulation(const QString& netlist, SimControl* contro
         std::lock_guard<std::mutex> lock(m_logMutex);
         m_logBuffer.clear();
     }
+    m_streamingCounter = 0;
+    m_skipFactor = 1;
     m_bufferTimer->start();
 
     emit simulationStarted();
@@ -85,7 +87,8 @@ void SimulationManager::runSimulation(const QString& netlist, SimControl* contro
         if (!error.isEmpty()) emit errorOccurred(error);
         return;
     }
-    ngSpice_Command(const_cast<char*>("set filetype=binary"));
+    qDebug() << "SimulationManager: Setting ascii mode for real-time streaming and starting bg_run";
+    ngSpice_Command(const_cast<char*>("set filetype=ascii"));
     ngSpice_Command((char*)"bg_run");
 #endif
 }
@@ -262,8 +265,6 @@ void SimulationManager::processBufferedData() {
         emit outputReceived(msg);
     }
 
-    if (batch.empty()) return;
-
     std::vector<double> times;
     std::vector<std::vector<double>> valueRows;
     times.reserve(batch.size());
@@ -274,7 +275,12 @@ void SimulationManager::processBufferedData() {
         valueRows.push_back(p.values);
     }
 
-    emit realTimeDataBatchReceived(times, valueRows);
+    QStringList names;
+    for (size_t i = 1; i < m_vectorMap.size(); ++i) {
+        names << m_vectorMap[i].name;
+    }
+
+    emit realTimeDataBatchReceived(times, valueRows, names);
 }
 
 // --- Callbacks ---
@@ -338,25 +344,56 @@ int SimulationManager::cbSendData(pvecvaluesall vecArray, int numStructs, int id
     }
 
 
+    // Throttling for UI performance: 
+    // If we are producing data extremely fast, we only buffer every Nth point for real-time display.
+    // The .raw file will still contain all points.
+    
+    // Dynamically adjust skipFactor if buffer is getting too large?
+    // For now, let's just use a simple heuristic or a fixed limit per tick.
+    // Let's target at most ~1000 points per 33ms tick.
+    size_t currentBufferSize;
+    {
+        std::lock_guard<std::mutex> lock(self->m_bufferMutex);
+        currentBufferSize = self->m_simBuffer.size();
+    }
+
+    if (currentBufferSize > 2000) {
+        self->m_skipFactor = 10;
+    } else if (currentBufferSize > 500) {
+        self->m_skipFactor = 2;
+    } else if (currentBufferSize < 100) {
+        self->m_skipFactor = 1;
+    }
+
+    if (++self->m_streamingCounter % self->m_skipFactor != 0) return 0;
+
     double time = 0.0;
+    if (numStructs > 0) {
+        pvecvalues v0 = vecArray->vecsa[0];
+        if (v0) time = v0->creal;
+    }
+
     std::vector<double> values;
     values.reserve(numStructs);
 
-    for (int i = 0; i < numStructs; ++i) {
+    for (int i = 1; i < numStructs; ++i) {
         pvecvalues v = vecArray->vecsa[i];
-        if (!v) continue;
-
-        double val = v->creal;
-        
-        // The first vector in transient analysis is usually 'time'
-        if (i == 0) {
-            time = val;
-        } else {
-            values.push_back(val);
+        if (!v) values.push_back(0.0);
+        else values.push_back(v->creal);
+    }
+    
+    if (self->m_streamingCounter == 1) {
+        for (int i = 0; i < std::min(numStructs, 5); ++i) {
+            pvecvalues v = vecArray->vecsa[i];
+            if (v) qDebug() << "SimulationManager: Vector" << i << "name=" << v->name << "iscomplex=" << v->is_complex;
         }
     }
+    
+    if (self->m_streamingCounter < 5 || self->m_streamingCounter % 1000 == 0) {
+        qDebug() << "SimulationManager: cbSendData throttling=" << self->m_skipFactor << "point=" << self->m_streamingCounter << "time=" << time << "bufferSize=" << currentBufferSize;
+    }
 
-    // Forward to internal callback if registered
+    // Forward to internal callback if registered (e.g. script monitoring)
     if (self->m_streamingControl && self->m_streamingControl->streamingCallback) {
         self->m_streamingControl->streamingCallback(time, values);
     }
@@ -414,8 +451,10 @@ void SimulationManager::handleSimulationFinished(const QString& rawPath) {
     processBufferedData(); // Flush remaining
 #ifdef HAVE_NGSPICE
     if (!rawPath.isEmpty()) {
+        ngSpice_Command((char*)"set filetype=binary");
         const QString writeCmd = "write " + rawPath;
         ngSpice_Command(writeCmd.toLatin1().data());
+        ngSpice_Command((char*)"set filetype=ascii");
         emit rawResultsReady(rawPath);
     }
 #endif

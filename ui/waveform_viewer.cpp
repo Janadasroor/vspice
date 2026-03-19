@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Janada Sroor
 
 #include "waveform_viewer.h"
+#include "../core/si_formatter.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFile>
@@ -24,23 +25,6 @@
 #include <QGraphicsSimpleTextItem>
 #include "../core/theme_manager.h"
 
-QString WaveformViewer::formatValue(double val, const QString &unit) {
-    double absVal = std::abs(val);
-    if (absVal < 1e-18) return "0" + unit;
-    
-    static const struct { double mult; const char* sym; } suffixes[] = {
-        {1e18, "E"}, {1e15, "P"}, {1e12, "T"}, {1e9, "G"}, {1e6, "M"}, {1e3, "k"},
-        {1.0, ""},
-        {1e-3, "m"}, {1e-6, "u"}, {1e-9, "n"}, {1e-12, "p"}, {1e-15, "f"}, {1e-18, "a"}
-    };
-    
-    for (const auto& s : suffixes) {
-        if (absVal >= s.mult * 0.999) {
-            return QString::number(val / s.mult, 'g', 4) + s.sym + unit;
-        }
-    }
-    return QString::number(val, 'g', 4) + unit;
-}
 
 VioChartView::VioChartView(QChart *chart, QWidget *parent) : QChartView(chart, parent) {
     setMouseTracking(true);
@@ -483,7 +467,7 @@ void WaveformViewer::onMouseMoved(const QPointF &value) {
         return;
     }
 
-    QString coordStr = QString("Time: %1").arg(formatValue(value.x() / m_timeMultiplier, "s"));
+    QString coordStr = QString("Time: %1").arg(SiFormatter::format(value.x() / m_timeMultiplier, "s"));
     
     // Check what types of signals are currently loaded
     bool hasV = false, hasI = false, hasP = false;
@@ -498,15 +482,15 @@ void WaveformViewer::onMouseMoved(const QPointF &value) {
     
     if (hasV) {
         double valV = value.y(); // Default to current mouse Y
-        coordStr += QString(" | V: %1").arg(formatValue(valV / m_vMultiplier, m_vUnit));
+        coordStr += QString(" | V: %1").arg(SiFormatter::format(valV / m_vMultiplier, m_vUnit));
     }
     if (hasI) {
         double valI = value.y(); 
-        coordStr += QString(" | I: %1").arg(formatValue(valI / m_iMultiplier, m_iUnit));
+        coordStr += QString(" | I: %1").arg(SiFormatter::format(valI / m_iMultiplier, m_iUnit));
     }
     if (hasP) {
         double valP = value.y();
-        coordStr += QString(" | P: %1").arg(formatValue(valP / m_pMultiplier, m_pUnit));
+        coordStr += QString(" | P: %1").arg(SiFormatter::format(valP / m_pMultiplier, m_pUnit));
     }
     
     m_coordLabel->setText(coordStr);
@@ -560,9 +544,9 @@ void WaveformViewer::updateCursors() {
         m_chartView->setCursorPositions(m_cursor1X, 0, m_cursor2X, 0);
         if (m_measureDialog) {
             m_measureDialog->updateValues("", 
-                formatValue(m_cursor1X / m_timeMultiplier, m_timeUnit), "N/A",
-                formatValue(m_cursor2X / m_timeMultiplier, m_timeUnit), "N/A",
-                formatValue(std::abs(m_cursor2X - m_cursor1X) / m_timeMultiplier, m_timeUnit), "N/A",
+                SiFormatter::format(m_cursor1X / m_timeMultiplier, m_timeUnit), "N/A",
+                SiFormatter::format(m_cursor2X / m_timeMultiplier, m_timeUnit), "N/A",
+                SiFormatter::format(std::abs(m_cursor2X - m_cursor1X) / m_timeMultiplier, m_timeUnit), "N/A",
                 "---", "---");
         }
         return;
@@ -604,14 +588,14 @@ void WaveformViewer::updateCursors() {
         QString freqStr = "---";
         QString slopeStr = "---";
         if (std::abs(dt) > 1e-15) {
-            freqStr = formatValue(1.0 / std::abs(dt), "Hz");
-            slopeStr = formatValue(dv / dt, unit + "/s");
+            freqStr = SiFormatter::format(1.0 / std::abs(dt), "Hz");
+            slopeStr = SiFormatter::format(dv / dt, unit + "/s");
         }
 
         m_measureDialog->updateValues(series->name(), 
-            formatValue(m_cursor1X, "s"), formatValue(v1, ""),
-            formatValue(m_cursor2X, "s"), formatValue(v2, ""),
-            formatValue(dt, "s"), formatValue(dv, ""),
+            SiFormatter::format(m_cursor1X, "s"), SiFormatter::format(v1, ""),
+            SiFormatter::format(m_cursor2X, "s"), SiFormatter::format(v2, ""),
+            SiFormatter::format(dt, "s"), SiFormatter::format(dv, ""),
             freqStr, slopeStr
         );
     }
@@ -632,9 +616,11 @@ void WaveformViewer::updatePlot(bool autoScale) {
 
     auto* axisX = new QValueAxis();
     axisX->setTitleText("Time (s)");
+    axisX->setLabelFormat("%.2g");
     
     auto* axisY = new QValueAxis();
     axisY->setTitleText("Amplitude");
+    axisY->setLabelFormat("%.2g");
 
     QPen axisPen(Qt::white);
     axisPen.setWidth(1);
@@ -867,7 +853,7 @@ void WaveformViewer::updateZoomAnalysis() {
     double sum = 0;
     for (double v : data.values) sum += v;
     double avg = sum / data.values.size();
-    m_statsLabel->setText(QString("%1 Avg: %2").arg(m_activeSeriesName, formatValue(avg, "")));
+    m_statsLabel->setText(QString("%1 Avg: %2").arg(m_activeSeriesName, SiFormatter::format(avg, "")));
 }
 
 void WaveformViewer::onSubtractRequested() {
@@ -960,17 +946,17 @@ void WaveformViewer::showAnalysisForSeries(const QString &seriesName) {
     else if (data.type == SignalType::CURRENT) unit = "A";
     else if (data.type == SignalType::POWER) unit = "W";
 
-    const QString avgStr = formatValue(avg, unit);
+    const QString avgStr = SiFormatter::format(avg, unit);
     if (isPower) {
-        rmsOrIntegralLabel = formatValue(area, "J");
+        rmsOrIntegralLabel = SiFormatter::format(area, "J");
     } else {
-        rmsOrIntegralLabel = formatValue(rms, unit);
+        rmsOrIntegralLabel = SiFormatter::format(rms, unit);
     }
 
     if (!m_analysisDialog) m_analysisDialog = new AnalysisDialog(this);
     m_analysisDialog->setValues(seriesName,
-                                formatValue(tStart, "s"),
-                                formatValue(tEnd, "s"),
+                                SiFormatter::format(tStart, "s"),
+                                SiFormatter::format(tEnd, "s"),
                                 avgStr,
                                 rmsOrIntegralLabel,
                                 isPower);

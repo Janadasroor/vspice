@@ -13,6 +13,7 @@
 #include <QRegularExpression>
 #include <QHash>
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <vector>
 
@@ -617,6 +618,22 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
 
     // 1. Get components first (to know which are excluded)
     ECOPackage pkg = NetlistGenerator::generateECOPackage(scene, "", netManager);
+
+    // Detect duplicate reference designators (simulation-blocking)
+    QSet<QString> seenRefs;
+    QSet<QString> dupRefs;
+    for (const auto& comp : pkg.components) {
+        const QString ref = comp.reference.trimmed();
+        if (ref.isEmpty() || ref.contains("?")) continue;
+        if (seenRefs.contains(ref)) {
+            dupRefs.insert(ref);
+        } else {
+            seenRefs.insert(ref);
+        }
+    }
+    for (const QString& ref : dupRefs) {
+        netlist.addDiagnostic(QString("[error] Duplicate reference designator: '%1'").arg(ref).toStdString());
+    }
     
     QSet<QString> excludedSimRefs;
     for (const auto& comp : pkg.components) {
@@ -659,6 +676,43 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
             break;
         }
     }
+
+    // Detect zero-ohm shorts (R=0 between two different nets)
+    QMap<QString, QSet<QString>> compNets;
+    for (const auto& net : nets) {
+        const QString netName = net.name.trimmed();
+        if (netName.isEmpty()) continue;
+        for (const auto& pin : net.pins) {
+            if (pin.componentRef.isEmpty()) continue;
+            compNets[pin.componentRef].insert(netName);
+        }
+    }
+    for (const auto& comp : pkg.components) {
+        if (comp.type != SchematicItem::ResistorType) continue;
+        double val = 0.0;
+        if (!SimValueParser::parseSpiceNumber(comp.value, val)) continue;
+        if (std::abs(val) > 1e-12) continue;
+        const QSet<QString> netsForComp = compNets.value(comp.reference);
+        if (netsForComp.size() < 2) continue;
+        const QStringList netsList = QStringList(netsForComp.begin(), netsForComp.end());
+        netlist.addDiagnostic(QString("[error] Short circuit: %1 is 0ohm between %2")
+                                  .arg(comp.reference, netsList.join(" / "))
+                                  .toStdString());
+    }
+
+    // Detect 0V voltage sources shorting two different nets
+    for (const auto& comp : pkg.components) {
+        if (comp.type != SchematicItem::VoltageSourceType) continue;
+        double val = 0.0;
+        if (!SimValueParser::parseSpiceNumber(comp.value, val)) continue;
+        if (std::abs(val) > 1e-12) continue;
+        const QSet<QString> netsForComp = compNets.value(comp.reference);
+        if (netsForComp.size() < 2) continue;
+        const QStringList netsList = QStringList(netsForComp.begin(), netsForComp.end());
+        netlist.addDiagnostic(QString("[error] Short circuit: %1 is 0V between %2")
+                                  .arg(comp.reference, netsList.join(" / "))
+                                  .toStdString());
+    }
     
     // 3. Identify and register nodes
     for (const auto& net : nets) {
@@ -691,7 +745,7 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
     loadProjectModelLibraries(netlist, mappingWarnings);
 
     if (!hasGroundNet) {
-        netlist.addDiagnostic("[warn] No ground reference found (GND/0). Simulation may fail.");
+        netlist.addDiagnostic("[error] No ground reference found (GND/0). Simulation will fail.");
     }
 
     // 4. Map components to simulator instances
@@ -949,6 +1003,17 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
         } else if (inst.type == SimComponentType::SubcircuitInstance) {
             // Subcircuit parameters can be added in future from IC value/options.
         } else {
+            const QString rawValue = comp.value.trimmed();
+            if (rawValue.isEmpty() &&
+                (inst.type == SimComponentType::Resistor ||
+                 inst.type == SimComponentType::Capacitor ||
+                 inst.type == SimComponentType::Inductor ||
+                 inst.type == SimComponentType::VoltageSource ||
+                 inst.type == SimComponentType::CurrentSource)) {
+                netlist.addDiagnostic(QString("[error] Missing value for %1").arg(compDebugLabel(comp)).toStdString());
+                continue;
+            }
+
             double val = parseValue(comp.value);
             if (inst.type == SimComponentType::VoltageSource || inst.type == SimComponentType::CurrentSource) {
                 parseSourceWaveform(comp.value, inst);
@@ -963,6 +1028,17 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
                     val = 5.0; // sensible default for unnamed power rails
                 }
             }
+            if (inst.type == SimComponentType::Resistor ||
+                inst.type == SimComponentType::Capacitor ||
+                inst.type == SimComponentType::Inductor) {
+                double parsed = 0.0;
+                if (!SimValueParser::parseSpiceNumber(comp.value, parsed) && !isExpression(comp.value)) {
+                    netlist.addDiagnostic(QString("[error] Invalid value for %1: '%2'")
+                        .arg(compDebugLabel(comp), comp.value).toStdString());
+                    continue;
+                }
+            }
+
             if (inst.type == SimComponentType::Resistor) inst.params["resistance"] = val;
             else if (inst.type == SimComponentType::VoltageSource && !inst.params.count("voltage")) inst.params["voltage"] = val;
             else if (inst.type == SimComponentType::Capacitor) inst.params["capacitance"] = val;
@@ -1019,7 +1095,22 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
             return a.toLower() < b.toLower();
         });
         for (const QString& w : mappingWarnings) {
-            netlist.addDiagnostic(w.toStdString());
+            QString msg = w.trimmed();
+            QString prefix = "[warn]";
+            const QString lower = msg.toLower();
+            if (lower.contains("not found") ||
+                lower.contains("parse failed") ||
+                lower.contains("could not be opened") ||
+                lower.contains("requires numeric pin labels") ||
+                lower.contains("exceeds subckt pin count") ||
+                lower.contains("missing required roles") ||
+                lower.contains("insufficient connected pins")) {
+                prefix = "[error]";
+            }
+            if (!msg.startsWith("[warn]") && !msg.startsWith("[error]")) {
+                msg = prefix + " " + msg;
+            }
+            netlist.addDiagnostic(msg.toStdString());
         }
     }
 

@@ -49,8 +49,54 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
 
     int analysisIdx = m_analysisType->currentIndex();
     QAbstractAxis* axisX = nullptr;
+    QAbstractAxis* axisYBase = nullptr;
     QValueAxis* axisYPhase = nullptr;
     
+    auto formatValueSI = [](double val) {
+        const double absVal = std::abs(val);
+        if (absVal < 1e-18) return QString("0");
+        static const struct { double mult; const char* sym; } suffixes[] = {
+            {1e12, "T"}, {1e9, "G"}, {1e6, "M"}, {1e3, "k"},
+            {1.0, ""},
+            {1e-3, "m"}, {1e-6, "u"}, {1e-9, "n"}, {1e-12, "p"}, {1e-15, "f"}
+        };
+        for (const auto& s : suffixes) {
+            if (absVal >= s.mult * 0.999) {
+                QString num = QString::number(val / s.mult, 'f', 2).remove(QRegularExpression("\\.?0+$"));
+                return num + s.sym;
+            }
+        }
+        return QString::number(val, 'g', 4);
+    };
+
+    auto detectYUnit = [&]() {
+        for (const auto& w : results.waveforms) {
+            const QString n = QString::fromStdString(w.name).trimmed();
+            if (n.startsWith("I(", Qt::CaseInsensitive)) return QString("A");
+            if (n.startsWith("V(", Qt::CaseInsensitive)) return QString("V");
+        }
+        return QString("V");
+    };
+
+    auto buildSIAxis = [&](double minVal, double maxVal, const QString& title, bool isTimeAxis) -> QCategoryAxis* {
+        auto* axis = new QCategoryAxis();
+        axis->setTitleText(title);
+        if (minVal == maxVal) {
+            minVal -= 1.0;
+            maxVal += 1.0;
+        }
+        axis->setRange(minVal, maxVal);
+
+        const int ticks = 6;
+        const double step = (maxVal - minVal) / (ticks - 1);
+        for (int i = 0; i < ticks; ++i) {
+            const double v = minVal + step * i;
+            axis->append(formatValueSI(v), v);
+        }
+        axis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
+        return axis;
+    };
+
     if (analysisIdx == 2) { // AC Sweep / Bode Plot
         auto* logX = new QLogValueAxis();
         logX->setTitleText("Frequency (Hz)");
@@ -68,10 +114,23 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
         axisYPhase->setLinePen(QPen(Qt::white, 1));
         m_chart->addAxis(axisYPhase, Qt::AlignRight);
     } else {
-        auto* valX = new QValueAxis();
-        if (analysisIdx == 3) valX->setTitleText("Run Number");
-        else valX->setTitleText(axisLabelFromSchema(results.xAxisName));
-        axisX = valX;
+        if (analysisIdx == 3) {
+            auto* valX = new QValueAxis();
+            valX->setTitleText("Run Number");
+            axisX = valX;
+        } else {
+            // Compute X range for SI labels (time axis)
+            double minX = 0.0, maxX = 0.0;
+            bool firstX = true;
+            for (const auto& w : results.waveforms) {
+                if (w.xData.empty()) continue;
+                const double lo = *std::min_element(w.xData.begin(), w.xData.end());
+                const double hi = *std::max_element(w.xData.begin(), w.xData.end());
+                if (firstX) { minX = lo; maxX = hi; firstX = false; }
+                else { minX = std::min(minX, lo); maxX = std::max(maxX, hi); }
+            }
+            axisX = buildSIAxis(minX, maxX, axisLabelFromSchema(results.xAxisName), true);
+        }
     }
     
     axisX->setGridLinePen(QPen(QColor("#404040"), 1, Qt::DotLine));
@@ -80,14 +139,36 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
     axisX->setLinePen(QPen(Qt::white, 1));
     m_chart->addAxis(axisX, Qt::AlignBottom);
 
-    QValueAxis* axisY = new QValueAxis();
-    if (analysisIdx == 2) axisY->setTitleText("Magnitude (dB)");
-    else axisY->setTitleText(axisLabelFromSchema(results.yAxisName));
-    axisY->setGridLinePen(QPen(QColor("#404040"), 1, Qt::DotLine));
-    axisY->setLabelsBrush(QBrush(Qt::white));
-    axisY->setTitleBrush(QBrush(Qt::white));
-    axisY->setLinePen(QPen(Qt::white, 1));
-    m_chart->addAxis(axisY, Qt::AlignLeft);
+    if (analysisIdx == 2) {
+        QValueAxis* axisY = new QValueAxis();
+        axisY->setTitleText("Magnitude (dB)");
+        axisY->setGridLinePen(QPen(QColor("#404040"), 1, Qt::DotLine));
+        axisY->setLabelsBrush(QBrush(Qt::white));
+        axisY->setTitleBrush(QBrush(Qt::white));
+        axisY->setLinePen(QPen(Qt::white, 1));
+        m_chart->addAxis(axisY, Qt::AlignLeft);
+        axisYBase = axisY;
+    } else {
+        double minY = 0.0, maxY = 0.0;
+        bool firstY = true;
+        for (const auto& w : results.waveforms) {
+            if (w.yData.empty()) continue;
+            const double lo = *std::min_element(w.yData.begin(), w.yData.end());
+            const double hi = *std::max_element(w.yData.begin(), w.yData.end());
+            if (firstY) { minY = lo; maxY = hi; firstY = false; }
+            else { minY = std::min(minY, lo); maxY = std::max(maxY, hi); }
+        }
+        const QString unit = detectYUnit();
+        const QString title = (analysisIdx == 3) ? axisLabelFromSchema(results.yAxisName)
+                                                  : axisLabelFromSchema(results.yAxisName) + " (" + unit + ")";
+        auto* axisY = buildSIAxis(minY, maxY, title, false);
+        axisY->setGridLinePen(QPen(QColor("#404040"), 1, Qt::DotLine));
+        axisY->setLabelsBrush(QBrush(Qt::white));
+        axisY->setTitleBrush(QBrush(Qt::white));
+        axisY->setLinePen(QPen(Qt::white, 1));
+        m_chart->addAxis(axisY, Qt::AlignLeft);
+        axisYBase = axisY;
+    }
 
     const QList<QColor> colors = {QColor(0, 204, 0), QColor(0, 0, 255), QColor(255, 0, 0), QColor(0, 255, 255), QColor(255, 0, 255), QColor(255, 255, 0)};
     int colorIdx = 0;
@@ -125,7 +206,7 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
 
         m_chart->addSeries(series);
         series->attachAxis(axisX);
-        series->attachAxis(axisY);
+        series->attachAxis(axisYBase);
 
         if (phaseSeries) {
             m_chart->addSeries(phaseSeries);

@@ -94,6 +94,7 @@ void RemoveItemCommand::undo() {
             }
         }
         if (hasWire) SchematicConnectivity::updateVisualConnections(m_scene);
+        m_scene->update();
     }
     m_ownsItems = false;
 }
@@ -114,6 +115,7 @@ void RemoveItemCommand::redo() {
             }
         }
         if (hasWire) SchematicConnectivity::updateVisualConnections(m_scene);
+        m_scene->update();
     }
     m_ownsItems = true;
 }

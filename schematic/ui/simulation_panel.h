@@ -70,8 +70,7 @@ private slots:
     void onSimulationFinished();
     void onViewNetlist();
     void onSimResultsReady(const SimResults& results);
-    void onRealTimePointReceived(double t, const std::vector<double>& values);
-    void onRealTimeDataBatchReceived(const std::vector<double>& times, const std::vector<std::vector<double>>& values);
+    void onRealTimeDataBatchReceived(const std::vector<double>& times, const std::vector<std::vector<double>>& values, const QStringList& names);
     void onTimelineValueChanged(int value);
     void onGeneratorTypeChanged(int index);
     void onApplyGeneratorToSelection();
