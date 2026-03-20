@@ -508,6 +508,16 @@ void SchematicEditor::onSelectionChanged() {
             sItems.append(si);
     }
     
+    // Connect simulation directive edit signal
+    for (QGraphicsItem* item : selected) {
+        if (auto* directive = dynamic_cast<SchematicSpiceDirectiveItem*>(item)) {
+            connect(directive, &SchematicSpiceDirectiveItem::editSimulationRequested,
+                    this, &SchematicEditor::onEditSimulationFromDirective,
+                    Qt::UniqueConnection);
+            break;
+        }
+    }
+    
     // Clear all previous highlights
     if (m_netManager) {
         m_netManager->clearAllHighlights(m_scene);

@@ -80,6 +80,7 @@ signals:
     void syncSheetRequested(class SchematicSheetItem* sheet);
     void runLiveERC(const QList<SchematicItem*>& items);
     void netProbed(const QString& netName);
+    void editSimulationDirective(const QString& commandText);
 
 public:
     void setGridSize(double size);

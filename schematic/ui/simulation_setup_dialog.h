@@ -24,6 +24,7 @@ public:
         int pts = 100;
         int rtIntervalMs = 50;
         double rtStep = 1e-3;
+        QString commandText;
 
         QJsonObject toJson() const;
         static Config fromJson(const QJsonObject& obj);
@@ -37,8 +38,11 @@ private slots:
 
 private:
     void setupUI();
+    void updateCommandDisplay();
+    void parseCommandText(const QString& command);
 
     QComboBox* m_typeCombo;
+    QLineEdit* m_commandLine;
     QLineEdit* m_param1;
     QLineEdit* m_param2;
     QLineEdit* m_param3;

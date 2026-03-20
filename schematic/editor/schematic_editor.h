@@ -109,6 +109,7 @@ private slots:
     void onAbout();
     void onRunSimulation();
     void onOpenSimulationSetup();
+    void onEditSimulationFromDirective(const QString& currentCommand);
     void onPauseSimulation();
     void onOpenNetlistEditor();
     void onOpenFluxScript();

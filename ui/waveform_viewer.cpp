@@ -308,6 +308,10 @@ void WaveformViewer::preserveXRangeOnce(double minX, double maxX) {
 }
 
 void WaveformViewer::addSignal(const QString& name, const QVector<double>& time, const QVector<double>& values) {
+    addSignal(name, time, values, {});
+}
+
+void WaveformViewer::addSignal(const QString& name, const QVector<double>& time, const QVector<double>& values, const QVector<double>& phase) {
     if (time.isEmpty() || values.isEmpty()) return;
 
     SignalData data;
@@ -320,6 +324,10 @@ void WaveformViewer::addSignal(const QString& name, const QVector<double>& time,
     
     data.time = time;
     data.values = values;
+    if (!phase.isEmpty() && phase.size() == values.size()) {
+        data.phase = phase;
+        data.hasPhase = true;
+    }
     m_signals[name] = data;
     
     // Check if already in list
@@ -594,7 +602,30 @@ void WaveformViewer::updateCursors() {
     m_cursor1X = m_chartView->cursor1X();
     m_cursor2X = m_chartView->cursor2X();
     
-    auto getY = [&](double x) {
+    auto getY = [&](QLineSeries* s, double x) {
+        if (!s) return 0.0;
+        auto points = s->points();
+        if (points.isEmpty()) return 0.0;
+        for (int i = 0; i < points.size() - 1; ++i) {
+            if (x >= points[i].x() && x <= points[i+1].x()) {
+                double t = (x - points[i].x()) / (points[i+1].x() - points[i].x());
+                return points[i].y() + t * (points[i+1].y() - points[i].y());
+            }
+        }
+        return points.last().y();
+    };
+
+    auto getPhaseSeries = [&](const QString& baseName) -> QLineSeries* {
+        const QString phaseName = baseName + " (Phase)";
+        for (auto* s : m_chart->series()) {
+            if (auto* ls = qobject_cast<QLineSeries*>(s)) {
+                if (ls->name() == phaseName) return ls;
+            }
+        }
+        return nullptr;
+    };
+
+    auto getYLegacy = [&](double x) {
         auto points = series->points();
         if (points.isEmpty()) return 0.0;
         for (int i = 0; i < points.size() - 1; ++i) {
@@ -606,8 +637,8 @@ void WaveformViewer::updateCursors() {
         return points.last().y();
     };
 
-    double v1 = getY(m_cursor1X);
-    double v2 = getY(m_cursor2X);
+    double v1 = getYLegacy(m_cursor1X);
+    double v2 = getYLegacy(m_cursor2X);
     m_chartView->setCursorPositions(m_cursor1X, v1, m_cursor2X, v2, series);
 
     if (m_measureDialog) {
@@ -629,10 +660,28 @@ void WaveformViewer::updateCursors() {
         }
 
         if (m_acMode) {
+            QString ph1 = "---";
+            QString ph2 = "---";
+            QString dph = "---";
+            QString gd = "---";
+            QLineSeries* phaseSeries = getPhaseSeries(series->name());
+            bool hasPhase = (phaseSeries != nullptr);
+            if (hasPhase) {
+                const double p1 = getY(phaseSeries, m_cursor1X);
+                const double p2 = getY(phaseSeries, m_cursor2X);
+                ph1 = QString::number(p1, 'g', 4) + " deg";
+                ph2 = QString::number(p2, 'g', 4) + " deg";
+                dph = QString::number(p2 - p1, 'g', 4) + " deg";
+                if (std::abs(dt) > 1e-12) {
+                    const double gdVal = -((p2 - p1) / 360.0) / dt;
+                    gd = SiFormatter::format(gdVal, "s");
+                }
+            }
+
             m_measureDialog->updateAcValues(series->name(),
-                SiFormatter::format(m_cursor1X, "Hz"), formatDb(v1), "---", "---",
-                SiFormatter::format(m_cursor2X, "Hz"), formatDb(v2), "---", "---",
-                SiFormatter::format(dt, "Hz"), formatDb(dv), "---", "---");
+                SiFormatter::format(m_cursor1X, "Hz"), formatDb(v1), ph1, "---",
+                SiFormatter::format(m_cursor2X, "Hz"), formatDb(v2), ph2, "---",
+                SiFormatter::format(dt, "Hz"), formatDb(dv), dph, gd);
         } else {
             m_measureDialog->updateValues(series->name(), 
                 SiFormatter::format(m_cursor1X, "s"), SiFormatter::format(v1, ""),
@@ -681,6 +730,10 @@ void WaveformViewer::updatePlot(bool autoScale) {
     m_chart->addAxis(axisX, Qt::AlignBottom);
     m_chart->addAxis(axisY, Qt::AlignLeft);
 
+    bool needsPhaseAxis = false;
+    double minPhase = 1e30;
+    double maxPhase = -1e30;
+
     bool hasAnyChecked = false;
     int colorIdx = 0;
     for (int i = 0; i < m_nodeList->count(); ++i) {
@@ -702,6 +755,7 @@ void WaveformViewer::updatePlot(bool autoScale) {
 
                 QVector<double> sortedTime;
                 QVector<double> sortedValues;
+                QVector<double> sortedPhase;
                 if (m_acMode && totalSize > 1) {
                     QVector<int> order(totalSize);
                     std::iota(order.begin(), order.end(), 0);
@@ -710,13 +764,22 @@ void WaveformViewer::updatePlot(bool autoScale) {
                     });
                     sortedTime.resize(totalSize);
                     sortedValues.resize(totalSize);
+                    if (data.hasPhase && data.phase.size() == data.values.size()) {
+                        sortedPhase.resize(totalSize);
+                    }
                     for (int j = 0; j < totalSize; ++j) {
                         sortedTime[j] = data.time[order[j]];
                         sortedValues[j] = data.values[order[j]];
+                        if (!sortedPhase.isEmpty()) {
+                            sortedPhase[j] = data.phase[order[j]];
+                        }
                     }
                 } else {
                     sortedTime = data.time;
                     sortedValues = data.values;
+                    if (data.hasPhase && data.phase.size() == data.values.size()) {
+                        sortedPhase = data.phase;
+                    }
                 }
 
                 if (totalSize <= maxBuckets) {
@@ -767,8 +830,101 @@ void WaveformViewer::updatePlot(bool autoScale) {
                 m_chart->addSeries(series);
                 series->attachAxis(axisX);
                 series->attachAxis(axisY);
+
+                if (m_acMode && data.hasPhase && !sortedPhase.isEmpty()) {
+                    auto* phaseSeries = new QLineSeries();
+                    phaseSeries->setName(name + " (Phase)");
+                    QPen phasePen(colors[colorIdx % colors.size()], 1.2, Qt::DashLine);
+                    phaseSeries->setPen(phasePen);
+
+                    if (totalSize <= maxBuckets) {
+                        QList<QPointF> points;
+                        points.reserve(totalSize);
+                        for (int j = 0; j < totalSize; ++j) {
+                            points.append(QPointF(sortedTime[j], sortedPhase[j]));
+                        }
+                        phaseSeries->append(points);
+                    } else {
+                        int bucketSize = totalSize / maxBuckets;
+                        QList<QPointF> points;
+                        points.reserve(maxBuckets * 2 + 1);
+                        for (int b = 0; b < maxBuckets; ++b) {
+                            int start = b * bucketSize;
+                            int end = (b == maxBuckets - 1) ? totalSize : (b + 1) * bucketSize;
+
+                            int minIdx = start;
+                            int maxIdx = start;
+                            double minVal = sortedPhase[start];
+                            double maxVal = minVal;
+                            for (int j = start + 1; j < end; ++j) {
+                                const double y = sortedPhase[j];
+                                if (y < minVal) { minVal = y; minIdx = j; }
+                                if (y > maxVal) { maxVal = y; maxIdx = j; }
+                            }
+
+                            if (minIdx < maxIdx) {
+                                points.append(QPointF(sortedTime[minIdx], sortedPhase[minIdx]));
+                                points.append(QPointF(sortedTime[maxIdx], sortedPhase[maxIdx]));
+                            } else if (minIdx > maxIdx) {
+                                points.append(QPointF(sortedTime[maxIdx], sortedPhase[maxIdx]));
+                                points.append(QPointF(sortedTime[minIdx], sortedPhase[minIdx]));
+                            } else {
+                                points.append(QPointF(sortedTime[minIdx], sortedPhase[minIdx]));
+                            }
+                        }
+                        if (!points.isEmpty() && points.last().x() < sortedTime.back()) {
+                            points.append(QPointF(sortedTime.back(), sortedPhase.back()));
+                        }
+                        phaseSeries->append(points);
+                    }
+
+                    if (sortedPhase.size() == sortedTime.size()) {
+                        for (double v : sortedPhase) {
+                            minPhase = std::min(minPhase, v);
+                            maxPhase = std::max(maxPhase, v);
+                        }
+                        needsPhaseAxis = true;
+                    }
+
+                    m_chart->addSeries(phaseSeries);
+                    phaseSeries->attachAxis(axisX);
+                    // axisYPhase will be added after series loop if needed
+                }
+
                 hasAnyChecked = true;
                 colorIdx++;
+            }
+        }
+    }
+
+    QValueAxis* axisYPhase = nullptr;
+    if (m_acMode && needsPhaseAxis) {
+        axisYPhase = new QValueAxis();
+        axisYPhase->setTitleText("Phase (deg)");
+        axisYPhase->setLabelFormat("%.0f");
+        axisYPhase->setGridLineVisible(false);
+        if (!std::isfinite(minPhase) || !std::isfinite(maxPhase) || minPhase > maxPhase) {
+            minPhase = -180.0;
+            maxPhase = 180.0;
+        }
+        if (std::abs(maxPhase - minPhase) < 1e-6) {
+            minPhase -= 10.0;
+            maxPhase += 10.0;
+        } else {
+            const double pad = (maxPhase - minPhase) * 0.1;
+            minPhase -= pad;
+            maxPhase += pad;
+        }
+        axisYPhase->setRange(minPhase, maxPhase);
+        axisYPhase->setLinePen(axisPen);
+        axisYPhase->setLabelsBrush(QBrush(Qt::white));
+        axisYPhase->setTitleBrush(QBrush(Qt::white));
+        m_chart->addAxis(axisYPhase, Qt::AlignRight);
+
+        // Attach phase series to the phase axis
+        for (auto* s : m_chart->series()) {
+            if (s->name().endsWith("(Phase)")) {
+                s->attachAxis(axisYPhase);
             }
         }
     }
@@ -995,6 +1151,57 @@ void WaveformViewer::showAnalysisForSeries(const QString &seriesName) {
     const auto& data = m_signals[seriesName];
     if (data.time.size() < 2 || data.values.size() < 2) return;
 
+    if (m_acMode) {
+        double fStart = data.time.front();
+        double fEnd = data.time.back();
+        if (currentXRange(fStart, fEnd)) {
+            if (fEnd < fStart) std::swap(fStart, fEnd);
+        } else {
+            fStart = data.time.front();
+            fEnd = data.time.back();
+        }
+
+        // Build magnitude in dB
+        QVector<double> mags;
+        mags.reserve(data.values.size());
+        for (double v : data.values) mags.push_back(toDb(v));
+
+        // Reference at start frequency (nearest point)
+        double refDb = mags.front();
+        {
+            // find nearest index to fStart
+            int idx = 0;
+            double best = std::abs(data.time[0] - fStart);
+            for (int i = 1; i < data.time.size(); ++i) {
+                double d = std::abs(data.time[i] - fStart);
+                if (d < best) { best = d; idx = i; }
+            }
+            refDb = mags[idx];
+        }
+
+        const double target = refDb - 3.0;
+        QString bwStr = "---";
+        for (int i = 0; i < data.time.size(); ++i) {
+            if (data.time[i] < fStart || data.time[i] > fEnd) continue;
+            if (mags[i] <= target) {
+                bwStr = SiFormatter::format(data.time[i], "Hz");
+                break;
+            }
+        }
+
+        if (!m_analysisDialog) m_analysisDialog = new AnalysisDialog(this);
+        m_analysisDialog->setAcValues(seriesName,
+                                      SiFormatter::format(fStart, "Hz"),
+                                      SiFormatter::format(fEnd, "Hz"),
+                                      QString("%1 @ %2").arg(formatDb(refDb), SiFormatter::format(fStart, "Hz")),
+                                      bwStr,
+                                      bwStr);
+        m_analysisDialog->show();
+        m_analysisDialog->raise();
+        m_analysisDialog->activateWindow();
+        return;
+    }
+
     double tStart = data.time.front();
     double tEnd = data.time.back();
     double minX = 0.0, maxX = 0.0;
@@ -1055,4 +1262,37 @@ void WaveformViewer::showAnalysisForSeries(const QString &seriesName) {
     m_analysisDialog->show();
     m_analysisDialog->raise();
     m_analysisDialog->activateWindow();
+}
+
+QList<WaveformViewer::SignalExport> WaveformViewer::exportSignals() const {
+    QList<SignalExport> result;
+    for (auto it = m_signals.constBegin(); it != m_signals.constEnd(); ++it) {
+        SignalExport exp;
+        exp.name = it->name;
+        exp.time = it->time;
+        exp.values = it->values;
+        exp.phase = it->phase;
+        exp.hasPhase = it->hasPhase;
+        exp.checked = false;
+        for (int i = 0; i < m_nodeList->count(); ++i) {
+            if (m_nodeList->item(i)->text() == it->name) {
+                exp.checked = (m_nodeList->item(i)->checkState() == Qt::Checked);
+                break;
+            }
+        }
+        result.append(exp);
+    }
+    return result;
+}
+
+void WaveformViewer::importSignals(const QList<SignalExport>& signalExports) {
+    for (const auto& sig : signalExports) {
+        if (sig.hasPhase) {
+            addSignal(sig.name, sig.time, sig.values, sig.phase);
+        } else {
+            addSignal(sig.name, sig.time, sig.values);
+        }
+        setSignalChecked(sig.name, sig.checked);
+    }
+    updatePlot(true);
 }

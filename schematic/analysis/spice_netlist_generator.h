@@ -28,6 +28,7 @@ public:
     };
 
     static QString generate(QGraphicsScene* scene, const QString& projectDir, NetManager* netManager, const SimulationParams& params);
+    static QString buildCommand(const SimulationParams& params);
 
 private:
     static QString formatComponent(const class SchematicComponentItem* item, const QMap<QString, QString>& netMap);

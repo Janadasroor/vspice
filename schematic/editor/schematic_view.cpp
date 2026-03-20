@@ -913,8 +913,7 @@ void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
     // SPECIAL: Direct dialog for SPICE Directives on right-click (LTspice style)
     if (targetSItem && targetSItem->itemType() == SchematicItem::SpiceDirectiveType) {
         if (auto* spice = dynamic_cast<SchematicSpiceDirectiveItem*>(targetSItem)) {
-            SpiceDirectiveDialog dlg(spice, m_undoStack, scene(), this);
-            dlg.exec();
+            emit editSimulationDirective(spice->text());
             return;
         }
     }

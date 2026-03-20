@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QLabel>
+#include <QRegularExpression>
 
 QJsonObject SimulationSetupDialog::Config::toJson() const {
     QJsonObject obj;
@@ -16,6 +17,7 @@ QJsonObject SimulationSetupDialog::Config::toJson() const {
     obj["fStart"] = fStart;
     obj["fStop"] = fStop;
     obj["pts"] = pts;
+    obj["commandText"] = commandText;
     return obj;
 }
 
@@ -34,6 +36,7 @@ SimulationSetupDialog::Config SimulationSetupDialog::Config::fromJson(const QJso
     cfg.fStart = obj.value("fStart").toDouble(cfg.fStart);
     cfg.fStop = obj.value("fStop").toDouble(cfg.fStop);
     cfg.pts = obj.value("pts").toInt(cfg.pts);
+    cfg.commandText = obj.value("commandText").toString();
     return cfg;
 }
 
@@ -47,6 +50,7 @@ void SimulationSetupDialog::setupUI() {
     auto* mainLayout = new QVBoxLayout(this);
     
     auto* form = new QFormLayout();
+    
     m_typeCombo = new QComboBox();
     m_typeCombo->addItems({"Transient (Time)", "DC Operating Point", "AC Sweep (Frequency)", "Interactive (Live)"});
     form->addRow("Analysis Type:", m_typeCombo);
@@ -58,6 +62,13 @@ void SimulationSetupDialog::setupUI() {
     form->addRow("Step Size:", m_param1);
     form->addRow("Stop Time:", m_param2);
     form->addRow("Start Time:", m_param3);
+
+    m_commandLine = new QLineEdit();
+    m_commandLine->setStyleSheet(
+        "QLineEdit { background: white; color: #3b82f6; border: 1px solid #3b82f6; "
+        "font-family: 'Courier New'; font-weight: bold; padding: 4px; }");
+    m_commandLine->setPlaceholderText(".tran <tstep> <tstop> [tstart]");
+    form->addRow("Command:", m_commandLine);
 
     mainLayout->addLayout(form);
 
@@ -72,6 +83,15 @@ void SimulationSetupDialog::setupUI() {
     mainLayout->addLayout(btnLayout);
 
     connect(m_typeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SimulationSetupDialog::onAnalysisChanged);
+    connect(m_typeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SimulationSetupDialog::updateCommandDisplay);
+    connect(m_param1, &QLineEdit::textChanged, this, &SimulationSetupDialog::updateCommandDisplay);
+    connect(m_param2, &QLineEdit::textChanged, this, &SimulationSetupDialog::updateCommandDisplay);
+    connect(m_param3, &QLineEdit::textChanged, this, &SimulationSetupDialog::updateCommandDisplay);
+    connect(m_commandLine, &QLineEdit::editingFinished, this, [this]() {
+        parseCommandText(m_commandLine->text());
+    });
+    
+    updateCommandDisplay();
 }
 
 void SimulationSetupDialog::onAnalysisChanged(int index) {
@@ -111,6 +131,71 @@ void SimulationSetupDialog::onAnalysisChanged(int index) {
         hideField(m_param3);
         m_param1->setText("50"); m_param2->setText("1m");
     }
+    
+    updateCommandDisplay();
+}
+
+void SimulationSetupDialog::updateCommandDisplay() {
+    if (!m_commandLine) return;
+    
+    int idx = m_typeCombo->currentIndex();
+    QString cmd;
+    
+    if (idx == 0) { // Transient
+        cmd = QString(".tran %1 %2 %3")
+            .arg(m_param1->text())
+            .arg(m_param2->text())
+            .arg(m_param3->text());
+    } else if (idx == 1) { // DC OP
+        cmd = ".op";
+    } else if (idx == 2) { // AC Sweep
+        cmd = QString(".ac dec %1 %2 %3")
+            .arg(m_param3->text())
+            .arg(m_param1->text())
+            .arg(m_param2->text());
+    } else { // Real-time
+        cmd = QString(".tran %1 %2 0")
+            .arg(m_param2->text())
+            .arg(m_param1->text());
+    }
+    
+    m_commandLine->setText(cmd);
+}
+
+void SimulationSetupDialog::parseCommandText(const QString& command) {
+    QString cmd = command.trimmed().toLower();
+    
+    m_typeCombo->blockSignals(true);
+    m_param1->blockSignals(true);
+    m_param2->blockSignals(true);
+    m_param3->blockSignals(true);
+    
+    if (cmd.startsWith(".tran")) {
+        m_typeCombo->setCurrentIndex(0);
+        QStringList parts = cmd.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+        if (parts.size() >= 3) {
+            m_param1->setText(parts[1]);
+            m_param2->setText(parts[2]);
+            if (parts.size() >= 4) m_param3->setText(parts[3]);
+        }
+    } else if (cmd.startsWith(".op")) {
+        m_typeCombo->setCurrentIndex(1);
+    } else if (cmd.startsWith(".ac")) {
+        m_typeCombo->setCurrentIndex(2);
+        QStringList parts = cmd.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+        if (parts.size() >= 5) {
+            m_param3->setText(parts[2]);
+            m_param1->setText(parts[3]);
+            m_param2->setText(parts[4]);
+        }
+    }
+    
+    m_typeCombo->blockSignals(false);
+    m_param1->blockSignals(false);
+    m_param2->blockSignals(false);
+    m_param3->blockSignals(false);
+    
+    updateCommandDisplay();
 }
 
 SimulationSetupDialog::Config SimulationSetupDialog::getConfig() const {
@@ -137,6 +222,7 @@ SimulationSetupDialog::Config SimulationSetupDialog::getConfig() const {
         if (SimValueParser::parseSpiceNumber(m_param2->text().trimmed(), parsed)) cfg.rtStep = parsed;
     }
 
+    cfg.commandText = m_commandLine->text();
     return cfg;
 }
 
@@ -157,5 +243,11 @@ void SimulationSetupDialog::setConfig(const Config& cfg) {
     } else if (cfg.type == SimAnalysisType::RealTime) {
         m_param1->setText(QString::number(cfg.rtIntervalMs));
         m_param2->setText(QString::number(cfg.rtStep, 'g', 12));
+    }
+    
+    if (!cfg.commandText.isEmpty()) {
+        m_commandLine->setText(cfg.commandText);
+    } else {
+        updateCommandDisplay();
     }
 }

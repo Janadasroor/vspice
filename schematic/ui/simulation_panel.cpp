@@ -1,5 +1,7 @@
 #include "simulation_panel.h"
 #include "../items/voltage_source_item.h"
+#include "../items/schematic_spice_directive_item.h"
+#include "../items/schematic_page_item.h"
 #include "../../simulator/core/sim_value_parser.h"
 #include "simulator/core/raw_data_parser.h"
 #include "waveform_viewer.h"
@@ -38,6 +40,7 @@
 #include <QCategoryAxis>
 #include <QListWidget>
 #include <QSplitter>
+#include <QGraphicsView>
 #include <QCheckBox>
 #include <QSlider>
 #include <QDoubleSpinBox>
@@ -274,7 +277,14 @@ void SimulationPanel::addProbe(const QString& signalName) {
             values.reserve(static_cast<int>(w->yData.size()));
             for (size_t i = 0; i < w->xData.size(); ++i) time.append(w->xData[i]);
             for (size_t i = 0; i < w->yData.size(); ++i) values.append(w->yData[i]);
-            m_waveformViewer->addSignal(matchedName, time, values);
+            if (m_analysisType->currentIndex() == 2 && !w->yPhase.empty()) {
+                QVector<double> phase;
+                phase.reserve(static_cast<int>(w->yPhase.size()));
+                for (size_t i = 0; i < w->yPhase.size(); ++i) phase.append(w->yPhase[i]);
+                m_waveformViewer->addSignal(matchedName, time, values, phase);
+            } else {
+                m_waveformViewer->addSignal(matchedName, time, values);
+            }
         };
 
         bool found = false;
@@ -470,6 +480,15 @@ void SimulationPanel::setTargetScene(QGraphicsScene* scene, NetManager* netManag
     if (!scene || !netManager) return;
     if (m_scene == scene && m_netManager == netManager && m_projectDir == projectDir && !clearState) return;
 
+    // Save state of the current tab before switching
+    QGraphicsScene* oldScene = m_scene;
+    if (clearState && oldScene && oldScene != scene) {
+        TabOscilloscopeState saved = saveCurrentTabState();
+        if (saved.hasLastResults || !saved.waveformSignals.isEmpty()) {
+            m_tabStates[oldScene] = saved;
+        }
+    }
+
     m_scene = scene;
     m_netManager = netManager;
     m_projectDir = projectDir;
@@ -489,6 +508,352 @@ void SimulationPanel::setTargetScene(QGraphicsScene* scene, NetManager* netManag
         if (m_timelineSlider) m_timelineSlider->setValue(0);
         if (m_timelineLabel) m_timelineLabel->setText("t = 0");
         if (m_measurementsTable) m_measurementsTable->clearContents();
+
+        // Restore state for the new tab if we have saved data
+        auto it = m_tabStates.find(scene);
+        if (it != m_tabStates.end()) {
+            restoreTabState(it.value());
+        }
+    }
+}
+
+void SimulationPanel::removeTabState(QGraphicsScene* scene) {
+    m_tabStates.remove(scene);
+}
+
+void SimulationPanel::updateSchematicDirective() {
+    if (!m_scene) return;
+
+    SpiceNetlistGenerator::SimulationParams cmdParams;
+    const int idx = m_analysisType ? m_analysisType->currentIndex() : 0;
+
+    if (idx == 0) {
+        cmdParams.type = SpiceNetlistGenerator::Transient;
+        cmdParams.start = "0";
+        cmdParams.stop = QString::number(parseValue(m_param2 ? m_param2->text() : QString(), 10e-3));
+        cmdParams.step = QString::number(parseValue(m_param1 ? m_param1->text() : QString(), 1e-6));
+    } else if (idx == 1) {
+        cmdParams.type = SpiceNetlistGenerator::OP;
+    } else if (idx == 2) {
+        cmdParams.type = SpiceNetlistGenerator::AC;
+        cmdParams.start = m_param1 ? (m_param1->text().trimmed().isEmpty() ? "10" : m_param1->text().trimmed()) : "10";
+        cmdParams.stop = m_param2 ? (m_param2->text().trimmed().isEmpty() ? "1Meg" : m_param2->text().trimmed()) : "1Meg";
+        cmdParams.step = m_param3 ? (m_param3->text().trimmed().isEmpty() ? "10" : m_param3->text().trimmed()) : "10";
+    } else {
+        cmdParams.type = SpiceNetlistGenerator::OP;
+    }
+
+    const QString cmdText = SpiceNetlistGenerator::buildCommand(cmdParams);
+
+    // Find and remove any existing simulation command directive
+    for (auto* gi : m_scene->items()) {
+        if (auto* existing = dynamic_cast<SchematicSpiceDirectiveItem*>(gi)) {
+            if (existing->text().startsWith('.') &&
+                (existing->text().startsWith(".tran", Qt::CaseInsensitive) ||
+                 existing->text().startsWith(".ac", Qt::CaseInsensitive) ||
+                 existing->text().startsWith(".dc", Qt::CaseInsensitive) ||
+                 existing->text().startsWith(".op", Qt::CaseInsensitive))) {
+                m_scene->removeItem(existing);
+                delete existing;
+                break;
+            }
+        }
+    }
+
+    // Prefer current view center so the directive is visible
+    QPointF cmdPos(100, 200);
+    if (!m_scene->views().isEmpty()) {
+        if (auto* view = m_scene->views().first()) {
+            cmdPos = view->mapToScene(view->viewport()->rect().center());
+        }
+    } else {
+        // Fallback: place inside page margins
+        for (auto* gi : m_scene->items()) {
+            if (auto* page = dynamic_cast<SchematicPageItem*>(gi)) {
+                qreal w = page->boundingRect().width() - 8;
+                qreal h = page->boundingRect().height() - 8;
+                cmdPos = page->mapToScene(QPointF(-w/2 + 120, h/2 - 150));
+                break;
+            }
+        }
+    }
+
+    auto* cmdItem = new SchematicSpiceDirectiveItem(cmdText, cmdPos);
+    m_scene->addItem(cmdItem);
+}
+
+void SimulationPanel::updateCommandDisplay() {
+    if (!m_commandLine) return;
+
+    SpiceNetlistGenerator::SimulationParams cmdParams;
+    const int idx = m_analysisType ? m_analysisType->currentIndex() : 0;
+
+    if (idx == 0) {
+        cmdParams.type = SpiceNetlistGenerator::Transient;
+        cmdParams.start = "0";
+        cmdParams.stop = m_param2 ? m_param2->text() : QString("10m");
+        cmdParams.step = m_param1 ? m_param1->text() : QString("1u");
+    } else if (idx == 1) {
+        cmdParams.type = SpiceNetlistGenerator::OP;
+    } else if (idx == 2) {
+        cmdParams.type = SpiceNetlistGenerator::AC;
+        cmdParams.start = m_param1 ? m_param1->text() : QString("10");
+        cmdParams.stop = m_param2 ? m_param2->text() : QString("1Meg");
+        cmdParams.step = m_param3 ? m_param3->text() : QString("10");
+    } else {
+        cmdParams.type = SpiceNetlistGenerator::OP;
+    }
+
+    m_commandLine->setText(SpiceNetlistGenerator::buildCommand(cmdParams));
+}
+
+void SimulationPanel::parseCommandText(const QString& command) {
+    if (!m_analysisType || !m_param1 || !m_param2 || !m_param3) return;
+
+    QString cmd = command.trimmed().toLower();
+    if (cmd.startsWith(".tran")) {
+        m_analysisType->blockSignals(true);
+        m_analysisType->setCurrentIndex(0);
+        m_analysisType->blockSignals(false);
+
+        QStringList parts = cmd.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+        if (parts.size() >= 3) {
+            m_param1->blockSignals(true);
+            m_param2->blockSignals(true);
+            m_param1->setText(parts[1]);
+            m_param2->setText(parts[2]);
+            m_param1->blockSignals(false);
+            m_param2->blockSignals(false);
+        }
+    } else if (cmd.startsWith(".ac")) {
+        m_analysisType->blockSignals(true);
+        m_analysisType->setCurrentIndex(2);
+        m_analysisType->blockSignals(false);
+
+        QStringList parts = cmd.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+        if (parts.size() >= 4) {
+            m_param1->blockSignals(true);
+            m_param2->blockSignals(true);
+            m_param3->blockSignals(true);
+            m_param1->setText(parts[2]);  // start freq
+            m_param2->setText(parts[3]);  // stop freq
+            m_param3->setText(parts[1]);  // points/decade
+            m_param1->blockSignals(false);
+            m_param2->blockSignals(false);
+            m_param3->blockSignals(false);
+        }
+    } else if (cmd.startsWith(".op")) {
+        m_analysisType->blockSignals(true);
+        m_analysisType->setCurrentIndex(1);
+        m_analysisType->blockSignals(false);
+    } else if (cmd.startsWith(".dc")) {
+        m_analysisType->blockSignals(true);
+        m_analysisType->setCurrentIndex(3);  // Monte Carlo placeholder
+        m_analysisType->blockSignals(false);
+    }
+
+    updateSchematicDirective();
+}
+
+void SimulationPanel::updateSchematicDirectiveFromCommand(const QString& commandText) {
+    if (!m_scene) return;
+
+    // Parse command and update form fields
+    parseCommandText(commandText);
+    
+    // Remove existing simulation command directive
+    for (auto* gi : m_scene->items()) {
+        if (auto* existing = dynamic_cast<SchematicSpiceDirectiveItem*>(gi)) {
+            if (existing->text().startsWith('.') &&
+                (existing->text().startsWith(".tran", Qt::CaseInsensitive) ||
+                 existing->text().startsWith(".ac", Qt::CaseInsensitive) ||
+                 existing->text().startsWith(".dc", Qt::CaseInsensitive) ||
+                 existing->text().startsWith(".op", Qt::CaseInsensitive))) {
+                m_scene->removeItem(existing);
+                delete existing;
+                break;
+            }
+        }
+    }
+
+    // Determine position
+    QPointF cmdPos(100, 200);
+    if (!m_scene->views().isEmpty()) {
+        if (auto* view = m_scene->views().first()) {
+            cmdPos = view->mapToScene(view->viewport()->rect().center());
+        }
+    } else {
+        for (auto* gi : m_scene->items()) {
+            if (auto* page = dynamic_cast<SchematicPageItem*>(gi)) {
+                qreal w = page->boundingRect().width() - 8;
+                qreal h = page->boundingRect().height() - 8;
+                cmdPos = page->mapToScene(QPointF(-w/2 + 120, h/2 - 150));
+                break;
+            }
+        }
+    }
+
+    // Create and add the directive
+    auto* cmdItem = new SchematicSpiceDirectiveItem(commandText, cmdPos);
+    m_scene->addItem(cmdItem);
+}
+
+QString SimulationPanel::tabStateKey(QGraphicsScene* scene) {
+    return QString::number(reinterpret_cast<quintptr>(scene), 16);
+}
+
+SimulationPanel::TabOscilloscopeState SimulationPanel::saveCurrentTabState() const {
+    TabOscilloscopeState state;
+    state.lastResults = m_lastResults;
+    state.previousResults = m_previousResults;
+    state.hasLastResults = m_hasLastResults;
+    state.hasPreviousResults = m_hasPreviousResults;
+
+    if (m_waveformViewer) {
+        state.waveformSignals = m_waveformViewer->exportSignals();
+    }
+
+    if (m_signalList) {
+        for (int i = 0; i < m_signalList->count(); ++i) {
+            auto* item = m_signalList->item(i);
+            TabOscilloscopeState::SignalListItem si;
+            si.name = item->text();
+            si.checked = (item->checkState() == Qt::Checked);
+            si.color = item->foreground().color();
+            state.signalListItems.append(si);
+        }
+    }
+
+    if (m_chart) {
+        for (auto* series : m_chart->series()) {
+            auto* line = qobject_cast<QLineSeries*>(series);
+            if (!line) continue;
+            TabOscilloscopeState::ChartSeriesData sd;
+            sd.name = line->name();
+            sd.points = line->points();
+            sd.color = line->pen().color();
+            sd.penWidth = line->pen().widthF();
+            state.chartSeries.append(sd);
+        }
+    }
+
+    if (m_spectrumChart) {
+        for (auto* series : m_spectrumChart->series()) {
+            auto* line = qobject_cast<QLineSeries*>(series);
+            if (!line) continue;
+            TabOscilloscopeState::ChartSeriesData sd;
+            sd.name = line->name();
+            sd.points = line->points();
+            sd.color = line->pen().color();
+            sd.penWidth = line->pen().widthF();
+            state.spectrumSeries.append(sd);
+        }
+    }
+
+    return state;
+}
+
+void SimulationPanel::restoreTabState(const TabOscilloscopeState& state) {
+    m_lastResults = state.lastResults;
+    m_previousResults = state.previousResults;
+    m_hasLastResults = state.hasLastResults;
+    m_hasPreviousResults = state.hasPreviousResults;
+
+    if (m_waveformViewer && !state.waveformSignals.isEmpty()) {
+        m_waveformViewer->beginBatchUpdate();
+        m_waveformViewer->importSignals(state.waveformSignals);
+        m_waveformViewer->endBatchUpdate();
+    }
+
+    if (m_signalList) {
+        m_signalList->clear();
+        for (const auto& si : state.signalListItems) {
+            auto* item = new QListWidgetItem(si.name);
+            item->setFlags(item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsSelectable);
+            item->setCheckState(si.checked ? Qt::Checked : Qt::Unchecked);
+            item->setForeground(si.color);
+            m_signalList->addItem(item);
+        }
+    }
+
+    if (m_chart) {
+        m_chart->removeAllSeries();
+        if (!state.chartSeries.isEmpty()) {
+            double minT = 0, maxT = 0, minV = 0, maxV = 0;
+            bool first = true;
+            for (const auto& sd : state.chartSeries) {
+                auto* series = new QLineSeries();
+                series->setName(sd.name);
+                QPen pen(sd.color);
+                pen.setWidthF(sd.penWidth);
+                series->setPen(pen);
+                series->replace(sd.points);
+                m_chart->addSeries(series);
+
+                for (const auto& pt : sd.points) {
+                    if (first) { minT = maxT = pt.x(); minV = maxV = pt.y(); first = false; }
+                    else {
+                        if (pt.x() < minT) minT = pt.x();
+                        if (pt.x() > maxT) maxT = pt.x();
+                        if (pt.y() < minV) minV = pt.y();
+                        if (pt.y() > maxV) maxV = pt.y();
+                    }
+                }
+            }
+            if (!first) {
+                auto* axisX = new QValueAxis();
+                axisX->setRange(minT, maxT);
+                auto* axisY = new QValueAxis();
+                double margin = (maxV - minV) * 0.05 + 1e-12;
+                axisY->setRange(minV - margin, maxV + margin);
+                m_chart->addAxis(axisX, Qt::AlignBottom);
+                m_chart->addAxis(axisY, Qt::AlignLeft);
+                for (auto* s : m_chart->series()) {
+                    s->attachAxis(axisX);
+                    s->attachAxis(axisY);
+                }
+            }
+        }
+    }
+
+    if (m_spectrumChart) {
+        m_spectrumChart->removeAllSeries();
+        if (!state.spectrumSeries.isEmpty()) {
+            double minT = 0, maxT = 0, minV = 0, maxV = 0;
+            bool first = true;
+            for (const auto& sd : state.spectrumSeries) {
+                auto* series = new QLineSeries();
+                series->setName(sd.name);
+                QPen pen(sd.color);
+                pen.setWidthF(sd.penWidth);
+                series->setPen(pen);
+                series->replace(sd.points);
+                m_spectrumChart->addSeries(series);
+
+                for (const auto& pt : sd.points) {
+                    if (first) { minT = maxT = pt.x(); minV = maxV = pt.y(); first = false; }
+                    else {
+                        if (pt.x() < minT) minT = pt.x();
+                        if (pt.x() > maxT) maxT = pt.x();
+                        if (pt.y() < minV) minV = pt.y();
+                        if (pt.y() > maxV) maxV = pt.y();
+                    }
+                }
+            }
+            if (!first) {
+                auto* axisX = new QValueAxis();
+                axisX->setRange(minT, maxT);
+                auto* axisY = new QValueAxis();
+                double margin = (maxV - minV) * 0.05 + 1e-12;
+                axisY->setRange(minV - margin, maxV + margin);
+                m_spectrumChart->addAxis(axisX, Qt::AlignBottom);
+                m_spectrumChart->addAxis(axisY, Qt::AlignLeft);
+                for (auto* s : m_spectrumChart->series()) {
+                    s->attachAxis(axisX);
+                    s->attachAxis(axisY);
+                }
+            }
+        }
     }
 }
 
@@ -655,6 +1020,11 @@ void SimulationPanel::setupUI() {
     m_analysisType->setCurrentIndex(1);
     m_analysisType->setStyleSheet("QComboBox { background: #121214; color: #eee; }");
     configForm->addRow("Type:", m_analysisType);
+
+    m_commandLine = new QLineEdit(".op");
+    m_commandLine->setStyleSheet("QLineEdit { background: #1e3a5f; color: #3b82f6; border: 1px solid #3b82f6; font-family: 'Courier New'; font-weight: bold; }");
+    m_commandLine->setPlaceholderText(".tran <tstep> <tstop>");
+    configForm->addRow("Command:", m_commandLine);
 
     m_param1 = new QLineEdit("1u");
     m_param2 = new QLineEdit("10m");
@@ -943,6 +1313,17 @@ void SimulationPanel::setupUI() {
     mainLayout->addWidget(mainSplitter);
 
     connect(m_analysisType, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SimulationPanel::onAnalysisChanged);
+    connect(m_analysisType, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SimulationPanel::updateSchematicDirective);
+    connect(m_analysisType, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SimulationPanel::updateCommandDisplay);
+    connect(m_param1, &QLineEdit::textChanged, this, &SimulationPanel::updateSchematicDirective);
+    connect(m_param2, &QLineEdit::textChanged, this, &SimulationPanel::updateSchematicDirective);
+    connect(m_param3, &QLineEdit::textChanged, this, &SimulationPanel::updateSchematicDirective);
+    connect(m_param1, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
+    connect(m_param2, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
+    connect(m_param3, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
+    connect(m_commandLine, &QLineEdit::editingFinished, this, [this]() {
+        parseCommandText(m_commandLine->text());
+    });
     connect(m_generatorType, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SimulationPanel::onGeneratorTypeChanged);
     connect(m_generatorPresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SimulationPanel::onGeneratorPresetActivated);
     connect(applyGeneratorBtn, &QPushButton::clicked, this, &SimulationPanel::onApplyGeneratorToSelection);
@@ -966,6 +1347,7 @@ void SimulationPanel::setupUI() {
 
     onGeneratorTypeChanged(m_generatorType->currentIndex());
     loadGeneratorLibrary();
+    updateCommandDisplay();
 }
 
 void SimulationPanel::onViewNetlist() {
@@ -1176,6 +1558,8 @@ void SimulationPanel::setAnalysisConfig(const AnalysisConfig& cfg) {
         m_param2->setText(QString::number(fStop, 'g', 12));
         m_param3->setText(QString::number(pts));
     }
+
+    updateCommandDisplay();
 }
 
 SimulationPanel::AnalysisConfig SimulationPanel::getAnalysisConfig() {
@@ -1235,6 +1619,9 @@ void SimulationPanel::onRunSimulation() {
         SimManager::instance().runRealTime(m_scene, m_netManager, interval);
         return;
     }
+
+    // Update simulation command directive on the schematic
+    updateSchematicDirective();
 
     m_buildInProgress = true;
     m_logOutput->append("Building netlist in background...");
@@ -1862,7 +2249,16 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
         series->attachAxis(axisYBase);
 
         if (m_waveformViewer) {
-            m_waveformViewer->addSignal(QString::fromStdString(wave.name), QVector<double>(wave.xData.begin(), wave.xData.end()), QVector<double>(wave.yData.begin(), wave.yData.end()));
+            if (analysisIdx == 2 && !wave.yPhase.empty()) {
+                m_waveformViewer->addSignal(QString::fromStdString(wave.name),
+                                            QVector<double>(wave.xData.begin(), wave.xData.end()),
+                                            QVector<double>(wave.yData.begin(), wave.yData.end()),
+                                            QVector<double>(wave.yPhase.begin(), wave.yPhase.end()));
+            } else {
+                m_waveformViewer->addSignal(QString::fromStdString(wave.name),
+                                            QVector<double>(wave.xData.begin(), wave.xData.end()),
+                                            QVector<double>(wave.yData.begin(), wave.yData.end()));
+            }
             
             // Restore checked state or default to checked if it's the first time we see these results
             const QString waveName = QString::fromStdString(wave.name);

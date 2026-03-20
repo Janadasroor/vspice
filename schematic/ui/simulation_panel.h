@@ -21,6 +21,7 @@
 #include <QDateTime>
 #include "../../simulator/bridge/sim_manager.h"
 #include "../../simulator/core/sim_results.h"
+#include "../../ui/waveform_viewer.h"
 
 class QGraphicsScene;
 class SchematicEditor;
@@ -41,6 +42,7 @@ public:
     void clearResults();
     bool hasProbe(const QString& signalName) const;
     void onRunSimulation();
+    void updateSimulationDirectiveFromCurrentSettings();
 
     struct AnalysisConfig {
         SimAnalysisType type;
@@ -53,8 +55,31 @@ public:
     void setAnalysisConfig(const AnalysisConfig& cfg);
     AnalysisConfig getAnalysisConfig();
     void setTargetScene(QGraphicsScene* scene, NetManager* netManager, const QString& projectDir, bool clearState = true);
+    void removeTabState(QGraphicsScene* scene);
     QWidget* getOscilloscopeContainer() const;
     bool hasResults() const { return m_hasLastResults; }
+
+    struct TabOscilloscopeState {
+        SimResults lastResults;
+        SimResults previousResults;
+        bool hasLastResults = false;
+        bool hasPreviousResults = false;
+        QList<WaveformViewer::SignalExport> waveformSignals;
+        struct SignalListItem {
+            QString name;
+            bool checked;
+            QColor color;
+        };
+        QList<SignalListItem> signalListItems;
+        struct ChartSeriesData {
+            QString name;
+            QVector<QPointF> points;
+            QColor color;
+            qreal penWidth = 1.0;
+        };
+        QList<ChartSeriesData> chartSeries;
+        QList<ChartSeriesData> spectrumSeries;
+    };
 
 signals:
     void resultsReady(const SimResults& results);
@@ -64,6 +89,10 @@ signals:
     void simulationTargetRequested(const QString& targetType, const QString& targetId);
     void overlayVisibilityChanged(bool showVoltage, bool showCurrent);
     void clearOverlaysRequested();
+
+public:
+    void updateSchematicDirective();
+    void updateSchematicDirectiveFromCommand(const QString& commandText);
 
 private slots:
     void onAnalysisChanged(int index);
@@ -111,6 +140,11 @@ private:
     double estimateFftPeakHz(const SimWaveform& wave) const;
     void updateChartRealTime(const QString& name, double t, double value);
     void appendIssueItem(const QString& msg);
+    TabOscilloscopeState saveCurrentTabState() const;
+    void restoreTabState(const TabOscilloscopeState& state);
+    static QString tabStateKey(QGraphicsScene* scene);
+    void parseCommandText(const QString& command);
+    void updateCommandDisplay();
 
     QGraphicsScene* m_scene;
     NetManager* m_netManager;
@@ -125,6 +159,7 @@ private:
     // UI Elements
     QComboBox* m_analysisType;
     QWidget* m_paramWidget;
+    QLineEdit* m_commandLine;
     QLineEdit* m_param1; // e.g., Start Time / Start Freq
     QLineEdit* m_param2; // e.g., Stop Time / Stop Freq
     QLineEdit* m_param3; // e.g., Step Size / Points
@@ -192,6 +227,9 @@ private:
     SimNetlist m_currentNetlist;
     QMap<QString, QLineSeries*> m_realTimeSeries;
     int m_realTimePointCounter = 0;
+
+    // Per-tab oscilloscope state persistence
+    QMap<QGraphicsScene*, TabOscilloscopeState> m_tabStates;
 };
 
 #endif // SIMULATION_PANEL_H

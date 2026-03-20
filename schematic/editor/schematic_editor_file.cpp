@@ -20,6 +20,7 @@
 #include "../../core/project.h"
 #include "../../core/recent_projects.h"
 #include "../analysis/spice_netlist_generator.h"
+#include "../ui/simulation_panel.h"
 #include <QMessageBox>
 #include <QRegularExpression>
 #include "../../core/theme_manager.h"
@@ -547,6 +548,21 @@ bool SchematicEditor::openFile(const QString& filePath) {
 
         if (!loadedSimulationSetup.isEmpty()) {
             m_simConfig = SimulationSetupDialog::Config::fromJson(loadedSimulationSetup);
+        }
+        if (m_simulationPanel) {
+            SimulationPanel::AnalysisConfig pCfg;
+            pCfg.type = m_simConfig.type;
+            pCfg.stop = m_simConfig.stop;
+            pCfg.step = m_simConfig.step;
+            pCfg.fStart = m_simConfig.fStart;
+            pCfg.fStop = m_simConfig.fStop;
+            pCfg.pts = m_simConfig.pts;
+            m_simulationPanel->setAnalysisConfig(pCfg);
+            
+            // Sync schematic directive with saved command text
+            if (!m_simConfig.commandText.isEmpty()) {
+                m_simulationPanel->updateSchematicDirectiveFromCommand(m_simConfig.commandText);
+            }
         }
 
         if (!embeddedScript.isEmpty() && m_scriptPanel) {

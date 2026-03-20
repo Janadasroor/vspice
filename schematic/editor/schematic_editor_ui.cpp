@@ -1848,9 +1848,43 @@ void SchematicEditor::onOpenSimulationSetup() {
             pCfg.fStop = m_simConfig.fStop;
             pCfg.pts = m_simConfig.pts;
             m_simulationPanel->setAnalysisConfig(pCfg);
+            
+            // Sync schematic directive with the command text from dialog
+            if (!m_simConfig.commandText.isEmpty()) {
+                m_simulationPanel->updateSchematicDirectiveFromCommand(m_simConfig.commandText);
+            }
         }
 
         statusBar()->showMessage("Simulation parameters updated.", 3000);
+    }
+}
+
+void SchematicEditor::onEditSimulationFromDirective(const QString& currentCommand) {
+    // Set the command text in config and open dialog
+    m_simConfig.commandText = currentCommand;
+    
+    SimulationSetupDialog dlg(this);
+    dlg.setConfig(m_simConfig);
+    if (dlg.exec() == QDialog::Accepted) {
+        m_simConfig = dlg.getConfig();
+
+        if (m_simulationPanel) {
+            SimulationPanel::AnalysisConfig pCfg;
+            pCfg.type = m_simConfig.type;
+            pCfg.stop = m_simConfig.stop;
+            pCfg.step = m_simConfig.step;
+            pCfg.fStart = m_simConfig.fStart;
+            pCfg.fStop = m_simConfig.fStop;
+            pCfg.pts = m_simConfig.pts;
+            m_simulationPanel->setAnalysisConfig(pCfg);
+            
+            // Update the directive on schematic with new command text
+            if (!m_simConfig.commandText.isEmpty()) {
+                m_simulationPanel->updateSchematicDirectiveFromCommand(m_simConfig.commandText);
+            }
+        }
+
+        statusBar()->showMessage("Simulation directive updated.", 3000);
     }
 }
 

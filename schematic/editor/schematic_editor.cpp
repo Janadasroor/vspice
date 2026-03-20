@@ -18,6 +18,9 @@
 #include "schematic_commands.h"
 #include "schematic_tool_registry_builtin.h"
 #include "schematic_item_registry.h"
+#include "../items/schematic_spice_directive_item.h"
+#include "../ui/simulation_setup_dialog.h"
+#include "../ui/simulation_panel.h"
 #include "schematic_item.h"
 #include "schematic_page_item.h"
 #include <QDir>
@@ -263,6 +266,7 @@ void SchematicEditor::addSchematicTab(const QString& name) {
     });
     connect(view, &SchematicView::itemDoubleClicked, this, &SchematicEditor::onItemDoubleClicked);
     connect(view, &SchematicView::itemSelectionDoubleClicked, this, &SchematicEditor::onSelectionDoubleClicked);
+    connect(view, &SchematicView::editSimulationDirective, this, &SchematicEditor::onEditSimulationFromDirective);
     connect(view, &SchematicView::syncSheetRequested, this, [this, scene](SchematicSheetItem* sheet) {
         if (sheet) {
             sheet->updatePorts(m_projectDir);
@@ -374,6 +378,11 @@ void SchematicEditor::closeTab(int index) {
         // QGraphicsView does not own the scene by default.
         QGraphicsScene* scene = view->scene();
         NetManager* nm = view->netManager();
+
+        // Clean up saved oscilloscope state for this tab
+        if (m_simulationPanel && scene) {
+            m_simulationPanel->removeTabState(scene);
+        }
         
         m_workspaceTabs->removeTab(index);
         

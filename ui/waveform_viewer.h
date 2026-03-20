@@ -65,6 +65,7 @@ public:
     ~WaveformViewer();
     void loadCsv(const QString &fileName);
     void addSignal(const QString& name, const QVector<double>& time, const QVector<double>& values);
+    void addSignal(const QString& name, const QVector<double>& time, const QVector<double>& values, const QVector<double>& phase);
     void setSignalChecked(const QString& name, bool checked);
     void appendPoint(const QString& name, double x, double y);
     void appendPoints(const QString& name, const std::vector<double>& times, const std::vector<double>& values);
@@ -78,6 +79,17 @@ public:
     void preserveXRangeOnce(double minX, double maxX);
     static QString formatValue(double val, const QString &unit = "");
     void updatePlot(bool autoScale = false);
+
+    struct SignalExport {
+        QString name;
+        QVector<double> time;
+        QVector<double> values;
+        QVector<double> phase;
+        bool hasPhase = false;
+        bool checked = false;
+    };
+    QList<SignalExport> exportSignals() const;
+    void importSignals(const QList<SignalExport>& signalExports);
 
 private slots:
     void onNodeSelected();
@@ -121,6 +133,8 @@ private:
         SignalType type;
         QVector<double> time;
         QVector<double> values;
+        QVector<double> phase;
+        bool hasPhase = false;
     };
     
     QMap<QString, SignalData> m_signals;

@@ -668,6 +668,31 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
     return netlist;
 }
 
+QString SpiceNetlistGenerator::buildCommand(const SimulationParams& params) {
+    switch (params.type) {
+        case Transient:
+            return QString(".tran %1 %2").arg(params.step, params.stop);
+        case DC:
+            return QString(".dc %1 %2 %3 %4").arg(params.dcSource, params.dcStart, params.dcStop, params.dcStep);
+        case AC: {
+            auto safeNumber = [](const QString& text, double fallback) {
+                double parsed = 0.0;
+                if (SimValueParser::parseSpiceNumber(text, parsed) && parsed > 0.0) {
+                    return text.trimmed();
+                }
+                return QString::number(fallback, 'g', 12);
+            };
+            const QString pts = safeNumber(params.step, 10.0);
+            const QString start = safeNumber(params.start, 10.0);
+            const QString stop = safeNumber(params.stop, 1e6);
+            return QString(".ac dec %1 %2 %3").arg(pts, start, stop);
+        }
+        case OP:
+            return ".op";
+    }
+    return ".op";
+}
+
 QString SpiceNetlistGenerator::formatValue(double value) {
     if (value <= 0) return "0";
     if (value < 1e-9) return QString::number(value * 1e12) + "p";
