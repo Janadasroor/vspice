@@ -70,7 +70,12 @@ SchematicItem* SchematicTextItem::clone() const {
 void SchematicTextItem::recalcBounds() {
     prepareGeometryChange();
     QFontMetricsF fm(m_font);
-    QRectF rect = fm.boundingRect(m_text);
+    QRectF rect;
+    if (m_text.contains('\n')) {
+        rect = fm.boundingRect(QRectF(0, 0, 10000, 10000), Qt::TextWordWrap, m_text);
+    } else {
+        rect = fm.boundingRect(m_text);
+    }
     m_cachedBounds = rect.adjusted(-2, -2, 2, 2);
 }
 

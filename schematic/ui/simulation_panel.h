@@ -51,6 +51,7 @@ public:
         int pts;
     };
     void setAnalysisConfig(const AnalysisConfig& cfg);
+    AnalysisConfig getAnalysisConfig();
     void setTargetScene(QGraphicsScene* scene, NetManager* netManager, const QString& projectDir, bool clearState = true);
     QWidget* getOscilloscopeContainer() const;
     bool hasResults() const { return m_hasLastResults; }

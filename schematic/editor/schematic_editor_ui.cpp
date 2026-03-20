@@ -1982,6 +1982,16 @@ void SchematicEditor::onRunSimulation() {
     SimNetlist netlist;
     QStringList diagnostics = SimManager::instance().preflightCheck(m_scene, m_netManager, netlist);
 
+    if (m_simulationPanel) {
+        const auto cfg = m_simulationPanel->getAnalysisConfig();
+        m_simConfig.type = cfg.type;
+        m_simConfig.stop = cfg.stop;
+        m_simConfig.step = cfg.step;
+        m_simConfig.fStart = cfg.fStart;
+        m_simConfig.fStop = cfg.fStop;
+        m_simConfig.pts = cfg.pts;
+    }
+
     // Apply simulation config to the pre-built netlist
     SimAnalysisConfig config;
     if (m_simConfig.type == SimAnalysisType::Transient) {
@@ -1995,9 +2005,9 @@ void SchematicEditor::onRunSimulation() {
         config.type = SimAnalysisType::OP;
     } else if (m_simConfig.type == SimAnalysisType::AC) {
         config.type = SimAnalysisType::AC;
-        config.fStart = m_simConfig.fStart;
-        config.fStop = m_simConfig.fStop;
-        config.fPoints = m_simConfig.pts;
+        config.fStart = m_simConfig.fStart > 0.0 ? m_simConfig.fStart : 10.0;
+        config.fStop = m_simConfig.fStop > 0.0 ? m_simConfig.fStop : 1e6;
+        config.fPoints = m_simConfig.pts > 0 ? m_simConfig.pts : 10;
     }
     netlist.setAnalysis(config);
 

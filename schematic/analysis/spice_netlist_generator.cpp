@@ -18,6 +18,7 @@
 #include <QDir>
 #include <cmath>
 #include "../../core/config_manager.h"
+#include "../../simulator/core/sim_value_parser.h"
 
 using Flux::Model::SymbolDefinition;
 
@@ -643,7 +644,20 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
             netlist += QString(".dc %1 %2 %3 %4\n").arg(params.dcSource, params.dcStart, params.dcStop, params.dcStep);
             break;
         case AC:
-            netlist += QString(".ac dec 10 %1 %2\n").arg(params.start, params.stop);
+            {
+                auto safeNumber = [](const QString& text, double fallback) {
+                    double parsed = 0.0;
+                    if (SimValueParser::parseSpiceNumber(text, parsed) && parsed > 0.0) {
+                        return text.trimmed();
+                    }
+                    return QString::number(fallback, 'g', 12);
+                };
+
+                const QString pts = safeNumber(params.step, 10.0);
+                const QString start = safeNumber(params.start, 10.0);
+                const QString stop = safeNumber(params.stop, 1e6);
+                netlist += QString(".ac dec %1 %2 %3\n").arg(pts, start, stop);
+            }
             break;
         case OP:
             netlist += ".op\n";

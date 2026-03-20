@@ -73,6 +73,7 @@ public:
     void endBatchUpdate() { m_blockUpdates = false; updatePlot(true); }
     void clear();
     void zoomFit();
+    void setAcMode(bool enabled);
     bool currentXRange(double& minX, double& maxX) const;
     void preserveXRangeOnce(double minX, double maxX);
     static QString formatValue(double val, const QString &unit = "");
@@ -102,6 +103,7 @@ private:
     AnalysisDialog *m_analysisDialog = nullptr;
     bool m_cursorsEnabled;
     bool m_blockUpdates = false;
+    bool m_acMode = false;
     double m_cursor1X, m_cursor2X;
     QString m_activeCursorSeries;
     enum class SignalType { VOLTAGE, CURRENT, POWER, OTHER };

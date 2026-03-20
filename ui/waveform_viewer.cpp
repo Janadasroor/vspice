@@ -21,9 +21,23 @@
 #include <QToolButton>
 #include <cmath>
 #include <algorithm>
+#include <numeric>
 #include <QGraphicsTextItem>
 #include <QGraphicsSimpleTextItem>
 #include "../core/theme_manager.h"
+
+namespace {
+constexpr double kDbFloor = 1e-15;
+
+double toDb(double value) {
+    const double mag = std::max(std::abs(value), kDbFloor);
+    return 20.0 * std::log10(mag);
+}
+
+QString formatDb(double value) {
+    return QString::number(value, 'g', 4) + " dB";
+}
+} // namespace
 
 
 VioChartView::VioChartView(QChart *chart, QWidget *parent) : QChartView(chart, parent) {
@@ -467,6 +481,14 @@ void WaveformViewer::onMouseMoved(const QPointF &value) {
         return;
     }
 
+    if (m_acMode) {
+        const QString coordStr = QString("Freq: %1 | Mag: %2")
+                                     .arg(SiFormatter::format(value.x(), "Hz"))
+                                     .arg(formatDb(value.y()));
+        m_coordLabel->setText(coordStr);
+        return;
+    }
+
     QString coordStr = QString("Time: %1").arg(SiFormatter::format(value.x() / m_timeMultiplier, "s"));
     
     // Check what types of signals are currently loaded
@@ -505,6 +527,7 @@ void WaveformViewer::toggleCursors() {
     m_chartView->setCursorsEnabled(m_cursorsEnabled);
     if (m_cursorsEnabled) {
         if (!m_measureDialog) m_measureDialog = new MeasurementDialog(this);
+        m_measureDialog->setAcMode(m_acMode);
         m_measureDialog->show();
 
         // Always initialize cursors to visible positions within current axis range
@@ -543,11 +566,24 @@ void WaveformViewer::updateCursors() {
     if (m_chart->series().isEmpty()) {
         m_chartView->setCursorPositions(m_cursor1X, 0, m_cursor2X, 0);
         if (m_measureDialog) {
-            m_measureDialog->updateValues("", 
-                SiFormatter::format(m_cursor1X / m_timeMultiplier, m_timeUnit), "N/A",
-                SiFormatter::format(m_cursor2X / m_timeMultiplier, m_timeUnit), "N/A",
-                SiFormatter::format(std::abs(m_cursor2X - m_cursor1X) / m_timeMultiplier, m_timeUnit), "N/A",
-                "---", "---");
+            const QString h1 = m_acMode ? SiFormatter::format(m_cursor1X, "Hz")
+                                        : SiFormatter::format(m_cursor1X / m_timeMultiplier, m_timeUnit);
+            const QString h2 = m_acMode ? SiFormatter::format(m_cursor2X, "Hz")
+                                        : SiFormatter::format(m_cursor2X / m_timeMultiplier, m_timeUnit);
+            const QString dh = m_acMode ? SiFormatter::format(std::abs(m_cursor2X - m_cursor1X), "Hz")
+                                        : SiFormatter::format(std::abs(m_cursor2X - m_cursor1X) / m_timeMultiplier, m_timeUnit);
+            if (m_acMode) {
+                m_measureDialog->updateAcValues("",
+                    h1, "---", "---", "---",
+                    h2, "---", "---", "---",
+                    dh, "---", "---", "---");
+            } else {
+                m_measureDialog->updateValues("", 
+                    h1, "N/A",
+                    h2, "N/A",
+                    dh, "N/A",
+                    "---", "---");
+            }
         }
         return;
     }
@@ -592,12 +628,19 @@ void WaveformViewer::updateCursors() {
             slopeStr = SiFormatter::format(dv / dt, unit + "/s");
         }
 
-        m_measureDialog->updateValues(series->name(), 
-            SiFormatter::format(m_cursor1X, "s"), SiFormatter::format(v1, ""),
-            SiFormatter::format(m_cursor2X, "s"), SiFormatter::format(v2, ""),
-            SiFormatter::format(dt, "s"), SiFormatter::format(dv, ""),
-            freqStr, slopeStr
-        );
+        if (m_acMode) {
+            m_measureDialog->updateAcValues(series->name(),
+                SiFormatter::format(m_cursor1X, "Hz"), formatDb(v1), "---", "---",
+                SiFormatter::format(m_cursor2X, "Hz"), formatDb(v2), "---", "---",
+                SiFormatter::format(dt, "Hz"), formatDb(dv), "---", "---");
+        } else {
+            m_measureDialog->updateValues(series->name(), 
+                SiFormatter::format(m_cursor1X, "s"), SiFormatter::format(v1, ""),
+                SiFormatter::format(m_cursor2X, "s"), SiFormatter::format(v2, ""),
+                SiFormatter::format(dt, "s"), SiFormatter::format(dv, ""),
+                freqStr, slopeStr
+            );
+        }
     }
 }
 
@@ -615,11 +658,11 @@ void WaveformViewer::updatePlot(bool autoScale) {
     if (m_signals.isEmpty()) return;
 
     auto* axisX = new QValueAxis();
-    axisX->setTitleText("Time (s)");
+    axisX->setTitleText(m_acMode ? "Frequency (Hz)" : "Time (s)");
     axisX->setLabelFormat("%.2g");
     
     auto* axisY = new QValueAxis();
-    axisY->setTitleText("Amplitude");
+    axisY->setTitleText(m_acMode ? "Magnitude (dB)" : "Amplitude");
     axisY->setLabelFormat("%.2g");
 
     QPen axisPen(Qt::white);
@@ -653,11 +696,34 @@ void WaveformViewer::updatePlot(bool autoScale) {
                 const int maxBuckets = 5000;
                 const int totalSize = static_cast<int>(data.time.size());
                 
+                auto yForPlot = [&](double v) {
+                    return m_acMode ? toDb(v) : v;
+                };
+
+                QVector<double> sortedTime;
+                QVector<double> sortedValues;
+                if (m_acMode && totalSize > 1) {
+                    QVector<int> order(totalSize);
+                    std::iota(order.begin(), order.end(), 0);
+                    std::sort(order.begin(), order.end(), [&](int a, int b) {
+                        return data.time[a] < data.time[b];
+                    });
+                    sortedTime.resize(totalSize);
+                    sortedValues.resize(totalSize);
+                    for (int j = 0; j < totalSize; ++j) {
+                        sortedTime[j] = data.time[order[j]];
+                        sortedValues[j] = data.values[order[j]];
+                    }
+                } else {
+                    sortedTime = data.time;
+                    sortedValues = data.values;
+                }
+
                 if (totalSize <= maxBuckets) {
                     QList<QPointF> points;
                     points.reserve(totalSize);
                     for (int j = 0; j < totalSize; ++j) {
-                        points.append(QPointF(data.time[j], data.values[j]));
+                        points.append(QPointF(sortedTime[j], yForPlot(sortedValues[j])));
                     }
                     series->append(points);
                 } else {
@@ -670,25 +736,28 @@ void WaveformViewer::updatePlot(bool autoScale) {
                         
                         int minIdx = start;
                         int maxIdx = start;
+                        double minVal = yForPlot(sortedValues[start]);
+                        double maxVal = minVal;
                         for (int j = start + 1; j < end; ++j) {
-                            if (data.values[j] < data.values[minIdx]) minIdx = j;
-                            if (data.values[j] > data.values[maxIdx]) maxIdx = j;
+                            const double y = yForPlot(sortedValues[j]);
+                            if (y < minVal) { minVal = y; minIdx = j; }
+                            if (y > maxVal) { maxVal = y; maxIdx = j; }
                         }
                         
                         // Append min and max in their original time order
                         if (minIdx < maxIdx) {
-                            points.append(QPointF(data.time[minIdx], data.values[minIdx]));
-                            points.append(QPointF(data.time[maxIdx], data.values[maxIdx]));
+                            points.append(QPointF(sortedTime[minIdx], yForPlot(sortedValues[minIdx])));
+                            points.append(QPointF(sortedTime[maxIdx], yForPlot(sortedValues[maxIdx])));
                         } else if (minIdx > maxIdx) {
-                            points.append(QPointF(data.time[maxIdx], data.values[maxIdx]));
-                            points.append(QPointF(data.time[minIdx], data.values[minIdx]));
+                            points.append(QPointF(sortedTime[maxIdx], yForPlot(sortedValues[maxIdx])));
+                            points.append(QPointF(sortedTime[minIdx], yForPlot(sortedValues[minIdx])));
                         } else {
-                            points.append(QPointF(data.time[minIdx], data.values[minIdx]));
+                            points.append(QPointF(sortedTime[minIdx], yForPlot(sortedValues[minIdx])));
                         }
                     }
                     // Always ensure we include the absolute last point
-                    if (!points.isEmpty() && points.last().x() < data.time.back()) {
-                        points.append(QPointF(data.time.back(), data.values.back()));
+                    if (!points.isEmpty() && points.last().x() < sortedTime.back()) {
+                        points.append(QPointF(sortedTime.back(), yForPlot(sortedValues.back())));
                     }
                     series->append(points);
                 }
@@ -750,10 +819,18 @@ void WaveformViewer::zoomFit() {
                 if (data.time.isEmpty()) continue;
                 
                 auto minMaxX = std::minmax_element(data.time.begin(), data.time.end());
-                auto minMaxY = std::minmax_element(data.values.begin(), data.values.end());
+                double localMinY = 1e30;
+                double localMaxY = -1e30;
+                for (double v : data.values) {
+                    const double y = m_acMode ? toDb(v) : v;
+                    localMinY = std::min(localMinY, y);
+                    localMaxY = std::max(localMaxY, y);
+                }
                 
-                minX = std::min(minX, *minMaxX.first); maxX = std::max(maxX, *minMaxX.second);
-                minY = std::min(minY, *minMaxY.first); maxY = std::max(maxY, *minMaxY.second);
+                minX = std::min(minX, *minMaxX.first);
+                maxX = std::max(maxX, *minMaxX.second);
+                minY = std::min(minY, localMinY);
+                maxY = std::max(maxY, localMaxY);
                 found = true;
             }
         }
@@ -796,9 +873,15 @@ void WaveformViewer::zoomFitYOnly() {
             if (m_signals.contains(name)) {
                 const auto& data = m_signals[name];
                 if (data.values.isEmpty()) continue;
-                auto minMaxY = std::minmax_element(data.values.begin(), data.values.end());
-                minY = std::min(minY, *minMaxY.first);
-                maxY = std::max(maxY, *minMaxY.second);
+                double localMinY = 1e30;
+                double localMaxY = -1e30;
+                for (double v : data.values) {
+                    const double y = m_acMode ? toDb(v) : v;
+                    localMinY = std::min(localMinY, y);
+                    localMaxY = std::max(localMaxY, y);
+                }
+                minY = std::min(minY, localMinY);
+                maxY = std::max(maxY, localMaxY);
                 found = true;
             }
         }
@@ -819,6 +902,15 @@ void WaveformViewer::zoomFitYOnly() {
     if (auto* axisY = qobject_cast<QValueAxis*>(axesY[0])) {
         axisY->setRange(minY, maxY);
     }
+}
+
+void WaveformViewer::setAcMode(bool enabled) {
+    if (m_acMode == enabled) return;
+    m_acMode = enabled;
+    if (m_measureDialog) {
+        m_measureDialog->setAcMode(m_acMode);
+    }
+    updatePlot(false);
 }
 
 void WaveformViewer::onNodeSelected() {

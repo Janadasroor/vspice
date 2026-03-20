@@ -1,4 +1,6 @@
 #include "simulation_panel.h"
+#include "../items/voltage_source_item.h"
+#include "../../simulator/core/sim_value_parser.h"
 #include "simulator/core/raw_data_parser.h"
 #include "waveform_viewer.h"
 #include "simulation_log_dialog.h"
@@ -1167,10 +1169,47 @@ void SimulationPanel::setAnalysisConfig(const AnalysisConfig& cfg) {
         m_param1->setText(QString::number(cfg.step));
         m_param2->setText(QString::number(cfg.stop));
     } else if (idx == 2) {
-        m_param1->setText(QString::number(cfg.fStart));
-        m_param2->setText(QString::number(cfg.fStop));
-        m_param3->setText(QString::number(cfg.pts));
+        const double fStart = (cfg.fStart > 0.0) ? cfg.fStart : 10.0;
+        const double fStop = (cfg.fStop > 0.0) ? cfg.fStop : 1e6;
+        const int pts = (cfg.pts > 0) ? cfg.pts : 10;
+        m_param1->setText(QString::number(fStart, 'g', 12));
+        m_param2->setText(QString::number(fStop, 'g', 12));
+        m_param3->setText(QString::number(pts));
     }
+}
+
+SimulationPanel::AnalysisConfig SimulationPanel::getAnalysisConfig() {
+    AnalysisConfig cfg{};
+    const int idx = m_analysisType ? m_analysisType->currentIndex() : 0;
+    if (idx == 0) {
+        cfg.type = SimAnalysisType::Transient;
+        cfg.step = parseValue(m_param1 ? m_param1->text() : QString(), 1e-6);
+        cfg.stop = parseValue(m_param2 ? m_param2->text() : QString(), 10e-3);
+    } else if (idx == 1) {
+        cfg.type = SimAnalysisType::OP;
+    } else if (idx == 2) {
+        cfg.type = SimAnalysisType::AC;
+        cfg.fStart = parseValue(m_param1 ? m_param1->text() : QString(), 10);
+        cfg.fStop = parseValue(m_param2 ? m_param2->text() : QString(), 1e6);
+        cfg.pts = std::max(1, (m_param3 ? m_param3->text().trimmed().toInt() : 10));
+        if (cfg.fStart <= 0.0) cfg.fStart = 10.0;
+        if (cfg.fStop <= 0.0) cfg.fStop = 1e6;
+        if (cfg.pts <= 0) cfg.pts = 10;
+    } else if (idx == 3) {
+        cfg.type = SimAnalysisType::MonteCarlo;
+    } else if (idx == 4) {
+        cfg.type = SimAnalysisType::ParametricSweep;
+    } else if (idx == 5) {
+        cfg.type = SimAnalysisType::Sensitivity;
+    } else if (idx == 6) {
+        cfg.type = SimAnalysisType::RealTime;
+    } else {
+        cfg.type = SimAnalysisType::Transient;
+        cfg.step = 1e-6;
+        cfg.stop = 10e-3;
+    }
+
+    return cfg;
 }
 
 void SimulationPanel::onRunSimulation() {
@@ -1202,9 +1241,9 @@ void SimulationPanel::onRunSimulation() {
 
     const double tStop = parseValue(m_param2->text(), 10e-3);
     const double tStep = parseValue(m_param1->text(), 1e-6);
-    const double fStart = parseValue(m_param1->text(), 10);
-    const double fStop = parseValue(m_param2->text(), 1e6);
-    const int pts = m_param3->text().toInt();
+    const QString fStartText = m_param1->text().trimmed();
+    const QString fStopText = m_param2->text().trimmed();
+    const QString ptsText = m_param3->text().trimmed();
     const QString projectDir = m_projectDir;
     const QJsonObject snapshot = SchematicFileIO::serializeSceneToJson(m_scene, "A4");
 
@@ -1245,7 +1284,7 @@ void SimulationPanel::onRunSimulation() {
         SimManager::instance().runNetlistText(result.netlistText);
     });
 
-    watcher->setFuture(QtConcurrent::run([snapshot, projectDir, idx, tStop, tStep, fStart, fStop, pts]() {
+    watcher->setFuture(QtConcurrent::run([snapshot, projectDir, idx, tStop, tStep, fStartText, fStopText, ptsText]() {
         SimBuildResult result;
         QGraphicsScene tempScene;
         QString error;
@@ -1262,6 +1301,30 @@ void SimulationPanel::onRunSimulation() {
             result.diagnostics.append(QString::fromStdString(d));
         }
 
+        if (idx == 2) { // AC Sweep
+            for (QGraphicsItem* gi : tempScene.items()) {
+                auto* vsrc = dynamic_cast<VoltageSourceItem*>(gi);
+                if (!vsrc) continue;
+                if (vsrc->excludeFromSimulation()) continue;
+                const QString ac = vsrc->acAmplitude().trimmed();
+                bool missing = ac.isEmpty();
+                if (!missing) {
+                    double mag = 0.0;
+                    if (SimValueParser::parseSpiceNumber(ac, mag) && qFuzzyIsNull(mag)) {
+                        missing = true;
+                    }
+                }
+                if (missing) {
+                    const QString ref = vsrc->reference().isEmpty()
+                        ? (vsrc->referencePrefix() + "?")
+                        : vsrc->reference();
+                    result.diagnostics.append(
+                        QString("[error] AC analysis requires AC amplitude for %1").arg(ref)
+                    );
+                }
+            }
+        }
+
         SpiceNetlistGenerator::SimulationParams params;
         if (idx == 0) {
             params.type = SpiceNetlistGenerator::Transient;
@@ -1272,9 +1335,9 @@ void SimulationPanel::onRunSimulation() {
             params.type = SpiceNetlistGenerator::OP;
         } else if (idx == 2) {
             params.type = SpiceNetlistGenerator::AC;
-            params.start = QString::number(fStart);
-            params.stop = QString::number(fStop);
-            params.step = QString::number(pts);
+            params.start = fStartText.isEmpty() ? "10" : fStartText;
+            params.stop = fStopText.isEmpty() ? "1Meg" : fStopText;
+            params.step = ptsText.isEmpty() ? "10" : ptsText;
         } else {
             params.type = SpiceNetlistGenerator::OP;
         }
@@ -1648,6 +1711,9 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
     m_chart->legend()->hide();
 
     int analysisIdx = m_analysisType->currentIndex();
+    if (m_waveformViewer) {
+        m_waveformViewer->setAcMode(analysisIdx == 2);
+    }
     QAbstractAxis* axisX = nullptr;
     QAbstractAxis* axisYBase = nullptr;
     QValueAxis* axisYPhase = nullptr;

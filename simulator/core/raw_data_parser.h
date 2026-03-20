@@ -14,6 +14,8 @@ struct RawData {
     int numPoints = 0;
     QVector<double> x;
     QVector<QVector<double>> y;
+    QVector<QVector<double>> yPhase;
+    QVector<bool> hasPhase;
 
     SimResults toSimResults() const;
 };

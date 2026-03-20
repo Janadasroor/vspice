@@ -97,9 +97,9 @@ void SimManager::runNgspiceSimulation(QGraphicsScene* scene, NetManager* netMgr,
             break;
         case SimAnalysisType::AC:
             params.type = SpiceNetlistGenerator::AC;
-            params.start = QString::number(config.fStart);
-            params.stop = QString::number(config.fStop);
-            params.step = QString::number(config.fPoints); 
+            params.start = QString::number(config.fStart > 0.0 ? config.fStart : 10.0, 'g', 12);
+            params.stop = QString::number(config.fStop > 0.0 ? config.fStop : 1e6, 'g', 12);
+            params.step = QString::number(config.fPoints > 0 ? config.fPoints : 10);
             break;
         case SimAnalysisType::OP:
         default:

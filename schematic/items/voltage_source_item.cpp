@@ -16,7 +16,7 @@ VoltageSourceItem::VoltageSourceItem(QPointF pos, const QString& value, SourceTy
       m_expV1("0.0"), m_expV2("5.0"), m_expTd1("0"), m_expTau1("1m"), m_expTd2("2m"), m_expTau2("1m"),
       m_sffmOff("0.0"), m_sffmAmplit("1.0"), m_sffmCarrier("1000"), m_sffmModIndex("1.0"), m_sffmSignalFreq("100"),
       m_pwlRepeat(false),
-      m_acAmplitude("1.0"), m_acPhase("0.0"),
+      m_acAmplitude(""), m_acPhase(""),
       m_seriesResistance("0.0"), m_parallelCapacitance("0.0"),
       m_showFunction(true), m_showDc(true), m_showAc(true), m_showParasitic(true) {
     
@@ -243,6 +243,14 @@ void VoltageSourceItem::updateLabelText() {
     m_refLabelItem->setText(refText);
 
     QString display = value();
+    const int acIdx = display.indexOf(QRegularExpression("\\bAC\\b"));
+    if (acIdx > 0) {
+        const QString before = display.left(acIdx).trimmed();
+        const QString after = display.mid(acIdx).trimmed();
+        if (!before.isEmpty() && !after.isEmpty()) {
+            display = before + "\n" + after;
+        }
+    }
     if ((m_sourceType == PWL || m_sourceType == PWLFile) && display.length() > 48) {
         display = display.left(45) + "...";
     } else if (display.length() > 64) {
@@ -488,8 +496,8 @@ bool VoltageSourceItem::fromJson(const QJsonObject& json) {
     m_pwlRepeat = json["pwlRepeat"].toBool(false);
 
     // AC overlay
-    m_acAmplitude = json["acAmplitude"].toString("1.0");
-    m_acPhase     = json["acPhase"].toString("0.0");
+    m_acAmplitude = json["acAmplitude"].toString("");
+    m_acPhase     = json["acPhase"].toString("");
 
     // Parasitics
     m_seriesResistance    = json["seriesResistance"].toString("0");
