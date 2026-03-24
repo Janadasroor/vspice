@@ -43,6 +43,9 @@
 #include "../dialogs/current_source_ltspice_dialog.h"
 #include "../dialogs/spice_directive_dialog.h"
 #include "../dialogs/signal_generator_properties_dialog.h"
+#include "../dialogs/led_properties_dialog.h"
+#include "../dialogs/switch_properties_dialog.h"
+#include "../dialogs/voltage_controlled_switch_dialog.h"
 #include "../dialogs/csw_properties_dialog.h"
 #include "../dialogs/vcvs_properties_dialog.h"
 #include "../dialogs/cccs_properties_dialog.h"
@@ -55,6 +58,7 @@
 #include "../dialogs/mos_properties_dialog.h"
 #include "../dialogs/mesfet_properties_dialog.h"
 #include "../items/generic_component_item.h"
+#include "../items/voltage_controlled_switch_item.h"
 #include "../dialogs/oscilloscope_properties_dialog.h"
 #include "../dialogs/erc_rules_dialog.h"
 #include "../ui/simulation_panel.h"
@@ -746,6 +750,31 @@ void SchematicEditor::onItemDoubleClicked(SchematicItem* item) {
     } else if (item->itemTypeName() == "SignalGenerator") {
         if (auto* gen = dynamic_cast<SignalGeneratorItem*>(item)) {
             SignalGeneratorPropertiesDialog dlg(gen, m_undoStack, m_scene, this);
+            dlg.exec();
+            return;
+        }
+    } else if (item->itemTypeName() == "LED" || item->itemTypeName() == "Blinking LED") {
+        LedPropertiesDialog dlg(item, m_scene, this);
+        dlg.exec();
+        return;
+    } else if (item->itemTypeName() == "Switch") {
+        if (auto* sw = dynamic_cast<SwitchItem*>(item)) {
+            SwitchPropertiesDialog dlg(sw, this);
+            dlg.exec();
+            return;
+        }
+        if (auto* gen = dynamic_cast<GenericComponentItem*>(item)) {
+            const QString name = gen->symbol().name().trimmed().toLower();
+            const QString prefix = gen->symbol().referencePrefix().trimmed().toLower();
+            if (name == "sw" || name == "switch" || prefix == "s") {
+                SwitchPropertiesDialog dlg(gen, this);
+                dlg.exec();
+                return;
+            }
+        }
+    } else if (item->itemTypeName() == "Voltage Controlled Switch") {
+        if (auto* vcsw = dynamic_cast<VoltageControlledSwitchItem*>(item)) {
+            VoltageControlledSwitchDialog dlg(vcsw, this);
             dlg.exec();
             return;
         }

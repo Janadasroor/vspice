@@ -877,7 +877,20 @@ void GeminiPanel::onProcessReadyRead() {
                             }
                             text = text.mid(end + 10);
                         } else { m_leftover = text; text.clear(); }
-                    }                    }
+                    } else if (text.startsWith("<NETLIST>")) {
+                        int end = text.indexOf("</NETLIST>");
+                        if (end != -1) {
+                            QString netlist = text.mid(9, end - 9).trimmed();
+                            if (!netlist.isEmpty()) {
+                                m_chatArea->moveCursor(QTextCursor::End);
+                                QString label = "GENERATE SCHEMATIC";
+                                QString color = "#8250df"; // Purple action
+                                m_chatArea->insertHtml(QString("<div style='margin: 15px 0;'><a href='netlist:%1' style='background: %2; color: #ffffff; border: 1px solid #30363d; border-radius: 6px; padding: 10px 24px; text-decoration: none; font-size: 13px; font-weight: bold;'>%3</a></div>").arg(QString(netlist.toUtf8().toBase64())).arg(color).arg(label));
+                            }
+                            text = text.mid(end + 10);
+                        } else { m_leftover = text; text.clear(); }
+                    }
+                    }
                     }
     m_chatArea->verticalScrollBar()->setValue(m_chatArea->verticalScrollBar()->maximum());
 }
@@ -948,6 +961,13 @@ void GeminiPanel::onAnchorClicked(const QUrl& url) {
         QString json = link.mid(8);
         emit snippetGenerated(json);
         m_statusButton->setText("PLACING SNIPPET");
+        m_statusButton->show();
+        QTimer::singleShot(2000, m_statusButton, &QPushButton::hide);
+    } else if (link.startsWith("netlist:")) {
+        QString base64 = link.mid(8);
+        QString netlist = QString::fromUtf8(QByteArray::fromBase64(base64.toUtf8()));
+        emit netlistGenerated(netlist);
+        m_statusButton->setText("GENERATING SCHEMATIC");
         m_statusButton->show();
         QTimer::singleShot(2000, m_statusButton, &QPushButton::hide);
     }

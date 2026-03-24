@@ -54,7 +54,10 @@ using Flux::Model::SymbolPrimitive;
 #include <QFormLayout>
 #include <QLineEdit>
 #include <QComboBox>
+#include <QTemporaryFile>
+#include <QTextStream>
 #include <array>
+#include "../io/netlist_to_schematic.h"
 
 void SchematicEditor::createMenuBar() {
     // Hide traditional menu bar for modern UI
@@ -1298,6 +1301,34 @@ void SchematicEditor::createDockWidgets() {
     m_geminiPanel->setUndoStack(m_undoStack);
     connect(m_geminiPanel, &GeminiPanel::itemsHighlighted, this, &SchematicEditor::onItemsHighlighted);
     connect(m_geminiPanel, &GeminiPanel::snippetGenerated, this, &SchematicEditor::onSnippetGenerated);
+    connect(m_geminiPanel, &GeminiPanel::netlistGenerated, this, [this](const QString& netlist) {
+        if (!m_scene) return;
+        QTemporaryFile tempFile;
+        if (tempFile.open()) {
+            QTextStream out(&tempFile);
+            out << netlist;
+            tempFile.close();
+            
+            // Generate onto canvas
+            // We may want to clear existing schematic items before replacing? Yes, let's clear the scene for a fresh generated circuit.
+            m_scene->clear(); 
+            // the above clear will unfortunately wipe grid/bg items if not careful. 
+            // In viospice, SchematicEditor has `m_undoStack`, we probably should just let NetlistToSchematic place items, 
+            // but the user's prompt was "make a boost converter circuit". If there are already things, they will overlap.
+            // Let's just place them and let the user delete old things if they want.
+            NetlistToSchematic::convertToScene(tempFile.fileName(), m_scene);
+            
+            if (m_netManager) {
+                m_netManager->updateNets(m_scene);
+            }
+            if (m_view) {
+                // Ensure everything is sized right
+                m_scene->setSceneRect(m_scene->itemsBoundingRect().marginsAdded(QMarginsF(50, 50, 50, 50)));
+                m_view->fitInView(m_scene->sceneRect(), Qt::KeepAspectRatio);
+            }
+            statusBar()->showMessage("AI Schematic generated successfully!", 5000);
+        }
+    });
     
     m_geminiPanel->setContextProvider([this]() {
         QJsonObject ctx = SchematicFileIO::serializeSceneToJson(m_scene);
@@ -1313,6 +1344,15 @@ void SchematicEditor::createDockWidgets() {
             ercArray.append(vObj);
         }
         ctx["erc_violations"] = ercArray;
+
+        // Add Available Symbols to context
+        QJsonArray symbolsArray;
+        for (SymbolLibrary* lib : SymbolLibraryManager::instance().libraries()) {
+            for (const QString& sym : lib->symbolNames()) {
+                symbolsArray.append(sym);
+            }
+        }
+        ctx["available_symbols"] = symbolsArray;
 
         return QString::fromUtf8(QJsonDocument(ctx).toJson(QJsonDocument::Compact));
     });

@@ -959,60 +959,17 @@ void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
                                                t.compare("ltline", Qt::CaseInsensitive) == 0 ||
                                                prefix.compare("T", Qt::CaseInsensitive) == 0 ||
                                                prefix.compare("O", Qt::CaseInsensitive) == 0);
+        const bool isRoutedLed = (t == "LED" || t == "Blinking LED");
+        const bool isRoutedSwitch = (t == "Switch");
+        const bool isRoutedVoltageControlledSwitch = (t == "Voltage Controlled Switch");
+        const bool isRoutedBehavioralCurrent = (t.compare("Current_Source_Behavioral", Qt::CaseInsensitive) == 0 ||
+                                                t.compare("bi", Qt::CaseInsensitive) == 0 ||
+                                                t.compare("bi2", Qt::CaseInsensitive) == 0);
 
         if (isRoutedSpiceDirective || isRoutedSource || isRoutedDiode || isRoutedJFET ||
-            isRoutedBJT || isRoutedMOS || isRoutedMesfet || isRoutedControlledSource) {
+            isRoutedBJT || isRoutedMOS || isRoutedMesfet || isRoutedControlledSource ||
+            isRoutedLed || isRoutedSwitch || isRoutedVoltageControlledSwitch || isRoutedBehavioralCurrent) {
             emit itemDoubleClicked(targetSItem);
-            return;
-        }
-    }
-
-    // SPECIAL: Direct dialog for LEDs (LTspice style)
-    if (targetSItem) {
-        const QString t = targetSItem->itemTypeName();
-        if (t == "LED" || t == "Blinking LED") {
-            LedPropertiesDialog dlg(targetSItem, scene(), this);
-            dlg.exec();
-            return;
-        }
-    }
-
-
-    // SPECIAL: Direct dialog for Switches (LTspice style)
-    if (targetSItem) {
-        const QString t = targetSItem->itemTypeName();
-        if (t == "Switch") {
-            if (auto* sw = dynamic_cast<SwitchItem*>(targetSItem)) {
-                SwitchPropertiesDialog dlg(sw, this);
-                dlg.exec();
-                return;
-            }
-        }
-        if (auto* gen = dynamic_cast<GenericComponentItem*>(targetSItem)) {
-            const QString name = gen->symbol().name().trimmed().toLower();
-            const QString prefix = gen->symbol().referencePrefix().trimmed().toLower();
-            if (name == "sw" || name == "switch" || prefix == "s") {
-                SwitchPropertiesDialog dlg(gen, this);
-                dlg.exec();
-                return;
-            }
-        }
-    }
-
-    if (targetSItem && targetSItem->itemTypeName() == "Voltage Controlled Switch") {
-        if (auto* vcsw = dynamic_cast<VoltageControlledSwitchItem*>(targetSItem)) {
-            VoltageControlledSwitchDialog dlg(vcsw, this);
-            dlg.exec();
-            return;
-        }
-    }
-
-    if (targetSItem && (targetSItem->itemTypeName().compare("Current_Source_Behavioral", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("bi", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("bi2", Qt::CaseInsensitive) == 0)) {
-        if (auto* bi = dynamic_cast<BehavioralCurrentSourceItem*>(targetSItem)) {
-            BehavioralCurrentSourceDialog dlg(bi, scene(), this);
-            dlg.exec();
             return;
         }
     }

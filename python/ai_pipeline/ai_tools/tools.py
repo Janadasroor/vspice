@@ -54,6 +54,17 @@ class ToolRegistry:
             "instructions": "Click the 'PLACE AI SNIPPET' button in the chat to add this to your schematic."
         }
 
+    def generate_schematic_from_netlist(self, netlist_text):
+        """
+        Generates a full schematic by providing a pure SPICE netlist string.
+        Returns the netlist wrapped so the UI can draw the 'GENERATE SCHEMATIC' action button.
+        """
+        return {
+            "status": "netlist_ready",
+            "netlist": netlist_text,
+            "instructions": "A 'GENERATE SCHEMATIC' button will appear in the chat. Click it to render this netlist directly onto the canvas."
+        }
+
     def _find_voltage_sources(self):
         sources = []
         try:
@@ -468,6 +479,20 @@ def get_tools_schema():
                     },
                 },
                 "required": ["commands_json"],
+            },
+        },
+        {
+            "name": "generate_schematic_from_netlist",
+            "description": "Triggers the automatic generation of a complete electronic schematic by providing a standard SPICE netlist. Use this when the user asks you to design or generate a complete circuit (e.g., 'Make a boost converter circuit'). Ensure the netlist is valid SPICE.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "netlist_text": {
+                        "type": "string",
+                        "description": "The raw SPICE netlist text string. Must contain standard SPICE primitives (R, L, C, Q, M, D, V, I, etc.).",
+                    },
+                },
+                "required": ["netlist_text"],
             },
         },
     ]

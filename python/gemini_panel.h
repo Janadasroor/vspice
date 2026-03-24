@@ -48,6 +48,7 @@ signals:
     void suggestionTriggered(const QString& command);
     void itemsHighlighted(const QStringList& references);
     void snippetGenerated(const QString& jsonSnippet);
+    void netlistGenerated(const QString& netlistText);
 
 private slots:
     void onSendClicked();
