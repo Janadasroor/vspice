@@ -56,13 +56,14 @@ NetlistToSchematic::ConvertResult NetlistToSchematic::convertToScene(const QStri
 
     // 2. Place components in a grid layout
     QMap<QString, SchematicItem*> refToItem; // ref -> placed SchematicItem
-    int row = 0, col = 0;
+    
+    int n = netlist.components.size();
+    int cols = qMax(1, (int)std::ceil(std::sqrt(n)));
+    int col = 0;
+    qreal currentX = 0;
+    qreal currentY = 0;
 
     for (const auto& comp : netlist.components) {
-        // Calculate grid position
-        qreal x = col * GRID_SPACING;
-        qreal y = row * GRID_SPACING;
-
         // Build properties JSON for the factory
         QJsonObject props;
         if (!comp.value.isEmpty()) {
@@ -71,7 +72,7 @@ NetlistToSchematic::ConvertResult NetlistToSchematic::convertToScene(const QStri
 
         // Create the item via factory
         SchematicItem* item = SchematicItemFactory::instance().createItem(
-            comp.typeName, QPointF(x, y), props);
+            comp.typeName, QPointF(currentX, currentY), props);
 
         if (!item) {
             qWarning() << "NetlistToSchematic: Failed to create item for type"
@@ -81,7 +82,7 @@ NetlistToSchematic::ConvertResult NetlistToSchematic::convertToScene(const QStri
             QJsonObject icProps;
             icProps["value"] = comp.value.isEmpty() ? comp.typeName : comp.value;
             icProps["pinCount"] = comp.nodes.size();
-            item = SchematicItemFactory::instance().createItem("IC", QPointF(x, y), icProps);
+            item = SchematicItemFactory::instance().createItem("IC", QPointF(currentX, currentY), icProps);
         }
 
         if (item) {
@@ -89,19 +90,25 @@ NetlistToSchematic::ConvertResult NetlistToSchematic::convertToScene(const QStri
             if (!comp.value.isEmpty()) {
                 item->setValue(comp.value);
             }
+            
+            item->setPos(currentX, currentY);
             scene->addItem(item);
             refToItem[comp.reference] = item;
             result.componentCount++;
+            
+            // Advance grid position dynamically based on the symbol's pure rendered width (excluding child text labels)
+            currentX = item->mapRectToScene(item->boundingRect()).right() + GRID_SPACING; // 150px gap between symbols
         } else {
             qWarning() << "NetlistToSchematic: Skipping unrecognized component"
                        << comp.reference << comp.typeName;
+            currentX += GRID_SPACING;
         }
-
-        // Advance grid position
+        
         col++;
-        if (col >= COLUMNS) {
+        if (col >= cols) {
             col = 0;
-            row++;
+            currentX = 0;
+            currentY += 250.0; // Fixed row height
         }
     }
 
@@ -171,9 +178,50 @@ NetlistToSchematic::ConvertResult NetlistToSchematic::convertToScene(const QStri
             airWire->setFlag(QGraphicsItem::ItemIsSelectable, false);
             airWire->setFlag(QGraphicsItem::ItemIsMovable, false);
             airWire->setZValue(-5);
-
             scene->addItem(airWire);
             result.airWireCount++;
+        }
+    }
+
+    // 5. Center the entire layout on the sheet
+    QRectF totalBounds;
+    bool firstItem = true;
+    for (QGraphicsItem* item : scene->items()) {
+        // Only shift and measure top-level items (child items will follow their parents automatically)
+        if (item->parentItem()) continue;
+        
+        // Only consider SchematicItems (components and wires) for bounding box calculation
+        // Exclude the text labels to center the actual circuit graphics
+        if (dynamic_cast<SchematicItem*>(item)) {
+            QRectF itemBounds = item->mapRectToScene(item->boundingRect());
+            if (firstItem) {
+                totalBounds = itemBounds;
+                firstItem = false;
+            } else {
+                totalBounds = totalBounds.united(itemBounds);
+            }
+        }
+    }
+    
+    // The center of an A4 page corresponds to (0,0) in our layout
+    QPointF offset = -totalBounds.center();
+    
+    for (QGraphicsItem* item : scene->items()) {
+        if (item->parentItem()) continue; // Sub-items move automatically with parents
+        
+        if (auto* sItem = dynamic_cast<SchematicItem*>(item)) {
+            // For wires, their coordinate space places the origin at (0,0) and the points directly map to scene
+            if (auto* wire = dynamic_cast<WireItem*>(sItem)) {
+                QList<QPointF> currentPts = wire->points();
+                QList<QPointF> newPts;
+                for (const QPointF& pt : currentPts) {
+                    newPts.append(pt + offset);
+                }
+                wire->setPoints(newPts);
+            } else {
+                // Basic component items use scene position 
+                sItem->setPos(sItem->pos() + offset);
+            }
         }
     }
 

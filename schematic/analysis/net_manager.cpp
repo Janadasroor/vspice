@@ -158,8 +158,6 @@ void NetManager::updateNets(QGraphicsScene* scene) {
     auto isConductiveSegment = [](SchematicItem* item) -> bool {
         if (!item) return false;
         if (item->itemType() == SchematicItem::WireType) {
-            auto* wire = static_cast<WireItem*>(item);
-            if (wire->wireType() == WireItem::AirWire) return false;
             return true;
         }
         return item->itemType() == SchematicItem::BusType ||
@@ -183,6 +181,14 @@ void NetManager::updateNets(QGraphicsScene* scene) {
     // 2. Handle T-junctions: any node (pin, end, or junction) on any wire segment unites them
     for (SchematicItem* item : schItems) {
         if (isConductiveSegment(item)) {
+            // Air wires are straight diagonal/routing guides that visibly cross over other components
+            // They strictly only connect their explicit endpoints (Step 1) and must ignore geometric T-junctions
+            if (item->itemType() == SchematicItem::WireType) {
+                if (static_cast<WireItem*>(item)->wireType() == WireItem::AirWire) {
+                    continue;
+                }
+            }
+
             QList<QPointF> pts = item->connectionPoints();
             for (int i = 0; i < pts.size() - 1; ++i) {
                 QPointF p1 = item->mapToScene(pts[i]);
@@ -255,7 +261,6 @@ void NetManager::updateNets(QGraphicsScene* scene) {
     for (SchematicItem* item : schItems) {
         if (item->itemType() == SchematicItem::WireType) {
             auto* wire = static_cast<WireItem*>(item);
-            if (wire->wireType() == WireItem::AirWire) continue; // Skip air wires completely
             
             item->clearPinNets();
             QList<QPointF> pts = item->connectionPoints();

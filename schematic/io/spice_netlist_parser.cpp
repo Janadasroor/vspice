@@ -30,8 +30,7 @@ QString SpiceNetlistParser::modelTypeToFactoryType(const QString& spiceModelType
     if (t == "D")    return "Diode";
 
     // Switch models
-    if (t == "SW")   return "Voltage Controlled Switch";
-    if (t == "CSW")  return "Switch";
+    if (t == "SW" || t == "CSW") return "sw";
 
     // Resistor/Capacitor models (semiconductor)
     if (t == "R")    return "Resistor";
@@ -128,8 +127,8 @@ QString SpiceNetlistParser::spicePrefixToTypeName(QChar prefix, const QString& m
         case 'F': return "F";
         case 'H': return "H";
         case 'K': return "Transformer";
-        case 'S': return "Voltage Controlled Switch";
-        case 'W': return "Switch";
+        case 'S': 
+        case 'W': return "sw";
         case 'X': return QString(); // Subcircuit — resolved from last token
         case 'B': return "Voltage_Source_Behavioral";
         case 'T': return "tline";

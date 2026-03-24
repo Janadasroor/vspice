@@ -41,8 +41,10 @@ public:
      */
     static ConvertResult convertToScene(const QString& netlistPath, QGraphicsScene* scene);
 
-    static constexpr qreal GRID_SPACING = 500.0;
-    static constexpr int COLUMNS = 4;
+    static constexpr qreal GRID_SPACING = 150.0;
+    static constexpr qreal START_X = -1050.0; // Margin from left edge (-1260)
+    static constexpr qreal START_Y = -650.0;  // Margin from top edge (-891)
+    static constexpr qreal MAX_X = 1050.0;    // Margin from right edge (+1260)
 };
 
 #endif // NETLIST_TO_SCHEMATIC_H

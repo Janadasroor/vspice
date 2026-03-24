@@ -477,6 +477,9 @@ void SchematicItemRegistry::registerBuiltInItems() {
     factory.registerItemType("Voltage Controlled Switch", [](QPointF pos, const QJsonObject&, QGraphicsItem* parent) -> SchematicItem* {
         return new VoltageControlledSwitchItem(pos, parent);
     });
+    factory.registerItemType("sw", [](QPointF pos, const QJsonObject&, QGraphicsItem* parent) -> SchematicItem* {
+        return new VoltageControlledSwitchItem(pos, parent);
+    });
 
     factory.registerItemType("PushButton", [](QPointF pos, const QJsonObject&, QGraphicsItem* parent) -> SchematicItem* {
         return new PushButtonItem(pos, parent);
