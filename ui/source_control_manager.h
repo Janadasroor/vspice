@@ -6,6 +6,7 @@
 #include <QString>
 #include <QStringList>
 #include <QMutex>
+#include <QTimer>
 #include "git_backend.h"
 
 class SourceControlManager : public QObject {
@@ -29,6 +30,7 @@ public:
 
 public slots:
     void refresh();
+    void scheduleRefresh(); // Debounced refresh
     void stageFile(const QString& path);
     void unstageFile(const QString& path);
     void stageAll();
@@ -68,6 +70,7 @@ private:
     QVector<GitFileStatus> m_fileStatuses;
     QVector<GitCommit> m_recentCommits;
     QStringList m_remoteNames;
+    QTimer* m_refreshTimer;
 };
 
 #endif // SOURCE_CONTROL_MANAGER_H

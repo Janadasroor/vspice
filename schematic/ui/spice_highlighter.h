@@ -26,6 +26,8 @@ private:
     QTextCharFormat commandFormat;
     QTextCharFormat valueFormat;
     QTextCharFormat subcktFormat;
+    QTextCharFormat errorFormat;
+    QTextCharFormat warningFormat;
 };
 
 #endif // SPICE_HIGHLIGHTER_H

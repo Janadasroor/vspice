@@ -114,7 +114,7 @@ void SchematicMenuRegistry::initializeDefaultActions() {
 
     ContextAction del;
     del.label = "Delete";
-    del.shortcut = QKeySequence::Delete;
+    del.shortcut = QKeySequence();
     del.priority = 47;
     del.isVisible = [](const auto& items) { return !items.isEmpty(); };
     del.handler = [](SchematicView* view, const auto&) {

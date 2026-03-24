@@ -200,6 +200,13 @@ void SchematicItemRegistry::registerBuiltInItems() {
     addMosAlias("pmos", true, "BS250");
     addMosAlias("pmos4", true, "BS250");
 
+    // Register LTspice MESFET
+    factory.registerItemType("mesfet", [makeGenericFromLibrary](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        const QString value = properties.value("value").toString("MyMesfet");
+        if (auto* item = makeGenericFromLibrary("mesfet", pos, value, parent)) return item;
+        return new TransistorItem(pos, value, TransistorItem::NMOS, parent);
+    });
+
     // Register Resistor US
     factory.registerItemType("Resistor_US", [makeGenericFromLibrary](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
         const QString value = properties.value("value").toString("10k");

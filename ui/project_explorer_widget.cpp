@@ -1,4 +1,5 @@
 #include "project_explorer_widget.h"
+#include "../schematic/io/netlist_to_schematic.h"
 #include "../core/theme_manager.h"
 #include <QHeaderView>
 #include <QSortFilterProxyModel>
@@ -134,6 +135,7 @@ protected:
         QString fileName = fs->data(index).toString().toLower();
         return fileName.endsWith(".sch") || fileName.endsWith(".sym") ||
                fileName.endsWith(".flxsch") ||
+               fileName.endsWith(".cir") || fileName.endsWith(".spice") || fileName.endsWith(".net") ||
                fileName.endsWith(".lib") || fileName.endsWith(".sclib") ||
                fileName.contains(filterRegularExpression());
     }
@@ -154,6 +156,16 @@ ProjectExplorerWidget::ProjectExplorerWidget(QWidget *parent)
 
     connect(&SourceControlManager::instance(), &SourceControlManager::statusUpdated, this, &ProjectExplorerWidget::onGitStatusUpdated);
     onGitStatusUpdated();
+}
+
+ProjectExplorerWidget::~ProjectExplorerWidget() {
+    if (m_model) {
+        disconnect(m_model, nullptr, this, nullptr);
+    }
+    if (m_treeView) {
+        m_treeView->setItemDelegate(nullptr);
+        m_treeView->setModel(nullptr);
+    }
 }
 
 void ProjectExplorerWidget::setupUi() {
@@ -410,6 +422,30 @@ void ProjectExplorerWidget::onContextMenuRequested(const QPoint& pos) {
                     QString err = QString::fromUtf8(proc.readAllStandardError());
                     QMessageBox::warning(this, "Extract Netlist",
                         "Failed to extract netlist.\n" + err);
+                }
+            });
+        }
+
+        const QString suffix = info.suffix().toLower();
+        if (suffix == "cir" || suffix == "spice" || suffix == "net") {
+            menu.addSeparator();
+            QAction* fromNetlistAct = menu.addAction("New Schematic from Netlist");
+            connect(fromNetlistAct, &QAction::triggered, this, [this, path]() {
+                const QString baseName = QFileInfo(path).completeBaseName();
+                const QString outDir = QFileInfo(path).absolutePath();
+                const QString outPath = outDir + "/" + baseName + "_from_netlist.flxsch";
+
+                auto result = NetlistToSchematic::convert(path, outPath);
+                if (result.success) {
+                    QMessageBox::information(this, "New Schematic from Netlist",
+                        QString("Created schematic with %1 components and %2 air wires.\n\n%3")
+                            .arg(result.componentCount)
+                            .arg(result.airWireCount)
+                            .arg(result.outputPath));
+                    emit fileDoubleClicked(result.outputPath);
+                } else {
+                    QMessageBox::warning(this, "New Schematic from Netlist",
+                        "Failed to generate schematic:\n" + result.errorMessage);
                 }
             });
         }

@@ -28,7 +28,7 @@ target_include_directories(FluxHeadless PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(FluxHeadless PUBLIC Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Gui)
 
 if(VIOSPICE_ENABLE_PYTHON)
-    add_library(FluxPythonBindings STATIC flux_python_bindings.cpp)
+    add_library(FluxPythonBindings OBJECT flux_python_bindings.cpp)
     set_target_properties(FluxPythonBindings PROPERTIES AUTOMOC ON)
     target_link_libraries(FluxPythonBindings PUBLIC FluxSchematicCore FluxCore pybind11::embed Qt${QT_VERSION_MAJOR}::Gui Qt${QT_VERSION_MAJOR}::Widgets)
     target_include_directories(FluxPythonBindings PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)

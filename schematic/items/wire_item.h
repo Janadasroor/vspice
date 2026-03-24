@@ -10,7 +10,8 @@ class WireItem : public SchematicItem {
 public:
     enum WireType {
         SignalWire,     // Thin, crisp signal lines
-        PowerWire       // Thicker, color-coded power lines (VCC/GND)
+        PowerWire,      // Thicker, color-coded power lines (VCC/GND)
+        AirWire         // Visual ratsnest guide
     };
 
     WireItem(QPointF start = QPointF(), QPointF end = QPointF(), QGraphicsItem *parent = nullptr);
@@ -38,7 +39,7 @@ public:
     QPen pen() const { return m_pen; }
 
     // Wire type management
-    void setWireType(WireType type) { m_wireType = type; update(); }
+    void setWireType(WireType type) { m_wireType = type; updatePen(); update(); }
     WireType wireType() const { return m_wireType; }
 
     // Junction management

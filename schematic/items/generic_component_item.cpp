@@ -54,7 +54,7 @@ GenericComponentItem::GenericComponentItem(const SymbolDefinition& symbol, QGrap
 }
 
 GenericComponentItem::~GenericComponentItem() {
-    for (auto* item : m_primitiveItems) delete item;
+    m_primitiveItems.clear();
 }
 
 void GenericComponentItem::setSymbol(const SymbolDefinition& symbol) {
@@ -162,7 +162,12 @@ bool GenericComponentItem::fromJson(const QJsonObject& json) {
 }
 
 void GenericComponentItem::rebuildPrimitives() {
-    for (auto* item : m_primitiveItems) delete item;
+    for (auto* item : m_primitiveItems) {
+        if (item) {
+            item->setParentItem(nullptr);
+            delete item;
+        }
+    }
     m_primitiveItems.clear();
 
     const QList<SymbolPrimitive> primitives = resolvedPrimitives();

@@ -274,7 +274,12 @@ QList<SymbolPrimitive> VoltageSourceItem::resolvedExternalPrimitives() const {
 }
 
 void VoltageSourceItem::clearExternalSymbolItems() {
-    for (auto* item : m_symbolItems) delete item;
+    for (auto* item : m_symbolItems) {
+        if (item) {
+            item->setParentItem(nullptr);
+            delete item;
+        }
+    }
     m_symbolItems.clear();
 }
 

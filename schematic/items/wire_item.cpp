@@ -37,6 +37,16 @@ void WireItem::updatePen() {
     case PowerWire:
         wireColor = theme->powerWire();
         wireWidth = 4.5;
+        m_pen = QPen(wireColor, wireWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        break;
+    case AirWire:
+        wireColor = QColor(0, 180, 220, 160); // Semi-transparent cyan
+        wireWidth = 0.8;
+        m_pen = QPen(wireColor, wireWidth, Qt::DashLine, Qt::RoundCap, Qt::RoundJoin);
+        m_pen.setDashPattern({6, 4});
+        m_pen.setCosmetic(true);
+        setFlag(QGraphicsItem::ItemIsSelectable, false);
+        setZValue(-5);
         break;
     case SignalWire:
     default:
@@ -48,9 +58,10 @@ void WireItem::updatePen() {
             wireColor = QColor(pref);
         }
         wireWidth = 2.25;
+        m_pen = QPen(wireColor, wireWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        setFlag(QGraphicsItem::ItemIsSelectable, true);
         break;
     }
-    m_pen = QPen(wireColor, wireWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
 }
 
 void WireItem::addJunction(const QPointF& point) {
@@ -197,6 +208,9 @@ QJsonObject WireItem::toJson() const {
 }
 
 bool WireItem::fromJson(const QJsonObject& json) {
+    if (json.contains("wireType")) {
+        m_wireType = static_cast<WireType>(json["wireType"].toInt());
+    }
     m_points.clear();
     QJsonArray pts = json["points"].toArray();
     for (const auto& v : pts) m_points.append(QPointF(v.toObject()["x"].toDouble(), v.toObject()["y"].toDouble()));

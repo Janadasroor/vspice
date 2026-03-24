@@ -20,6 +20,7 @@ NetlistEditor::NetlistEditor(QWidget* parent)
     setupUI();
     
     m_highlighter = new SpiceHighlighter(m_editor->document());
+    m_logHighlighter = new SpiceHighlighter(m_logArea->document());
     
     connect(&SimulationManager::instance(), &SimulationManager::outputReceived, this, &NetlistEditor::onOutputReceived);
     connect(&SimulationManager::instance(), qOverload<>(&SimulationManager::simulationFinished), this, &NetlistEditor::onSimulationFinished);
@@ -88,6 +89,7 @@ void NetlistEditor::setupUI() {
     // Log Area
     m_logArea = new QPlainTextEdit(this);
     m_logArea->setReadOnly(true);
+    m_logArea->hide();
 
     splitter->addWidget(m_editor);
     splitter->addWidget(m_logArea);
@@ -129,6 +131,7 @@ void NetlistEditor::applyTheme() {
     ).arg(logBg, theme->textSecondary().name(), border));
 
     if (m_highlighter) m_highlighter->updateColors();
+    if (m_logHighlighter) m_logHighlighter->updateColors();
 }
 
 void NetlistEditor::setNetlist(const QString& netlist) {
@@ -153,6 +156,7 @@ void NetlistEditor::onRun() {
     if (content.trimmed().isEmpty()) return;
 
     onClearLog();
+    m_logArea->show();
     m_logArea->appendPlainText("Starting simulation...");
 
     // Clean up previous temp file if any

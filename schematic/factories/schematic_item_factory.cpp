@@ -49,9 +49,10 @@ SchematicItem* SchematicItemFactory::createItem(const QString& typeName, QPointF
                             typeName.compare("nmos4", Qt::CaseInsensitive) == 0 ||
                             typeName.compare("pmos", Qt::CaseInsensitive) == 0 ||
                             typeName.compare("pmos4", Qt::CaseInsensitive) == 0;
+    const bool isMesfet = typeName.compare("mesfet", Qt::CaseInsensitive) == 0;
 
     // Prefer external symbols if they exist (override built-ins), except for power, source and explicit JFET types.
-    if (!isPowerItem && !isVoltageSource && !isCurrentSource && !isJfet && !isBjtAlias && !isMosAlias) {
+    if (!isPowerItem && !isVoltageSource && !isCurrentSource && !isJfet && !isBjtAlias && !isMosAlias && !isMesfet) {
         if (SymbolDefinition* def = SymbolLibraryManager::instance().findSymbol(typeName)) {
             item = new GenericComponentItem(*def, parent);
             item->setPos(pos);

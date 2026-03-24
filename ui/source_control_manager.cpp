@@ -6,6 +6,10 @@
 SourceControlManager::SourceControlManager(QObject* parent)
     : QObject(parent)
 {
+    m_refreshTimer = new QTimer(this);
+    m_refreshTimer->setSingleShot(true);
+    m_refreshTimer->setInterval(1500); // 1.5s debounce
+    connect(m_refreshTimer, &QTimer::timeout, this, &SourceControlManager::refresh);
 }
 
 SourceControlManager& SourceControlManager::instance() {
@@ -64,6 +68,12 @@ void SourceControlManager::refresh() {
 
     emit statusUpdated();
     emit branchChanged(m_currentBranch);
+}
+
+void SourceControlManager::scheduleRefresh() {
+    if (m_isRepo) {
+        m_refreshTimer->start();
+    }
 }
 
 void SourceControlManager::runAsync(const QString& opName, std::function<bool()> task) {

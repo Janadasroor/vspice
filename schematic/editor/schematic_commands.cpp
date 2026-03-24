@@ -11,6 +11,7 @@
 #include <QDebug>
 #include <QGraphicsView>
 #include <QApplication>
+#include <QSet>
 
 namespace {
 bool isConnectivitySensitiveSchematicItem(const SchematicItem* item) {
@@ -18,6 +19,61 @@ bool isConnectivitySensitiveSchematicItem(const SchematicItem* item) {
     return item->itemType() == SchematicItem::WireType ||
            item->itemType() == SchematicItem::BusType ||
            item->itemTypeName() == "BusEntry";
+}
+
+SchematicItem* owningSchematicItem(SchematicItem* item) {
+    SchematicItem* current = item;
+    while (current && current->isSubItem()) {
+        current = dynamic_cast<SchematicItem*>(current->parentItem());
+    }
+    return current ? current : item;
+}
+
+QList<SchematicItem*> normalizeOwnedItems(const QList<SchematicItem*>& items) {
+    QList<SchematicItem*> normalized;
+    QSet<SchematicItem*> seen;
+    for (SchematicItem* item : items) {
+        SchematicItem* owner = owningSchematicItem(item);
+        if (!owner || seen.contains(owner)) continue;
+        seen.insert(owner);
+        normalized.append(owner);
+    }
+    return normalized;
+}
+
+QRectF itemsSceneBounds(const QList<SchematicItem*>& items) {
+    QRectF bounds;
+    bool first = true;
+    for (SchematicItem* item : items) {
+        if (!item) continue;
+        const QRectF itemBounds = item->sceneBoundingRect().adjusted(-8, -8, 8, 8);
+        if (first) {
+            bounds = itemBounds;
+            first = false;
+        } else {
+            bounds = bounds.united(itemBounds);
+        }
+    }
+    return bounds;
+}
+
+void refreshSceneViews(QGraphicsScene* scene, const QRectF& dirtyRect = QRectF()) {
+    if (!scene) return;
+
+    if (dirtyRect.isValid() && !dirtyRect.isEmpty()) {
+        scene->invalidate(dirtyRect, QGraphicsScene::AllLayers);
+        scene->update(dirtyRect);
+    } else {
+        scene->invalidate(scene->sceneRect(), QGraphicsScene::AllLayers);
+        scene->update();
+    }
+
+    for (auto* view : scene->views()) {
+        if (!view || !view->viewport()) continue;
+        view->resetCachedContent();
+        view->viewport()->update();
+        view->viewport()->repaint();
+    }
 }
 }
 
@@ -39,10 +95,12 @@ AddItemCommand::~AddItemCommand() {
 
 void AddItemCommand::undo() {
     if (m_item && m_scene) {
+        m_item->setVisible(false);
         m_scene->removeItem(m_item);
         if (isConnectivitySensitiveSchematicItem(m_item)) {
             SchematicConnectivity::updateVisualConnections(m_scene);
         }
+        refreshSceneViews(m_scene, m_item->sceneBoundingRect().adjusted(-8, -8, 8, 8));
         m_ownsItem = true;
     }
 }
@@ -50,9 +108,11 @@ void AddItemCommand::undo() {
 void AddItemCommand::redo() {
     if (m_item && m_scene) {
         m_scene->addItem(m_item);
+        m_item->setVisible(true);
         if (isConnectivitySensitiveSchematicItem(m_item)) {
             SchematicConnectivity::updateVisualConnections(m_scene);
         }
+        refreshSceneViews(m_scene, m_item->sceneBoundingRect().adjusted(-8, -8, 8, 8));
         m_ownsItem = false;
     }
 }
@@ -62,8 +122,8 @@ void AddItemCommand::redo() {
 // ============================================================================
 
 RemoveItemCommand::RemoveItemCommand(QGraphicsScene* scene, QList<SchematicItem*> items, QUndoCommand* parent)
-    : SchematicCommand(scene, QString("Delete %1 item(s)").arg(items.size()), parent)
-    , m_items(items)
+    : SchematicCommand(scene, QString("Delete %1 item(s)").arg(normalizeOwnedItems(items).size()), parent)
+    , m_items(normalizeOwnedItems(items))
     , m_ownsItems(false) {
     
     // Store serialized data for each item
@@ -81,11 +141,14 @@ RemoveItemCommand::~RemoveItemCommand() {
 }
 
 void RemoveItemCommand::undo() {
+    QRectF dirtyRect = itemsSceneBounds(m_items);
     for (SchematicItem* item : m_items) {
-        if (item && m_scene && !m_scene->items().contains(item)) {
+        if (item && m_scene && item->scene() != m_scene) {
             m_scene->addItem(item);
+            item->setVisible(true);
         }
     }
+    dirtyRect = dirtyRect.united(itemsSceneBounds(m_items));
     if (m_scene) {
         bool hasWire = false;
         for (SchematicItem* item : m_items) {
@@ -98,20 +161,17 @@ void RemoveItemCommand::undo() {
             }
         }
         if (hasWire) SchematicConnectivity::updateVisualConnections(m_scene);
-        m_scene->invalidate(m_scene->sceneRect(), QGraphicsScene::AllLayers);
-        for (auto* view : m_scene->views()) {
-            if (view && view->viewport()) {
-                view->resetCachedContent();
-                view->viewport()->repaint();
-            }
-        }
+        refreshSceneViews(m_scene, dirtyRect);
     }
     m_ownsItems = false;
 }
 
 void RemoveItemCommand::redo() {
+    QRectF dirtyRect = itemsSceneBounds(m_items);
     for (SchematicItem* item : m_items) {
-        if (item && m_scene && m_scene->items().contains(item)) {
+        if (item && m_scene && item->scene() == m_scene) {
+            item->setSelected(false);
+            item->setVisible(false);
             m_scene->removeItem(item);
         }
     }
@@ -127,13 +187,7 @@ void RemoveItemCommand::redo() {
             }
         }
         if (hasWire) SchematicConnectivity::updateVisualConnections(m_scene);
-        m_scene->invalidate(m_scene->sceneRect(), QGraphicsScene::AllLayers);
-        for (auto* view : m_scene->views()) {
-            if (view && view->viewport()) {
-                view->resetCachedContent();
-                view->viewport()->repaint();
-            }
-        }
+        refreshSceneViews(m_scene, dirtyRect);
     }
     m_ownsItems = true;
 }

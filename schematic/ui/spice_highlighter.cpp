@@ -49,6 +49,20 @@ void SpiceHighlighter::updateColors() {
     
     rule.pattern = QRegularExpression(";.*");
     highlightingRules.append(rule);
+
+    // Errors (e.g. "Error: ...", "Fatal error: ...")
+    errorFormat.setForeground(isLight ? QColor("#d32f2f") : QColor("#f44336"));
+    errorFormat.setFontWeight(QFont::Bold);
+    rule.pattern = QRegularExpression("(?i).*(error|fatal error):.*");
+    rule.format = errorFormat;
+    highlightingRules.append(rule);
+
+    // Warnings (e.g. "Warning: ...")
+    warningFormat.setForeground(isLight ? QColor("#ed6c02") : QColor("#ffb300")); 
+    warningFormat.setFontWeight(QFont::Bold);
+    rule.pattern = QRegularExpression("(?i).*warning:.*");
+    rule.format = warningFormat;
+    highlightingRules.append(rule);
     
     rehighlight();
 }

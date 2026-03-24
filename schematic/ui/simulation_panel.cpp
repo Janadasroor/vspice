@@ -744,7 +744,8 @@ void SimulationPanel::updateSchematicDirectiveFromCommand(const QString& command
     // Parse command and update form fields
     parseCommandText(commandText);
     
-    // Remove existing simulation command directive
+    // Find existing simulation command directive
+    SchematicSpiceDirectiveItem* found = nullptr;
     for (auto* gi : m_scene->items()) {
         if (auto* existing = dynamic_cast<SchematicSpiceDirectiveItem*>(gi)) {
             if (existing->text().startsWith('.') &&
@@ -752,33 +753,37 @@ void SimulationPanel::updateSchematicDirectiveFromCommand(const QString& command
                  existing->text().startsWith(".ac", Qt::CaseInsensitive) ||
                  existing->text().startsWith(".dc", Qt::CaseInsensitive) ||
                  existing->text().startsWith(".op", Qt::CaseInsensitive))) {
-                m_scene->removeItem(existing);
-                delete existing;
+                found = existing;
                 break;
             }
         }
     }
 
-    // Determine position
-    QPointF cmdPos(100, 200);
-    if (!m_scene->views().isEmpty()) {
-        if (auto* view = m_scene->views().first()) {
-            cmdPos = view->mapToScene(view->viewport()->rect().center());
-        }
+    if (found) {
+        found->setText(commandText);
+        found->update();
     } else {
-        for (auto* gi : m_scene->items()) {
-            if (auto* page = dynamic_cast<SchematicPageItem*>(gi)) {
-                qreal w = page->boundingRect().width() - 8;
-                qreal h = page->boundingRect().height() - 8;
-                cmdPos = page->mapToScene(QPointF(-w/2 + 120, h/2 - 150));
-                break;
+        // Determine position
+        QPointF cmdPos(100, 200);
+        if (!m_scene->views().isEmpty()) {
+            if (auto* view = m_scene->views().first()) {
+                cmdPos = view->mapToScene(view->viewport()->rect().center());
+            }
+        } else {
+            for (auto* gi : m_scene->items()) {
+                if (auto* page = dynamic_cast<SchematicPageItem*>(gi)) {
+                    qreal w = page->boundingRect().width() - 8;
+                    qreal h = page->boundingRect().height() - 8;
+                    cmdPos = page->mapToScene(QPointF(-w/2 + 120, h/2 - 150));
+                    break;
+                }
             }
         }
-    }
 
-    // Create and add the directive
-    auto* cmdItem = new SchematicSpiceDirectiveItem(commandText, cmdPos);
-    m_scene->addItem(cmdItem);
+        // Create and add the directive
+        auto* cmdItem = new SchematicSpiceDirectiveItem(commandText, cmdPos);
+        m_scene->addItem(cmdItem);
+    }
 }
 
 QString SimulationPanel::tabStateKey(QGraphicsScene* scene) {
@@ -1434,6 +1439,7 @@ void SimulationPanel::setupUI() {
 
 void SimulationPanel::onViewNetlist() {
     QDialog* dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setWindowTitle("Generated SPICE Netlist");
     dlg->resize(600, 500);
     QVBoxLayout* lay = new QVBoxLayout(dlg);
@@ -1442,7 +1448,7 @@ void SimulationPanel::onViewNetlist() {
     edit->setPlainText(generateSpiceNetlist());
     edit->setStyleSheet("background-color: #1e1e24; color: #dcdcdc; font-family: monospace;");
     lay->addWidget(edit);
-    dlg->exec();
+    dlg->show();
 }
 
 void SimulationPanel::onAnalysisChanged(int index) {
@@ -1618,6 +1624,9 @@ void SimulationPanel::onDeleteGeneratorPreset() {
 void SimulationPanel::setAnalysisConfig(const AnalysisConfig& cfg) {
     if (!m_analysisType) return;
     
+    bool oldBuild = m_buildInProgress;
+    m_buildInProgress = true;
+    
     int idx = 0;
     switch (cfg.type) {
         case SimAnalysisType::Transient: idx = 0; break;
@@ -1625,13 +1634,15 @@ void SimulationPanel::setAnalysisConfig(const AnalysisConfig& cfg) {
         case SimAnalysisType::AC:        idx = 2; break;
         case SimAnalysisType::MonteCarlo: idx = 3; break;
         case SimAnalysisType::Sensitivity: idx = 4; break;
+        case SimAnalysisType::ParametricSweep: idx = 5; break;
+        case SimAnalysisType::RealTime: idx = 6; break;
     }
     
     m_analysisType->setCurrentIndex(idx);
     
     if (idx == 0) {
-        m_param1->setText(QString::number(cfg.step));
-        m_param2->setText(QString::number(cfg.stop));
+        m_param1->setText(QString::number(cfg.step, 'g', 10));
+        m_param2->setText(QString::number(cfg.stop, 'g', 10));
     } else if (idx == 2) {
         const double fStart = (cfg.fStart > 0.0) ? cfg.fStart : 10.0;
         const double fStop = (cfg.fStop > 0.0) ? cfg.fStop : 1e6;
@@ -1642,6 +1653,7 @@ void SimulationPanel::setAnalysisConfig(const AnalysisConfig& cfg) {
     }
 
     updateCommandDisplay();
+    m_buildInProgress = oldBuild;
 }
 
 SimulationPanel::AnalysisConfig SimulationPanel::getAnalysisConfig() {

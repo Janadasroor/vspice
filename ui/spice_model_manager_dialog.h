@@ -5,7 +5,7 @@
 #include <QTreeWidget>
 #include <QLineEdit>
 #include <QLabel>
-#include <QTextEdit>
+#include <QTextBrowser>
 #include "../simulator/bridge/model_library_manager.h"
 
 class SpiceModelManagerDialog : public QDialog {
@@ -27,7 +27,7 @@ private:
     QTreeWidget* m_modelTree;
     QLabel* m_modelTitle;
     QLabel* m_modelMeta;
-    QTextEdit* m_modelDetails;
+    QTextBrowser* m_modelDetails;
     QPushButton* m_reloadBtn;
 };
 

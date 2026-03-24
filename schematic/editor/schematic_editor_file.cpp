@@ -686,11 +686,13 @@ void SchematicEditor::onSaveSchematic() {
 
     if (success) {
         m_isModified = false;
+        if (m_undoStack) m_undoStack->setClean();
         QFileInfo fileInfo(m_currentFilePath);
         setWindowTitle(QString("viospice - Schematic Editor [%1]").arg(fileInfo.fileName()));
         statusBar()->showMessage(QString("Saved: %1").arg(m_currentFilePath), 3000);
         if (m_view) m_view->setProperty("filePath", m_currentFilePath);
         updateCurrentTabTitleFromFilePath(m_currentFilePath);
+        SourceControlManager::instance().scheduleRefresh();
     } else {
         QMessageBox::critical(this, "Save Error",
             QString("Failed to save schematic:\n%1").arg(SchematicFileIO::lastError()));
@@ -724,6 +726,7 @@ void SchematicEditor::onSaveSchematicAs() {
         textEditor->setProperty("dirty", false);
         updateCurrentTabTitleFromFilePath(filePath);
         statusBar()->showMessage(QString("Saved: %1").arg(filePath), 3000);
+        SourceControlManager::instance().scheduleRefresh();
         return;
     }
 
@@ -796,11 +799,13 @@ void SchematicEditor::onSaveSchematicAs() {
         m_currentFilePath = filePath;
         updateGeminiProjectEffect();
         m_isModified = false;
+        if (m_undoStack) m_undoStack->setClean();
         QFileInfo fileInfo(filePath);
         setWindowTitle(QString("viospice - Schematic Editor [%1]").arg(fileInfo.fileName()));
         statusBar()->showMessage(QString("Saved: %1").arg(filePath), 3000);
         if (m_view) m_view->setProperty("filePath", filePath);
         updateCurrentTabTitleFromFilePath(filePath);
+        SourceControlManager::instance().scheduleRefresh();
     } else {
         QMessageBox::critical(this, "Save Error",
             QString("Failed to save schematic:\n%1").arg(SchematicFileIO::lastError()));
@@ -831,6 +836,7 @@ void SchematicEditor::onExportAISchematic() {
 
     if (success) {
         statusBar()->showMessage(QString("AI schematic exported: %1").arg(filePath), 3000);
+        SourceControlManager::instance().scheduleRefresh();
     } else {
         QMessageBox::critical(this, "Export Error",
             QString("Failed to export AI schematic:\n%1").arg(SchematicFileIO::lastError()));

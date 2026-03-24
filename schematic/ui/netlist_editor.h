@@ -32,6 +32,7 @@ private:
     QPlainTextEdit* m_editor;
     QPlainTextEdit* m_logArea;
     SpiceHighlighter* m_highlighter;
+    SpiceHighlighter* m_logHighlighter;
     QToolBar* m_toolbar;
     QTemporaryFile* m_activeTempFile;
     

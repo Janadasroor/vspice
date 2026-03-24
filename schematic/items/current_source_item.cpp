@@ -268,7 +268,12 @@ QList<SymbolPrimitive> CurrentSourceItem::resolvedExternalPrimitives() const {
 }
 
 void CurrentSourceItem::clearExternalSymbolItems() {
-    for (auto* item : m_symbolItems) delete item;
+    for (auto* item : m_symbolItems) {
+        if (item) {
+            item->setParentItem(nullptr);
+            delete item;
+        }
+    }
     m_symbolItems.clear();
 }
 

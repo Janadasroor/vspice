@@ -1,0 +1,48 @@
+#ifndef NETLIST_TO_SCHEMATIC_H
+#define NETLIST_TO_SCHEMATIC_H
+
+#include <QString>
+
+class QGraphicsScene;
+
+/**
+ * @brief Converts a SPICE netlist (.cir) into a schematic (.flxsch) file.
+ *
+ * This class parses the netlist, creates schematic components using the
+ * SchematicItemFactory, places them in a grid layout, and draws AirWireItems
+ * (ratsnest lines) to show connectivity between pins.
+ *
+ * The generated schematic can then be opened in the editor where users
+ * manually route wires following the air wire guides.
+ */
+class NetlistToSchematic {
+public:
+    struct ConvertResult {
+        bool success = false;
+        QString outputPath;
+        int componentCount = 0;
+        int airWireCount = 0;
+        QString errorMessage;
+    };
+
+    /**
+     * @brief Convert a SPICE netlist to a .flxsch schematic file
+     * @param netlistPath Path to the input .cir file
+     * @param outputPath Path for the output .flxsch file (auto-derived if empty)
+     * @return Conversion result with status and statistics
+     */
+    static ConvertResult convert(const QString& netlistPath, const QString& outputPath = QString());
+
+    /**
+     * @brief Convert a SPICE netlist and populate an existing scene
+     * @param netlistPath Path to the input .cir file
+     * @param scene Scene to populate with components and air wires
+     * @return Conversion result
+     */
+    static ConvertResult convertToScene(const QString& netlistPath, QGraphicsScene* scene);
+
+    static constexpr qreal GRID_SPACING = 500.0;
+    static constexpr int COLUMNS = 4;
+};
+
+#endif // NETLIST_TO_SCHEMATIC_H

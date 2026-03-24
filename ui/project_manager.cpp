@@ -459,8 +459,8 @@ void ProjectManager::addFolderToTree(const QString& folderPath, QTreeWidgetItem*
     QTreeWidgetItem* miscRoot = nullptr;
     
     QStringList projectExtensions = {
-        "flux", "sch", "kicad_sch", "SchDoc",                      // Schematics
-        "sym", "sclib", "lib", "model",                           // Symbols / Models
+        "flux", "sch", "kicad_sch", "SchDoc", "flxsch",            // Schematics
+        "sym", "sclib", "lib", "model", "viosym",                 // Symbols / Models
         "cir", "net", "sp", "spice"                               // Netlists
     };
 
@@ -617,9 +617,9 @@ QIcon ProjectManager::getProjectFileIcon(const QString& fileName) const {
         return createDocumentIcon(QColor("#10b981"), "F");
     } else if (fileName.endsWith(".pcb", Qt::CaseInsensitive)) {
         return createDocumentIcon(QColor("#8b5cf6"), "P");
-    } else if (fileName.endsWith(".sch", Qt::CaseInsensitive) || fileName.endsWith(".kicad_sch", Qt::CaseInsensitive) || fileName.endsWith(".SchDoc", Qt::CaseInsensitive)) {
+    } else if (fileName.endsWith(".sch", Qt::CaseInsensitive) || fileName.endsWith(".kicad_sch", Qt::CaseInsensitive) || fileName.endsWith(".SchDoc", Qt::CaseInsensitive) || fileName.endsWith(".flxsch", Qt::CaseInsensitive)) {
         return createDocumentIcon(QColor("#3b82f6"), "S");
-    } else if (fileName.endsWith(".sym", Qt::CaseInsensitive) || fileName.endsWith(".sclib", Qt::CaseInsensitive) || fileName.endsWith(".lib", Qt::CaseInsensitive)) {
+    } else if (fileName.endsWith(".sym", Qt::CaseInsensitive) || fileName.endsWith(".sclib", Qt::CaseInsensitive) || fileName.endsWith(".lib", Qt::CaseInsensitive) || fileName.endsWith(".viosym", Qt::CaseInsensitive)) {
         return createDocumentIcon(QColor("#f59e0b"), "L"); // Library / Symbol
     } else if (fileName.endsWith(".cir", Qt::CaseInsensitive) || fileName.endsWith(".net", Qt::CaseInsensitive) || fileName.endsWith(".sp", Qt::CaseInsensitive) || fileName.endsWith(".model", Qt::CaseInsensitive)) {
         return createDocumentIcon(QColor("#ec4899"), "N"); // Netlist / Model
@@ -724,15 +724,25 @@ void ProjectManager::onProjectTreeItemDoubleClicked(QTreeWidgetItem* item, int c
 
     if (path.endsWith(".sch", Qt::CaseInsensitive) || 
         path.endsWith(".kicad_sch", Qt::CaseInsensitive) || 
-        path.endsWith(".SchDoc", Qt::CaseInsensitive)) {
+        path.endsWith(".SchDoc", Qt::CaseInsensitive) ||
+        path.endsWith(".flxsch", Qt::CaseInsensitive)) {
         launchSchematicEditor(path);
     } else if (path.endsWith(".flux", Qt::CaseInsensitive)) {
         openProject(path);
+    } else if (path.endsWith(".sym", Qt::CaseInsensitive) || 
+               path.endsWith(".sclib", Qt::CaseInsensitive) || 
+               path.endsWith(".viosym", Qt::CaseInsensitive)) {
+        SymbolEditor* editor = new SymbolEditor(nullptr);
+        editor->setAttribute(Qt::WA_DeleteOnClose);
+        // Basic fallback until loadLibrary is fully implemented
+        editor->loadLibrary(path); 
+        editor->show();
     } else if (path.endsWith(".cir", Qt::CaseInsensitive) || 
                path.endsWith(".net", Qt::CaseInsensitive) || 
                path.endsWith(".sp", Qt::CaseInsensitive) ||
                path.endsWith(".spice", Qt::CaseInsensitive) ||
                path.endsWith(".model", Qt::CaseInsensitive) ||
+               path.endsWith(".lib", Qt::CaseInsensitive) ||
                path.endsWith(".txt", Qt::CaseInsensitive)) {
         NetlistEditor* editor = new NetlistEditor();
         editor->setAttribute(Qt::WA_DeleteOnClose);
@@ -838,36 +848,47 @@ void ProjectManager::onProjectTreeContextMenu(const QPoint& pos) {
         menu.addSeparator();
         QMenu* newMenu = menu.addMenu("New");
         
-        QAction* newSch = newMenu->addAction("Schematic (.sch)");
-        newSch->setIcon(getProjectFileIcon("a.sch"));
+        QAction* newSch = newMenu->addAction("Schematic (.flxsch)");
+        newSch->setIcon(getProjectFileIcon("a.flxsch"));
         connect(newSch, &QAction::triggered, [this, path]() {
             QString name = QInputDialog::getText(this, "New Schematic", "File name:");
             if (name.isEmpty()) return;
-            if (!name.endsWith(".sch")) name += ".sch";
+            if (!name.endsWith(".flxsch")) name += ".flxsch";
             QFile f(path + "/" + name);
             if (f.open(QIODevice::WriteOnly)) { f.write("{}"); f.close(); }
             refreshProjectTree();
         });
 
-        QAction* newSym = newMenu->addAction("Symbol Library (.sym)");
-        newSym->setIcon(getProjectFileIcon("a.sym"));
+        QAction* newSym = newMenu->addAction("Symbol Library (.viosym)");
+        newSym->setIcon(getProjectFileIcon("a.viosym"));
         connect(newSym, &QAction::triggered, [this, path]() {
             QString name = QInputDialog::getText(this, "New Symbol Library", "File name:");
             if (name.isEmpty()) return;
-            if (!name.endsWith(".sym")) name += ".sym";
+            if (!name.endsWith(".viosym")) name += ".viosym";
             QFile f(path + "/" + name);
             if (f.open(QIODevice::WriteOnly)) { f.write("{\"symbols\": []}"); f.close(); }
             refreshProjectTree();
         });
 
-        QAction* newNet = newMenu->addAction("SPICE Netlist (.cir)");
-        newNet->setIcon(getProjectFileIcon("a.cir"));
+        QAction* newNet = newMenu->addAction("SPICE Netlist (.net)");
+        newNet->setIcon(getProjectFileIcon("a.net"));
         connect(newNet, &QAction::triggered, [this, path]() {
             QString name = QInputDialog::getText(this, "New Netlist", "File name:");
             if (name.isEmpty()) return;
-            if (!name.endsWith(".cir")) name += ".cir";
+            if (!name.endsWith(".net")) name += ".net";
             QFile f(path + "/" + name);
             if (f.open(QIODevice::WriteOnly)) { f.write("* New SPICE Netlist\n"); f.close(); }
+            refreshProjectTree();
+        });
+
+        QAction* newLib = newMenu->addAction("Model Library (.lib)");
+        newLib->setIcon(getProjectFileIcon("a.lib"));
+        connect(newLib, &QAction::triggered, [this, path]() {
+            QString name = QInputDialog::getText(this, "New Model Library", "File name:");
+            if (name.isEmpty()) return;
+            if (!name.endsWith(".lib")) name += ".lib";
+            QFile f(path + "/" + name);
+            if (f.open(QIODevice::WriteOnly)) { f.write("* New Model Library\n"); f.close(); }
             refreshProjectTree();
         });
     }
@@ -1755,7 +1776,10 @@ void ProjectManager::launchSchematicEditor(const QString& projectPath) {
     SchematicEditor* editor = new SchematicEditor;
     editor->setAttribute(Qt::WA_DeleteOnClose);
     
-    QString pFile = resolveProjectPath(projectPath, "sch");
+    QString pFile = projectPath;
+    if (projectPath.isEmpty() || QFileInfo(projectPath).isDir()) {
+        pFile = resolveProjectPath(projectPath, "flxsch"); // Modern default for dirs
+    }
     
     QString pDir, pName;
     if (!pFile.isEmpty()) {

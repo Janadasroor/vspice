@@ -25,6 +25,7 @@
 #include "../items/schematic_page_item.h"
 class SchematicView;
 class SchematicPageItem;
+class SchematicSpiceDirectiveItem;
 class NetlistEditor;
 class SymbolEditor;
 class SpiceModelArchitect;
@@ -164,6 +165,7 @@ private slots:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    bool event(QEvent* event) override;
 
 private:
     bool m_updatingProperties;
@@ -197,6 +199,11 @@ private:
     QList<ERCViolation> getErcViolations() const;
     void updateCurrentTabTitleFromFilePath(const QString& filePath);
     SymbolDefinition buildSymbolFromSelection() const;
+    void applyDirectiveText(SchematicSpiceDirectiveItem* item, const QString& newText);
+    SchematicSpiceDirectiveItem* resolveDirectiveItemForEdit(const QString& currentCommand) const;
+    bool editDirectiveWithSimulationSetup(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem);
+    bool editDirectiveWithMeanDialog(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem);
+    bool editDirectiveWithGenericDialog(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem);
 
     // UI Components
     QTabWidget *m_workspaceTabs;

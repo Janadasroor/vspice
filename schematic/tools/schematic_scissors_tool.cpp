@@ -9,6 +9,23 @@
 #include <QGraphicsRectItem>
 #include "flux/core/theme_manager.h"
 
+namespace {
+SchematicItem* owningSchematicItem(QGraphicsItem* item) {
+    QGraphicsItem* current = item;
+    SchematicItem* lastSchematic = nullptr;
+    while (current) {
+        if (auto* schematic = dynamic_cast<SchematicItem*>(current)) {
+            lastSchematic = schematic;
+            if (!schematic->isSubItem()) {
+                return schematic;
+            }
+        }
+        current = current->parentItem();
+    }
+    return lastSchematic;
+}
+}
+
 SchematicScissorsTool::SchematicScissorsTool(QObject* parent)
     : SchematicTool("Scissors", parent), m_rubberBandActive(false), m_rubberBandItem(nullptr) {
 }
@@ -56,10 +73,7 @@ void SchematicScissorsTool::mousePressEvent(QMouseEvent* event) {
         }
 
         // Single click cut
-        SchematicItem* item = dynamic_cast<SchematicItem*>(hit);
-        if (!item && hit->parentItem()) {
-            item = dynamic_cast<SchematicItem*>(hit->parentItem());
-        }
+        SchematicItem* item = owningSchematicItem(hit);
 
         if (item) {
             if (view()->undoStack()) {
@@ -90,7 +104,7 @@ void SchematicScissorsTool::mouseReleaseEvent(QMouseEvent* event) {
         QList<QGraphicsItem*> itemsInRect = view()->scene()->items(rect, Qt::IntersectsItemShape);
         QList<SchematicItem*> toRemove;
         for (QGraphicsItem* item : itemsInRect) {
-            if (SchematicItem* sItem = dynamic_cast<SchematicItem*>(item)) {
+            if (SchematicItem* sItem = owningSchematicItem(item)) {
                 toRemove.append(sItem);
             }
         }

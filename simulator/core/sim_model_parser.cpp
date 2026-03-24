@@ -95,6 +95,8 @@ SimComponentType inferModelType(const std::string& typeToken, bool& ok) {
     if (typeStr == "NMOS") return SimComponentType::MOSFET_NMOS;
     if (typeStr == "PMOS") return SimComponentType::MOSFET_PMOS;
     if (typeStr == "VDMOS") return SimComponentType::MOSFET_NMOS;
+    if (typeStr == "NMF") return SimComponentType::MOSFET_NMOS;
+    if (typeStr == "PMF") return SimComponentType::MOSFET_PMOS;
     if (typeStr == "NJF") return SimComponentType::JFET_NJF;
     if (typeStr == "PJF") return SimComponentType::JFET_PJF;
     if (typeStr == "SW") return SimComponentType::Switch;

@@ -58,6 +58,8 @@ static SymbolLibrary* ensureDefaultUserSymbolLibrary() {
 
 #include <QApplication>
 #include <QFileInfo>
+#include <QEvent>
+#include "../../ui/source_control_manager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGraphicsRectItem>
@@ -201,11 +203,15 @@ SchematicEditor::SchematicEditor(QWidget *parent)
 }
 
 SchematicEditor::~SchematicEditor() {
+    if (m_undoStack) {
+        m_undoStack->disconnect(this);
+        m_undoStack->clear(); // Ensure commands are deleted while scene and NetManager are still alive
+    }
     for (auto* win : m_laWindows) delete win;
 }
 
 void SchematicEditor::closeEvent(QCloseEvent* event) {
-    if (m_undoStack->index() != 0 || m_isModified) {
+    if (!m_undoStack->isClean() || m_isModified) {
         QMessageBox::StandardButton reply = QMessageBox::question(this, "Save Changes?",
             "The schematic has unsaved changes. Do you want to save before closing?",
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
@@ -239,6 +245,13 @@ void SchematicEditor::closeEvent(QCloseEvent* event) {
     disconnect(&SimManager::instance(), nullptr, this, nullptr);
     
     event->accept();
+}
+
+bool SchematicEditor::event(QEvent* event) {
+    if (event->type() == QEvent::WindowActivate || event->type() == QEvent::ApplicationActivate) {
+        SourceControlManager::instance().scheduleRefresh();
+    }
+    return QMainWindow::event(event);
 }
 
 // ─── Canvas Setup ────────────────────────────────────────────────────────────

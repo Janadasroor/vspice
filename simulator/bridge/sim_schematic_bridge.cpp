@@ -635,6 +635,11 @@ MappingResult mapComponentToSimType(const ECOComponent& comp) {
                 r.type = SimComponentType::MOSFET_PMOS;
                 return r;
             }
+            if (comp.typeName.compare("mesfet", Qt::CaseInsensitive) == 0) {
+                r.supported = true;
+                r.type = SimComponentType::MOSFET_NMOS;
+                return r;
+            }
             if (comp.typeName.compare("njf", Qt::CaseInsensitive) == 0 ||
                 comp.typeName.compare("pjf", Qt::CaseInsensitive) == 0) {
                 r.supported = true;
@@ -724,6 +729,8 @@ MappingResult mapComponentToSimType(const ECOComponent& comp) {
                     if (refPrefix == "MN") { r.supported = true; r.type = SimComponentType::MOSFET_NMOS; return r; }
                     if (refPrefix == "MP") { r.supported = true; r.type = SimComponentType::MOSFET_PMOS; return r; }
                     if (refPrefix == "M") { r.supported = true; r.type = SimComponentType::MOSFET_NMOS; return r; }
+                    if (nameLower.contains("mesfet")) { r.supported = true; r.type = SimComponentType::MOSFET_NMOS; return r; }
+                    if (refPrefix == "Z") { r.supported = true; r.type = SimComponentType::MOSFET_NMOS; return r; }
                     if (refPrefix == "JN") { r.supported = true; r.type = SimComponentType::MOSFET_NMOS; return r; }
                     if (refPrefix == "JP") { r.supported = true; r.type = SimComponentType::MOSFET_PMOS; return r; }
                     if (refPrefix == "J") { r.supported = true; r.type = SimComponentType::MOSFET_NMOS; return r; }

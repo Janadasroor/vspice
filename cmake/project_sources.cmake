@@ -90,6 +90,8 @@ set(SCHEMATIC_SOURCES
     schematic/editor/schematic_editor_actions.cpp
     schematic/editor/schematic_editor_file.cpp
     schematic/editor/schematic_editor_export.cpp
+    schematic/editor/spice_directive_classifier.cpp
+    schematic/editor/spice_directive_classifier.h
     schematic/editor/schematic_editor.h
     schematic/ui/schematic_components_widget.cpp
     schematic/ui/schematic_components_widget.h
@@ -155,6 +157,8 @@ set(SCHEMATIC_SOURCES
     schematic/dialogs/mos_model_picker_dialog.h
     schematic/dialogs/mos_properties_dialog.cpp
     schematic/dialogs/mos_properties_dialog.h
+    schematic/dialogs/mesfet_properties_dialog.cpp
+    schematic/dialogs/mesfet_properties_dialog.h
     schematic/dialogs/jfet_model_picker_dialog.cpp
     schematic/dialogs/jfet_model_picker_dialog.h
     schematic/dialogs/jfet_properties_dialog.cpp
@@ -177,6 +181,8 @@ set(SCHEMATIC_SOURCES
     schematic/dialogs/voltage_source_custom_waveform_dialog.h
     schematic/dialogs/spice_directive_dialog.cpp
     schematic/dialogs/spice_directive_dialog.h
+    schematic/dialogs/spice_mean_dialog.cpp
+    schematic/dialogs/spice_mean_dialog.h
     schematic/dialogs/simulation_debugger_dialog.cpp
     schematic/dialogs/simulation_debugger_dialog.h
     schematic/dialogs/power_nets_manager_dialog.cpp
@@ -264,6 +270,8 @@ set(SCHEMATIC_SOURCES
     schematic/items/bus_entry_item.h
     schematic/items/net_label_item.cpp
     schematic/items/net_label_item.h
+    schematic/items/air_wire_item.cpp
+    schematic/items/air_wire_item.h
     
     # Tools
     schematic/tools/schematic_tool.cpp
@@ -310,6 +318,10 @@ set(SCHEMATIC_SOURCES
     schematic/io/schematic_file_io.h
     schematic/io/netlist_generator.cpp
     schematic/io/netlist_generator.h
+    schematic/io/spice_netlist_parser.cpp
+    schematic/io/spice_netlist_parser.h
+    schematic/io/netlist_to_schematic.cpp
+    schematic/io/netlist_to_schematic.h
     
     # Analysis
     schematic/analysis/schematic_erc.cpp

@@ -157,8 +157,12 @@ void NetManager::updateNets(QGraphicsScene* scene) {
 
     auto isConductiveSegment = [](SchematicItem* item) -> bool {
         if (!item) return false;
-        return item->itemType() == SchematicItem::WireType ||
-               item->itemType() == SchematicItem::BusType ||
+        if (item->itemType() == SchematicItem::WireType) {
+            auto* wire = static_cast<WireItem*>(item);
+            if (wire->wireType() == WireItem::AirWire) return false;
+            return true;
+        }
+        return item->itemType() == SchematicItem::BusType ||
                item->itemTypeName() == "BusEntry";
     };
 
@@ -250,6 +254,9 @@ void NetManager::updateNets(QGraphicsScene* scene) {
     // Populate m_nets and m_netWires
     for (SchematicItem* item : schItems) {
         if (item->itemType() == SchematicItem::WireType) {
+            auto* wire = static_cast<WireItem*>(item);
+            if (wire->wireType() == WireItem::AirWire) continue; // Skip air wires completely
+            
             item->clearPinNets();
             QList<QPointF> pts = item->connectionPoints();
             if (!pts.isEmpty()) {
@@ -258,7 +265,7 @@ void NetManager::updateNets(QGraphicsScene* scene) {
                     rootToName[root] = rootToBestName.contains(root) ? rootToBestName[root].name : generateNetName();
                 }
                 const QString netName = rootToName[root];
-                m_netWires[netName].append(static_cast<WireItem*>(item));
+                m_netWires[netName].append(wire);
                 item->setPinNet(0, netName);
             }
         } else {

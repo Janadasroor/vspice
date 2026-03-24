@@ -23,6 +23,7 @@ class ProjectExplorerWidget : public QWidget {
 
 public:
     explicit ProjectExplorerWidget(QWidget *parent = nullptr);
+    ~ProjectExplorerWidget() override;
     void setRootPath(const QString& path);
     void setWorkspaceFolders(const QStringList& folders);
 

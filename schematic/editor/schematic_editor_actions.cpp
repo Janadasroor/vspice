@@ -53,6 +53,7 @@
 #include "../dialogs/bjt_properties_dialog.h"
 #include "../dialogs/jfet_properties_dialog.h"
 #include "../dialogs/mos_properties_dialog.h"
+#include "../dialogs/mesfet_properties_dialog.h"
 #include "../items/generic_component_item.h"
 #include "../dialogs/oscilloscope_properties_dialog.h"
 #include "../dialogs/erc_rules_dialog.h"
@@ -352,14 +353,14 @@ void SchematicEditor::onUndoStackIndexChanged() {
     QList<QGraphicsItem*> validSelected;
     
     for (QGraphicsItem* item : selected) {
-        if (m_scene->items().contains(item)) {
+        if (item->scene() == m_scene) {
             validSelected.append(item);
         }
     }
     
     if (validSelected.size() != selected.size()) {
         for (QGraphicsItem* item : selected) {
-            item->setSelected(m_scene->items().contains(item));
+            item->setSelected(item->scene() == m_scene);
         }
         updatePropertyBar();
     }
@@ -381,7 +382,13 @@ void SchematicEditor::onDelete() {
 
     QList<SchematicItem*> schematicItems;
     for (QGraphicsItem* item : selectedItems) {
-        SchematicItem* sItem = dynamic_cast<SchematicItem*>(item);
+        SchematicItem* sItem = nullptr;
+        QGraphicsItem* current = item;
+        while (current) {
+            sItem = dynamic_cast<SchematicItem*>(current);
+            if (sItem && !sItem->isSubItem()) break;
+            current = current->parentItem();
+        }
         if (sItem) schematicItems.append(sItem);
     }
 
@@ -774,8 +781,7 @@ void SchematicEditor::onItemDoubleClicked(SchematicItem* item) {
         }
     } else if (item->itemType() == SchematicItem::SpiceDirectiveType) {
         if (auto* spice = dynamic_cast<SchematicSpiceDirectiveItem*>(item)) {
-            SpiceDirectiveDialog dlg(spice, m_undoStack, m_scene, this);
-            dlg.exec();
+            onEditSimulationFromDirective(spice->text());
             return;
         }
     } else if (item->itemType() == SchematicItem::ComponentType ||
@@ -1027,6 +1033,19 @@ void SchematicEditor::onItemDoubleClicked(SchematicItem* item) {
                             gen->setSymbol(*sym);
                         }
                     }
+                }
+            }
+            return;
+        }
+
+        // MESFET properties dialog
+        if (item->itemTypeName().compare("mesfet", Qt::CaseInsensitive) == 0 ||
+            item->referencePrefix().compare("Z", Qt::CaseInsensitive) == 0) {
+            MesfetPropertiesDialog dlg(item, this);
+            if (dlg.exec() == QDialog::Accepted) {
+                const QString newModel = dlg.modelName();
+                if (newModel != item->value()) {
+                    m_undoStack->push(new ChangePropertyCommand(m_scene, item, "value", item->value(), newModel, m_projectDir));
                 }
             }
             return;

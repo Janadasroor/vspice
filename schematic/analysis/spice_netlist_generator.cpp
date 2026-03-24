@@ -652,7 +652,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         // use the reference as-is to avoid invalid X-lines.
         if (line.startsWith("X") && !ref.isEmpty()) {
             const QChar p = ref.at(0).toUpper();
-            const QString known = "RCLVIDQMBEGFHJ";
+            const QString known = "RCLVIDQMBEGFHJZ";
             if (known.contains(p)) {
                 line = ref;
             }
@@ -974,6 +974,31 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
             const QString g = nodes.at(1);
             const QString s = nodes.at(2);
             netlist += QString("%1 %2 %3 %4 %5\n").arg(jref, d, g, s, model);
+            continue;
+        }
+
+        const bool isMesfet = (comp.typeName.compare("mesfet", Qt::CaseInsensitive) == 0) ||
+                               ref.startsWith("Z", Qt::CaseInsensitive);
+        if (isMesfet && nodes.size() >= 3) {
+            QString zref = ref;
+            if (!zref.startsWith("Z", Qt::CaseInsensitive)) zref = "Z" + ref;
+
+            QString model = value.trimmed();
+            if (model.isEmpty()) model = "NMF";
+
+            if (!switchModelsAdded.contains(model.toLower()) && !ModelLibraryManager::instance().findModel(model)) {
+                const bool pchannel = model.compare("PMF", Qt::CaseInsensitive) == 0;
+                const QString mtype = pchannel ? "PMF" : "NMF";
+                const QString vto = pchannel ? "2.1" : "-2.1";
+                netlist += QString(".model %1 %2(Vto=%3 Beta=0.05 Lambda=0.02 Alpha=3 B=0.5 Rd=1 Rs=1 Cgs=1p Cgd=0.2p)\n")
+                    .arg(model, mtype, vto);
+                switchModelsAdded.insert(model.toLower());
+            }
+
+            const QString d = nodes.at(0);
+            const QString g = nodes.at(1);
+            const QString s = nodes.at(2);
+            netlist += QString("%1 %2 %3 %4 %5\n").arg(zref, d, g, s, model);
             continue;
         }
 

@@ -360,15 +360,16 @@ QList<NetlistNet> NetlistGenerator::buildConnectivity(QGraphicsScene* scene, con
         // --- JUMPER GROUP LOGIC ---
         // Second pass over the local items to find pins in the same jumper group
         // and unite their nets in the DSU.
+        
+        // Find nets connected to each pin (only need to do this ONCE for the scene!)
+        localManager.updateNets(s);
+        QStringList localNets = localManager.netNames();
+
         for (auto* item : s->items()) {
             if (auto* generic = dynamic_cast<GenericComponentItem*>(item)) {
                 if (generic->excludeFromPcb()) continue;
 
                 QMap<int, QString> groupToNet; // jumperGroupId -> globalNetId
-                
-                // Find nets connected to each pin
-                localManager.updateNets(s);
-                QStringList localNets = localManager.netNames();
 
                 for (const auto& prim : generic->symbol().primitives()) {
                     if (prim.type == SymbolPrimitive::Pin) {

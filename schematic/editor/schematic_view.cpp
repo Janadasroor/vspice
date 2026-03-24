@@ -16,6 +16,7 @@
 #include "../dialogs/bjt_properties_dialog.h"
 #include "../dialogs/jfet_properties_dialog.h"
 #include "../dialogs/mos_properties_dialog.h"
+#include "../dialogs/mesfet_properties_dialog.h"
 #include "../items/voltage_source_item.h"
 #include "../items/current_source_item.h"
 #include "../items/schematic_spice_directive_item.h"
@@ -48,6 +49,23 @@
 #include "../analysis/schematic_erc.h"
 #include <QGraphicsEllipseItem>
 #include <QToolTip>
+
+namespace {
+SchematicItem* owningSchematicItem(QGraphicsItem* item) {
+    QGraphicsItem* current = item;
+    SchematicItem* lastSchematic = nullptr;
+    while (current) {
+        if (auto* schematic = dynamic_cast<SchematicItem*>(current)) {
+            lastSchematic = schematic;
+            if (!schematic->isSubItem()) {
+                return schematic;
+            }
+        }
+        current = current->parentItem();
+    }
+    return lastSchematic;
+}
+}
 
 SchematicView::SchematicView(QWidget *parent)
     : QGraphicsView(parent),
@@ -514,7 +532,7 @@ void SchematicView::mouseMoveEvent(QMouseEvent *event) {
     if (!m_isPanning && (m_probeClickActive || !(event->buttons() & Qt::LeftButton)) && isSelectTool) {
         // Hover highlight
         QGraphicsItem* item = itemAt(event->pos());
-        SchematicItem* sItem = dynamic_cast<SchematicItem*>(item);
+        SchematicItem* sItem = owningSchematicItem(item);
         updateHoverHighlight(sItem);
 
         // Probe cursor when simulation/probing is active
@@ -734,7 +752,7 @@ void SchematicView::keyPressEvent(QKeyEvent *event) {
         QList<QGraphicsItem*> selected = scene()->selectedItems();
         QList<SchematicItem*> toRemove;
         for (QGraphicsItem* item : selected) {
-            if (SchematicItem* si = dynamic_cast<SchematicItem*>(item)) {
+            if (SchematicItem* si = owningSchematicItem(item)) {
                 toRemove.append(si);
             }
         }
@@ -897,28 +915,54 @@ void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
         targetSItem->setSelected(true);
     }
 
-    // SPECIAL: Direct dialog for Voltage Sources on right-click (LTspice style)
-    if (targetSItem && targetSItem->itemType() == SchematicItem::VoltageSourceType) {
-        if (auto* vsrc = dynamic_cast<VoltageSourceItem*>(targetSItem)) {
-            VoltageSourceLTSpiceDialog dlg(vsrc, m_undoStack, scene(), QString(), this);
-            dlg.exec();
-            return;
-        }
-    }
+    // Centralized routing: for components already handled in SchematicEditor::onItemDoubleClicked,
+    // route right-click directly to the same handler to keep behavior in one place.
+    if (targetSItem) {
+        const QString t = targetSItem->itemTypeName();
+        const QString prefix = targetSItem->referencePrefix();
 
-    // SPECIAL: Direct dialog for Current Sources on right-click (LTspice style)
-    if (targetSItem && targetSItem->itemType() == SchematicItem::CurrentSourceType) {
-        if (auto* csrc = dynamic_cast<CurrentSourceItem*>(targetSItem)) {
-            CurrentSourceLTSpiceDialog dlg(csrc, m_undoStack, scene(), QString(), this);
-            dlg.exec();
-            return;
-        }
-    }
+        const bool isRoutedSpiceDirective = (targetSItem->itemType() == SchematicItem::SpiceDirectiveType);
+        const bool isRoutedSource = (targetSItem->itemType() == SchematicItem::VoltageSourceType) ||
+                                    (targetSItem->itemType() == SchematicItem::CurrentSourceType);
+        const bool isRoutedDiode = (prefix.compare("D", Qt::CaseInsensitive) == 0);
+        const bool isRoutedJFET = (t.compare("njf", Qt::CaseInsensitive) == 0 ||
+                                   t.compare("pjf", Qt::CaseInsensitive) == 0 ||
+                                   prefix.compare("JN", Qt::CaseInsensitive) == 0 ||
+                                   prefix.compare("JP", Qt::CaseInsensitive) == 0);
+        const bool isRoutedBJT = (t.compare("Transistor", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("Transistor_PNP", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("npn", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("npn2", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("npn3", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("npn4", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("pnp", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("pnp2", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("pnp4", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("lpnp", Qt::CaseInsensitive) == 0 ||
+                                  prefix.compare("QN", Qt::CaseInsensitive) == 0 ||
+                                  prefix.compare("QP", Qt::CaseInsensitive) == 0);
+        const bool isRoutedMOS = (t.compare("Transistor_NMOS", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("Transistor_PMOS", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("nmos", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("nmos4", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("pmos", Qt::CaseInsensitive) == 0 ||
+                                  t.compare("pmos4", Qt::CaseInsensitive) == 0 ||
+                                  prefix.compare("MN", Qt::CaseInsensitive) == 0 ||
+                                  prefix.compare("MP", Qt::CaseInsensitive) == 0);
+        const bool isRoutedMesfet = (t.compare("mesfet", Qt::CaseInsensitive) == 0 ||
+                                     prefix.compare("Z", Qt::CaseInsensitive) == 0);
+        const bool isRoutedControlledSource = (t.compare("f", Qt::CaseInsensitive) == 0 ||
+                                               t.compare("cccs", Qt::CaseInsensitive) == 0 ||
+                                               t.compare("h", Qt::CaseInsensitive) == 0 ||
+                                               t.compare("ccvs", Qt::CaseInsensitive) == 0 ||
+                                               t.compare("tline", Qt::CaseInsensitive) == 0 ||
+                                               t.compare("ltline", Qt::CaseInsensitive) == 0 ||
+                                               prefix.compare("T", Qt::CaseInsensitive) == 0 ||
+                                               prefix.compare("O", Qt::CaseInsensitive) == 0);
 
-    // SPECIAL: Direct dialog for SPICE Directives on right-click (LTspice style)
-    if (targetSItem && targetSItem->itemType() == SchematicItem::SpiceDirectiveType) {
-        if (auto* spice = dynamic_cast<SchematicSpiceDirectiveItem*>(targetSItem)) {
-            emit editSimulationDirective(spice->text());
+        if (isRoutedSpiceDirective || isRoutedSource || isRoutedDiode || isRoutedJFET ||
+            isRoutedBJT || isRoutedMOS || isRoutedMesfet || isRoutedControlledSource) {
+            emit itemDoubleClicked(targetSItem);
             return;
         }
     }
@@ -933,187 +977,6 @@ void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
         }
     }
 
-    // SPECIAL: Diode properties dialog on right-click
-    if (targetSItem && targetSItem->referencePrefix() == "D") {
-        DiodePropertiesDialog dlg(targetSItem, this);
-        if (dlg.exec() == QDialog::Accepted) {
-            if (m_undoStack) {
-                m_undoStack->beginMacro("Update Diode Properties");
-                const QString newName = dlg.modelName();
-                const QString oldName = targetSItem->value();
-                if (newName != oldName) {
-                    m_undoStack->push(new ChangePropertyCommand(
-                        scene(), targetSItem, "value",
-                        oldName, newName, QString()));
-                }
-                // Save param expressions
-                const auto newPE = dlg.paramExpressions();
-                const auto oldPE = targetSItem->paramExpressions();
-                for (auto it = newPE.constBegin(); it != newPE.constEnd(); ++it) {
-                    if (oldPE.value(it.key()) != it.value()) {
-                        targetSItem->setParamExpression(it.key(), it.value());
-                    }
-                }
-                // Auto-switch symbol if type changed
-                const QString newSym = dlg.newSymbolName();
-                if (!newSym.isEmpty()) {
-                    if (auto* gen = dynamic_cast<GenericComponentItem*>(targetSItem)) {
-                        if (SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(newSym)) {
-                            gen->setSymbol(*sym);
-                        }
-                    }
-                }
-                m_undoStack->endMacro();
-            } else {
-                targetSItem->setValue(dlg.modelName());
-                const auto pe = dlg.paramExpressions();
-                for (auto it = pe.constBegin(); it != pe.constEnd(); ++it) {
-                    targetSItem->setParamExpression(it.key(), it.value());
-                }
-                const QString newSym = dlg.newSymbolName();
-                if (!newSym.isEmpty()) {
-                    if (auto* gen = dynamic_cast<GenericComponentItem*>(targetSItem)) {
-                        if (SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(newSym)) {
-                            gen->setSymbol(*sym);
-                        }
-                    }
-                }
-            }
-        }
-        return;
-    }
-
-    // SPECIAL: JFET properties dialog on right-click
-    if (targetSItem && (targetSItem->itemTypeName().compare("njf", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("pjf", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->referencePrefix().compare("JN", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->referencePrefix().compare("JP", Qt::CaseInsensitive) == 0)) {
-        JfetPropertiesDialog dlg(targetSItem, this);
-        if (dlg.exec() == QDialog::Accepted) {
-            const QString newName = dlg.modelName();
-            const auto newPE = dlg.paramExpressions();
-            if (m_undoStack) {
-                QJsonObject newState = targetSItem->toJson();
-                newState["value"] = newName;
-                QJsonObject peObj;
-                for (auto it = newPE.constBegin(); it != newPE.constEnd(); ++it) {
-                    peObj[it.key()] = it.value();
-                }
-                newState["paramExpressions"] = peObj;
-                m_undoStack->push(new BulkChangePropertyCommand(scene(), targetSItem, newState));
-            } else {
-                targetSItem->setValue(newName);
-                targetSItem->clearParamExpressions();
-                for (auto it = newPE.constBegin(); it != newPE.constEnd(); ++it) {
-                    targetSItem->setParamExpression(it.key(), it.value());
-                }
-                targetSItem->update();
-            }
-        }
-        return;
-    }
-
-    // SPECIAL: BJT properties dialog on right-click
-    if (targetSItem && (targetSItem->itemTypeName().compare("Transistor", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("Transistor_PNP", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("npn", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("npn2", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("npn3", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("npn4", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("pnp", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("pnp2", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("pnp4", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("lpnp", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->referencePrefix().compare("QN", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->referencePrefix().compare("QP", Qt::CaseInsensitive) == 0)) {
-        BjtPropertiesDialog dlg(targetSItem, this);
-        if (dlg.exec() == QDialog::Accepted) {
-            const QString newName = dlg.modelName();
-            const auto newPE = dlg.paramExpressions();
-            const QString newSym = dlg.newSymbolName();
-            if (m_undoStack) {
-                QJsonObject newState = targetSItem->toJson();
-                newState["value"] = newName;
-                QJsonObject peObj;
-                for (auto it = newPE.constBegin(); it != newPE.constEnd(); ++it) {
-                    peObj[it.key()] = it.value();
-                }
-                newState["paramExpressions"] = peObj;
-                m_undoStack->push(new BulkChangePropertyCommand(scene(), targetSItem, newState));
-                if (!newSym.isEmpty()) {
-                    if (auto* gen = dynamic_cast<GenericComponentItem*>(targetSItem)) {
-                        if (SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(newSym)) {
-                            gen->setSymbol(*sym);
-                        }
-                    }
-                }
-            } else {
-                targetSItem->setValue(newName);
-                targetSItem->clearParamExpressions();
-                for (auto it = newPE.constBegin(); it != newPE.constEnd(); ++it) {
-                    targetSItem->setParamExpression(it.key(), it.value());
-                }
-                if (!newSym.isEmpty()) {
-                    if (auto* gen = dynamic_cast<GenericComponentItem*>(targetSItem)) {
-                        if (SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(newSym)) {
-                            gen->setSymbol(*sym);
-                        }
-                    }
-                }
-                targetSItem->update();
-            }
-        }
-        return;
-    }
-
-    // SPECIAL: MOSFET properties dialog on right-click
-    if (targetSItem && (targetSItem->itemTypeName().compare("Transistor_NMOS", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("Transistor_PMOS", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("nmos", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("nmos4", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("pmos", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("pmos4", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->referencePrefix().compare("MN", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->referencePrefix().compare("MP", Qt::CaseInsensitive) == 0)) {
-        MosPropertiesDialog dlg(targetSItem, this);
-        if (dlg.exec() == QDialog::Accepted) {
-            const QString newName = dlg.modelName();
-            const auto newPE = dlg.paramExpressions();
-            const QString newSym = dlg.newSymbolName();
-            if (m_undoStack) {
-                QJsonObject newState = targetSItem->toJson();
-                newState["value"] = newName;
-                QJsonObject peObj;
-                for (auto it = newPE.constBegin(); it != newPE.constEnd(); ++it) {
-                    peObj[it.key()] = it.value();
-                }
-                newState["paramExpressions"] = peObj;
-                m_undoStack->push(new BulkChangePropertyCommand(scene(), targetSItem, newState));
-                if (!newSym.isEmpty()) {
-                    if (auto* gen = dynamic_cast<GenericComponentItem*>(targetSItem)) {
-                        if (SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(newSym)) {
-                            gen->setSymbol(*sym);
-                        }
-                    }
-                }
-            } else {
-                targetSItem->setValue(newName);
-                targetSItem->clearParamExpressions();
-                for (auto it = newPE.constBegin(); it != newPE.constEnd(); ++it) {
-                    targetSItem->setParamExpression(it.key(), it.value());
-                }
-                if (!newSym.isEmpty()) {
-                    if (auto* gen = dynamic_cast<GenericComponentItem*>(targetSItem)) {
-                        if (SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(newSym)) {
-                            gen->setSymbol(*sym);
-                        }
-                    }
-                }
-                targetSItem->update();
-            }
-        }
-        return;
-    }
 
     // SPECIAL: Direct dialog for Switches (LTspice style)
     if (targetSItem) {
@@ -1152,76 +1015,6 @@ void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
             dlg.exec();
             return;
         }
-    }
-
-    if (targetSItem && (targetSItem->itemTypeName().compare("f", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("cccs", Qt::CaseInsensitive) == 0)) {
-        CCCSPropertiesDialog dlg(targetSItem, this);
-        if (dlg.exec() == QDialog::Accepted) {
-            const QString newValue = dlg.controlSource() + " " + dlg.gainValue();
-            if (newValue != targetSItem->value()) {
-                if (m_undoStack) {
-                    m_undoStack->push(new ChangePropertyCommand(scene(), targetSItem, "value", targetSItem->value(), newValue));
-                } else {
-                    targetSItem->setValue(newValue);
-                    targetSItem->update();
-                }
-            }
-        }
-        return;
-    }
-
-    if (targetSItem && (targetSItem->itemTypeName().compare("h", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("ccvs", Qt::CaseInsensitive) == 0)) {
-        CCVSPropertiesDialog dlg(targetSItem, this);
-        if (dlg.exec() == QDialog::Accepted) {
-            const QString newValue = dlg.controlSource() + " " + dlg.transresistance();
-            if (newValue != targetSItem->value()) {
-                if (m_undoStack) {
-                    m_undoStack->push(new ChangePropertyCommand(scene(), targetSItem, "value", targetSItem->value(), newValue));
-                } else {
-                    targetSItem->setValue(newValue);
-                    targetSItem->update();
-                }
-            }
-        }
-        return;
-    }
-
-    if (targetSItem && (targetSItem->itemTypeName().compare("tline", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->itemTypeName().compare("ltline", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->referencePrefix().compare("T", Qt::CaseInsensitive) == 0 ||
-                        targetSItem->referencePrefix().compare("O", Qt::CaseInsensitive) == 0)) {
-        TransmissionLinePropertiesDialog dlg(targetSItem, scene(), m_undoStack, this);
-        if (dlg.exec() == QDialog::Accepted) {
-            const QString newValue = dlg.valueString();
-            if (m_undoStack) {
-                QJsonObject newState = targetSItem->toJson();
-                newState["value"] = newValue;
-                if (targetSItem->itemTypeName().compare("ltline", Qt::CaseInsensitive) == 0 ||
-                    targetSItem->referencePrefix().compare("O", Qt::CaseInsensitive) == 0) {
-                    QJsonObject peObj;
-                    const auto newPE = dlg.ltraParams();
-                    for (auto it = newPE.constBegin(); it != newPE.constEnd(); ++it) {
-                        peObj[it.key()] = it.value();
-                    }
-                    newState["paramExpressions"] = peObj;
-                }
-                m_undoStack->push(new BulkChangePropertyCommand(scene(), targetSItem, newState));
-            } else {
-                targetSItem->setValue(newValue);
-                if (targetSItem->itemTypeName().compare("ltline", Qt::CaseInsensitive) == 0 ||
-                    targetSItem->referencePrefix().compare("O", Qt::CaseInsensitive) == 0) {
-                    const auto newPE = dlg.ltraParams();
-                    targetSItem->clearParamExpressions();
-                    for (auto it = newPE.constBegin(); it != newPE.constEnd(); ++it) {
-                        targetSItem->setParamExpression(it.key(), it.value());
-                    }
-                }
-                targetSItem->update();
-            }
-        }
-        return;
     }
 
     QList<SchematicItem*> selectedItems;

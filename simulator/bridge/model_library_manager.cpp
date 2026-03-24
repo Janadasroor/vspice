@@ -157,7 +157,9 @@ void ModelLibraryManager::loadLibraryFile(const QString& path) {
             info.type = typeToString(model.type);
             info.libraryPath = path;
             for (const auto& [pname, pval] : model.params) {
-                info.params.append(QString::fromStdString(pname));
+                // Formatting very small values using typical scientific notation or normal notation
+                QString valStr = QString::number(pval, 'g', 4);
+                info.params.append(QString("%1 = %2").arg(QString::fromStdString(pname), valStr));
             }
             m_modelIndex.append(info);
             m_masterNetlist.addModel(model);
