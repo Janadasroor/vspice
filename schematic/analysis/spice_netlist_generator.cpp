@@ -1204,13 +1204,21 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
             continue;
         }
 
-        for (const QString& node : nodes) {
+        QStringList emittedNodes = nodes;
+        if (line.startsWith("Q", Qt::CaseInsensitive) && emittedNodes.size() == 4) {
+            const QString sub = emittedNodes.at(3).trimmed();
+            if (sub.isEmpty() || sub == "0") {
+                emittedNodes[3] = emittedNodes.at(2);
+            }
+        }
+
+        for (const QString& node : emittedNodes) {
             line += " " + node;
         }
 
         // ngspice MOSFET requires 4 nodes: D G S B. For 3-pin symbols, tie body to source.
-        if (line.startsWith("M", Qt::CaseInsensitive) && nodes.size() == 3) {
-            line += " " + nodes.at(2);
+        if (line.startsWith("M", Qt::CaseInsensitive) && emittedNodes.size() == 3) {
+            line += " " + emittedNodes.at(2);
         }
 
         // Add value

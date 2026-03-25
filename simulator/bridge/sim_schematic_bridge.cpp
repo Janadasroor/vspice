@@ -826,6 +826,19 @@ int resolveMosBodyNode(const QHash<QString, int>& normalizedPinToNode, int sourc
     return sourceNode;
 }
 
+int resolveBjtSubstrateNode(const QHash<QString, int>& normalizedPinToNode, int emitterNode) {
+    static const QStringList substrateAliases = {
+        "4", "S", "SUB", "SUBSTRATE", "BULK"
+    };
+    for (const QString& alias : substrateAliases) {
+        auto it = normalizedPinToNode.find(alias);
+        if (it != normalizedPinToNode.end()) {
+            return *it;
+        }
+    }
+    return emitterNode;
+}
+
 using PinRoleAliases = QList<QStringList>;
 
 PinRoleAliases pinOrderAliasesFor(const SimComponentInstance& inst, const ECOComponent& comp) {
@@ -1324,6 +1337,10 @@ SimNetlist SimSchematicBridge::buildNetlist(QGraphicsScene* scene, NetManager* n
         if ((inst.type == SimComponentType::MOSFET_NMOS || inst.type == SimComponentType::MOSFET_PMOS) &&
             inst.nodes.size() == 3) {
             inst.nodes.push_back(resolveMosBodyNode(normalizedPinToNode, inst.nodes[2]));
+        }
+        if ((inst.type == SimComponentType::BJT_NPN || inst.type == SimComponentType::BJT_PNP) &&
+            inst.nodes.size() == 3) {
+            inst.nodes.push_back(resolveBjtSubstrateNode(normalizedPinToNode, inst.nodes[2]));
         }
 
         // Parse value
