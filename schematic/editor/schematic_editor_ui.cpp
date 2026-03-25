@@ -512,6 +512,7 @@ void SchematicEditor::createToolBar() {
     QMenu* fileMenu = mainAppMenu->addMenu("&File");
     fileMenu->addAction(createComponentIcon("New"), "New Schematic", this, &SchematicEditor::onNewSchematic, QKeySequence::New);
     fileMenu->addAction(createComponentIcon("Open"), "Open Schematic...", this, &SchematicEditor::onOpenSchematic, QKeySequence::Open);
+    fileMenu->addAction(createComponentIcon("Open"), "Import ASC File...", this, &SchematicEditor::onImportAscFile);
     fileMenu->addAction(createComponentIcon("Save"), "Save Schematic", this, &SchematicEditor::onSaveSchematic, QKeySequence::Save);
     fileMenu->addSeparator();
     fileMenu->addAction(createComponentIcon("New Symbol"), "Create New Symbol", this, &SchematicEditor::onOpenSymbolEditor);

@@ -1,4 +1,5 @@
 #include "schematic_file_io.h"
+#include "ltspice_asc_importer.h"
 #include "flux/core/net_manager.h"
 #include "core/diagnostics/runtime_diagnostics.h"
 #include "schematic_item.h"
@@ -181,6 +182,21 @@ bool SchematicFileIO::loadSchematic(QGraphicsScene* scene, const QString& filePa
         filePath.endsWith(".SchDoc", Qt::CaseInsensitive)) {
         s_lastError = "Importing this file format is not yet supported.";
         return false;
+    }
+
+    if (filePath.endsWith(".asc", Qt::CaseInsensitive)) {
+        scene->clear();
+        QString importedPageSize;
+        if (!LtspiceAscImporter::importFile(scene, filePath, importedPageSize, &s_lastError)) {
+            return false;
+        }
+        pageSize = importedPageSize.isEmpty() ? "A4" : importedPageSize;
+        titleBlock = TitleBlockData();
+        if (script) *script = QString();
+        if (busAliases) busAliases->clear();
+        if (ercExclusions) ercExclusions->clear();
+        if (simulationSetup) *simulationSetup = QJsonObject();
+        return true;
     }
     
     QFile file(filePath);

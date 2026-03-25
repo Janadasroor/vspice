@@ -450,9 +450,36 @@ void SchematicEditor::onOpenSchematic() {
     
     QString filePath = QFileDialog::getOpenFileName(
         this, "Open Schematic", QString(),
-        "viospice Schematic (*.flxsch *.flux *.sch);;FluxScript (*.flux);;KiCad Schematic (*.kicad_sch);;Altium Schematic (*.SchDoc);;All Files (*)"
+        "viospice Schematic (*.flxsch *.flux *.sch *.asc);;LTspice Schematic (*.asc);;FluxScript (*.flux);;KiCad Schematic (*.kicad_sch);;Altium Schematic (*.SchDoc);;All Files (*)"
     );
     if (filePath.isEmpty()) return;
+    m_navigationStack.clear();
+    openFile(filePath);
+}
+
+void SchematicEditor::onImportAscFile() {
+    if (m_isModified) {
+        QMessageBox::StandardButton reply = QMessageBox::question(
+            this, "Unsaved Changes",
+            "Do you want to save changes before importing an ASC schematic?",
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel
+        );
+        if (reply == QMessageBox::Save) {
+            onSaveSchematic();
+            if (m_isModified) return;
+        } else if (reply == QMessageBox::Cancel) {
+            return;
+        }
+    }
+
+    const QString filePath = QFileDialog::getOpenFileName(
+        this,
+        "Import LTspice ASC",
+        QString(),
+        "LTspice Schematic (*.asc);;All Files (*)"
+    );
+    if (filePath.isEmpty()) return;
+
     m_navigationStack.clear();
     openFile(filePath);
 }

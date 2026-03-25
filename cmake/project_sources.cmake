@@ -316,6 +316,8 @@ set(SCHEMATIC_SOURCES
     # I/O
     schematic/io/schematic_file_io.cpp
     schematic/io/schematic_file_io.h
+    schematic/io/ltspice_asc_importer.cpp
+    schematic/io/ltspice_asc_importer.h
     schematic/io/netlist_generator.cpp
     schematic/io/netlist_generator.h
     schematic/io/spice_netlist_parser.cpp

@@ -491,13 +491,51 @@ void SchematicView::mousePressEvent(QMouseEvent *event) {
                 event->accept();
                 return;
             } else {
-                // Not over a wire/label, check for component body (Current Probe)
+                // Not over a wire/label, check for component body
                 SchematicItem* compItem = findProbeableComponentAt(this, event->pos(), scenePos);
+                const bool powerHeld = event->modifiers() & Qt::AltModifier;
+                const bool ctrlHeld = event->modifiers() & Qt::ControlModifier;
 
+                // Try voltage probe first (but not when Alt held = power probe intent)
+                QString bodyNet;
+                if (!powerHeld && m_netManager) {
+                    bodyNet = m_netManager->findNetAtPoint(scenePos);
+                    // If nets are stale, refresh once on-demand
+                    if (bodyNet.isEmpty() && compItem) {
+                        m_netManager->updateNets(scene());
+                        bodyNet = m_netManager->findNetAtPoint(scenePos);
+                    }
+                }
+
+                if (!bodyNet.isEmpty()) {
+                    // Voltage probe on net at/under component body
+                    if (!m_probeStartNet.isEmpty()) {
+                        if (bodyNet != m_probeStartNet) {
+                            emit netProbed(QString("V(%1,%2)").arg(m_probeStartNet, bodyNet));
+                        } else {
+                            emit netProbed(QString("V(%1)").arg(bodyNet));
+                        }
+                        m_probeStartNet.clear();
+                        clearProbeStartMarker();
+                    } else if (ctrlHeld) {
+                        m_probeStartNet = bodyNet;
+                        m_probeStartPos = scenePos;
+                        showProbeStartMarker(scenePos);
+                        setProbeCursorOverlay(SchematicProbeTool::ProbeKind::Current, scenePos);
+                        event->accept();
+                        return;
+                    } else {
+                        emit netProbed(QString("V(%1)").arg(bodyNet));
+                    }
+                    setProbeCursorOverlay(SchematicProbeTool::ProbeKind::Voltage, scenePos);
+                    event->accept();
+                    return;
+                }
+
+                // Fallback: current/power probe on the component itself
                 if (compItem) {
                     QString ref = compItem->reference();
                     if (!ref.isEmpty()) {
-                        const bool powerHeld = event->modifiers() & Qt::AltModifier;
                         emit netProbed(QString("%1(%2)").arg(powerHeld ? "P" : "I", ref));
                         setProbeCursorOverlay(powerHeld ? SchematicProbeTool::ProbeKind::Power
                                                         : SchematicProbeTool::ProbeKind::Current,

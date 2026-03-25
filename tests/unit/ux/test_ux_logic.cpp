@@ -8,6 +8,7 @@
 #include "../../../schematic/analysis/schematic_connectivity.h"
 #include "../../../schematic/tools/schematic_tool_registry_builtin.h"
 #include "../../../schematic/dialogs/smart_properties_dialog.h"
+#include "../../../schematic/io/schematic_file_io.h"
 #include "../../../core/config_manager.h"
 #include "../../../symbols/models/symbol_definition.h"
 #include "../../../symbols/models/symbol_primitive.h"
@@ -15,6 +16,8 @@
 #include <QRegularExpression>
 #include <QGraphicsScene>
 #include <QSignalSpy>
+#include <QDir>
+#include <QFileInfo>
 
 namespace {
 
@@ -111,6 +114,14 @@ bool containsPointNear(const QList<QPointF>& points, const QPointF& target, qrea
         if (QLineF(p, target).length() <= eps) return true;
     }
     return false;
+}
+
+QString repoRootFromThisFile() {
+    QDir dir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath());
+    dir.cdUp(); // ux
+    dir.cdUp(); // unit
+    dir.cdUp(); // tests
+    return dir.absolutePath();
 }
 
 } // namespace
@@ -995,6 +1006,87 @@ private slots:
             QVERIFY2(alignedToGrid(pinScene.x()), "NMOS pin X must be grid aligned.");
             QVERIFY2(alignedToGrid(pinScene.y()), "NMOS pin Y must be grid aligned.");
         }
+    }
+
+    void testLtspiceAscImport_BasicFixture() {
+        QGraphicsScene scene;
+        QString pageSize;
+        TitleBlockData titleBlock;
+
+        const QString path = repoRootFromThisFile() + "/tests/examples/Educational/2ndOrderAllpass.asc";
+        QString script;
+        QMap<QString, QList<QString>> busAliases;
+        QSet<QString> ercExclusions;
+
+        QVERIFY2(SchematicFileIO::loadSchematic(&scene, path, pageSize, titleBlock, &script, &busAliases, &ercExclusions),
+                 qPrintable(SchematicFileIO::lastError()));
+
+        int wireCount = 0;
+        int directiveCount = 0;
+        int componentCount = 0;
+        for (QGraphicsItem* it : scene.items()) {
+            if (auto* s = dynamic_cast<SchematicItem*>(it)) {
+                if (s->itemType() == SchematicItem::WireType) ++wireCount;
+                if (s->itemType() == SchematicItem::SpiceDirectiveType) ++directiveCount;
+                if (s->itemType() == SchematicItem::ComponentType ||
+                    s->itemType() == SchematicItem::PowerType ||
+                    s->itemType() == SchematicItem::VoltageSourceType ||
+                    s->itemType() == SchematicItem::CurrentSourceType ||
+                    s->itemType() == SchematicItem::TransistorType ||
+                    s->itemType() == SchematicItem::DiodeType) {
+                    ++componentCount;
+                }
+            }
+        }
+
+        QVERIFY(wireCount > 10);
+        QVERIFY(directiveCount >= 1);
+        QVERIFY(componentCount > 3);
+    }
+
+    void testLtspiceAscImport_ShapeAndPortTokens() {
+        QGraphicsScene scene;
+        QString pageSize;
+        TitleBlockData titleBlock;
+
+        const QString root = repoRootFromThisFile();
+        const QString arcAndShapesPath = root + "/tests/examples/Applications/LT3086.asc";
+        const QString ioPinPath = root + "/tests/examples/Applications/AD4130-8.asc";
+
+        QString script;
+        QMap<QString, QList<QString>> busAliases;
+        QSet<QString> ercExclusions;
+
+        QVERIFY2(SchematicFileIO::loadSchematic(&scene, arcAndShapesPath, pageSize, titleBlock, &script, &busAliases, &ercExclusions),
+                 qPrintable(SchematicFileIO::lastError()));
+
+        int shapeCount = 0;
+        for (QGraphicsItem* it : scene.items()) {
+            if (auto* s = dynamic_cast<SchematicItem*>(it)) {
+                if (s->itemTypeName() == "Rectangle" || s->itemTypeName() == "Circle" || s->itemTypeName() == "Line") {
+                    ++shapeCount;
+                }
+            }
+        }
+        QVERIFY(shapeCount > 0);
+
+        scene.clear();
+        pageSize.clear();
+        titleBlock = TitleBlockData();
+        script.clear();
+        busAliases.clear();
+        ercExclusions.clear();
+
+        QVERIFY2(SchematicFileIO::loadSchematic(&scene, ioPinPath, pageSize, titleBlock, &script, &busAliases, &ercExclusions),
+                 qPrintable(SchematicFileIO::lastError()));
+
+        int portCount = 0;
+        for (QGraphicsItem* it : scene.items()) {
+            if (auto* s = dynamic_cast<SchematicItem*>(it)) {
+                if (s->itemType() == SchematicItem::HierarchicalPortType) ++portCount;
+            }
+        }
+        QVERIFY(portCount > 0);
     }
 };
 

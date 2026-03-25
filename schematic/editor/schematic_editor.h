@@ -68,6 +68,7 @@ private slots:
     void onToolSelected();
     void onNewSchematic();
     void onOpenSchematic();
+    void onImportAscFile();
     void onSaveSchematic();
     void onSaveSchematicAs();
     void onZoomIn();

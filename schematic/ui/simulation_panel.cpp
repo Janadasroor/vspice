@@ -224,11 +224,18 @@ QStringList SimulationPanel::connectedNetsForItem(SchematicItem* item) const {
     QSet<QString> seen;
     const qreal pinTolerance = 2.0;
 
-    for (const QPointF& pinLocal : item->connectionPoints()) {
-        const QPointF pinScene = item->mapToScene(pinLocal);
-        const QString net = m_netManager->findNetAtPoint(pinScene).trimmed();
+    const QList<QPointF> pins = item->connectionPoints();
+    for (int i = 0; i < pins.size(); ++i) {
+        const QPointF pinScene = item->mapToScene(pins[i]);
+        QString net = m_netManager->findNetAtPoint(pinScene).trimmed();
+
+        // Fallback: use pinNet if findNetAtPoint returned nothing
+        if (net.isEmpty()) {
+            net = item->pinNet(i).trimmed();
+        }
         if (net.isEmpty()) continue;
 
+        // Verify this pin belongs to the item
         const QList<NetConnection> conns = m_netManager->getConnections(net);
         bool pinBelongsToItem = false;
         for (const auto& conn : conns) {
@@ -238,6 +245,11 @@ QStringList SimulationPanel::connectedNetsForItem(SchematicItem* item) const {
                 break;
             }
         }
+        // Fallback: trust findNetAtPoint/pinNet even if connection verification fails
+        if (!pinBelongsToItem && !net.isEmpty()) {
+            pinBelongsToItem = true;
+        }
+
         if (!pinBelongsToItem) continue;
 
         const QString canonicalNet = net.toUpper();
@@ -250,7 +262,7 @@ QStringList SimulationPanel::connectedNetsForItem(SchematicItem* item) const {
 
 bool SimulationPanel::buildDerivedPowerWaveform(const QString& signalName, QVector<double>& time, QVector<double>& values) const {
     if (!signalName.startsWith("P(", Qt::CaseInsensitive) || !signalName.endsWith(")")) return false;
-    if (!m_scene) return false;
+    if (!m_scene) { qWarning() << "buildDerivedPowerWaveform: no scene"; return false; }
 
     const QString ref = signalName.mid(2, signalName.length() - 3).trimmed();
     if (ref.isEmpty()) return false;
@@ -264,10 +276,10 @@ bool SimulationPanel::buildDerivedPowerWaveform(const QString& signalName, QVect
             break;
         }
     }
-    if (!targetItem) return false;
+    if (!targetItem) { qWarning() << "buildDerivedPowerWaveform: no item with ref" << ref; return false; }
 
     const QStringList nets = connectedNetsForItem(targetItem);
-    if (nets.size() < 2) return false;
+    if (nets.size() < 2) { qWarning() << "buildDerivedPowerWaveform:" << ref << "has" << nets.size() << "nets, need >= 2"; return false; }
 
     const SimWaveform* currentWave = nullptr;
     const SimWaveform* posWave = nullptr;
@@ -282,7 +294,13 @@ bool SimulationPanel::buildDerivedPowerWaveform(const QString& signalName, QVect
         if (!posWave && (wName.compare(posName, Qt::CaseInsensitive) == 0 || wName.compare(nets.value(0), Qt::CaseInsensitive) == 0)) posWave = &w;
         if (!negWave && (wName.compare(negName, Qt::CaseInsensitive) == 0 || wName.compare(nets.value(1), Qt::CaseInsensitive) == 0)) negWave = &w;
     }
-    if (!currentWave || !posWave || !negWave) return false;
+    if (!currentWave || !posWave || !negWave) {
+        qWarning() << "buildDerivedPowerWaveform:" << ref
+                   << "current=" << (currentWave ? "OK" : "MISSING")
+                   << "pos=" << (posWave ? "OK" : "MISSING") << "(" << posName << ")"
+                   << "neg=" << (negWave ? "OK" : "MISSING") << "(" << negName << ")";
+        return false;
+    }
 
     const size_t count = std::min({currentWave->xData.size(), currentWave->yData.size(), posWave->yData.size(), negWave->yData.size()});
     if (count == 0) return false;

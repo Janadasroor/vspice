@@ -45,7 +45,7 @@ viospice.exe
 *.flxsch.bak
 test_netlist.cir
 test_schematic.sch
-
+tests/examples/*
 # Local Config
 local_config.h
 build_log.txt
