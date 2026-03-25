@@ -54,6 +54,7 @@
 #include <QProgressDialog>
 #include <QRegularExpression>
 #include <QVector>
+#include <QtCore/QSet>
 
 namespace {
 QString decodeSpiceText(const QByteArray& raw) {
@@ -101,6 +102,89 @@ QString decodeSpiceText(const QByteArray& raw) {
     if (evenZeros > n / 8) return decodeUtf16Be(raw, 0);
 
     return QString::fromUtf8(raw);
+}
+
+bool importStandardPassiveModelFile(QWidget* parent,
+                                    const QString& srcFile,
+                                    const QString& title,
+                                    const QString& outputLibName,
+                                    const QSet<QString>& acceptedTypeTokens,
+                                    const QString& readableTypeName) {
+    QFile file(srcFile);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(parent, title, "Cannot open file:\n" + srcFile);
+        return false;
+    }
+    const QString content = decodeSpiceText(file.readAll());
+    file.close();
+
+    QStringList logicalLines;
+    for (const QString& raw : content.split('\n')) {
+        const QString t = raw.trimmed();
+        if (t.isEmpty()) continue;
+        if (!logicalLines.isEmpty() && t.startsWith('+')) {
+            logicalLines.last().append(' ' + t.mid(1).trimmed());
+        } else {
+            logicalLines.append(raw);
+        }
+    }
+
+    const QRegularExpression modelHeadRe(
+        R"(^\s*[\x{FEFF}]*\.model\s+(\S+)\s+([^\s(]+))",
+        QRegularExpression::CaseInsensitiveOption);
+
+    QStringList models;
+    int modelLines = 0;
+    for (const QString& line : logicalLines) {
+        const QString trimmed = line.trimmed();
+        const QRegularExpressionMatch headMatch = modelHeadRe.match(trimmed);
+        if (!headMatch.hasMatch()) continue;
+        modelLines++;
+        const QString typeToken = headMatch.captured(2).trimmed().toLower();
+        if (!acceptedTypeTokens.contains(typeToken)) continue;
+        models.append(trimmed);
+    }
+
+    if (models.isEmpty()) {
+        QMessageBox::information(
+            parent,
+            title,
+            QString("No %1 .model lines found in file.\n\nDetected .model lines: %2")
+                .arg(readableTypeName)
+                .arg(modelLines));
+        return false;
+    }
+
+    const QString defaultDst = QDir::homePath() + "/ViospiceLib/lib";
+    QDir().mkpath(defaultDst);
+    const QString outputPath = QDir(defaultDst).filePath(outputLibName);
+
+    QFile out(outputPath);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        QMessageBox::warning(parent, title, "Cannot write file:\n" + outputPath);
+        return false;
+    }
+
+    QTextStream ts(&out);
+    ts << "* " << outputLibName << " - Imported from " << QFileInfo(srcFile).fileName() << "\n";
+    ts << "* Type: " << readableTypeName << "\n";
+    ts << "* Count: " << models.size() << " models\n";
+    ts << "*\n";
+    for (const QString& model : models) {
+        ts << model << "\n";
+    }
+    out.close();
+
+    ModelLibraryManager::instance().reload();
+
+    QMessageBox::information(
+        parent,
+        title,
+        QString("Imported %1 models from:\n%2\n\nInto:\n%3")
+            .arg(models.size())
+            .arg(srcFile)
+            .arg(outputPath));
+    return true;
 }
 }
 
@@ -319,6 +403,8 @@ QWidget* ProjectManager::createLauncherArea() {
     createAndStoreTile("JFET Model Import", "Import LTspice .jft model libraries (NJF/PJF)", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceJfetModels);
     createAndStoreTile("BJT Model Import", "Import LTspice .bjt model libraries (NPN/PNP)", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceBjtModels);
     createAndStoreTile("MOS Model Import", "Import LTspice .mos model libraries (NMOS/PMOS)", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceMosModels);
+    createAndStoreTile("Resistor Model Import", "Import LTspice standard.res resistor models", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceResistorModels);
+    createAndStoreTile("Capacitor Model Import", "Import LTspice standard.cap capacitor models", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceCapacitorModels);
     createAndStoreTile("SPICE Model Manager", "Manage simulation models and subcircuit libraries", ":/icons/toolbar_netlist.png", &ProjectManager::openSpiceModelManager);
     createAndStoreTile("Calculator Tools", "Resistance, trace width, and impedance calculators", ":/icons/calculator_tools.png", &ProjectManager::openCalculatorTools);
     createAndStoreTile("Plugins Manager", "Manage extensions, importers, and add-ons", ":/icons/plugins_manager.png", &ProjectManager::openPluginsManager);
@@ -1761,6 +1847,40 @@ void ProjectManager::importLtspiceMosModels() {
     for (const QString& w : written) msg += "  " + w + "\n";
 
     QMessageBox::information(this, "MOS Model Import", msg);
+}
+
+void ProjectManager::importLtspiceResistorModels() {
+    const QString srcFile = QDir::homePath() + "/Documents/ltspice/cmp/standard.res";
+    if (!QFileInfo::exists(srcFile)) {
+        QMessageBox::warning(this,
+                             "Resistor Model Import",
+                             QString("Source file not found:\n%1").arg(srcFile));
+        return;
+    }
+
+    importStandardPassiveModelFile(this,
+                                   srcFile,
+                                   "Resistor Model Import",
+                                   "resistors_standard.lib",
+                                   QSet<QString>{"r", "res", "resistor"},
+                                   "Resistor");
+}
+
+void ProjectManager::importLtspiceCapacitorModels() {
+    const QString srcFile = QDir::homePath() + "/Documents/ltspice/cmp/standard.cap";
+    if (!QFileInfo::exists(srcFile)) {
+        QMessageBox::warning(this,
+                             "Capacitor Model Import",
+                             QString("Source file not found:\n%1").arg(srcFile));
+        return;
+    }
+
+    importStandardPassiveModelFile(this,
+                                   srcFile,
+                                   "Capacitor Model Import",
+                                   "capacitors_standard.lib",
+                                   QSet<QString>{"c", "cap", "capacitor"},
+                                   "Capacitor");
 }
 
 void ProjectManager::onSettings() {

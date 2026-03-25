@@ -33,6 +33,7 @@
 #include "../dialogs/bus_properties_dialog.h"
 #include "../dialogs/net_label_properties_dialog.h"
 #include "../dialogs/passive_properties_dialog.h"
+#include "../dialogs/passive_model_properties_dialog.h"
 #include "../dialogs/generic_symbol_properties_dialog.h"
 #include "../dialogs/schematic_text_properties_dialog.h"
 #include "../dialogs/voltage_source_properties_dialog.h"
@@ -730,8 +731,23 @@ void SchematicEditor::onItemDoubleClicked(SchematicItem* item) {
             return;
         }
     } else if (item->itemType() == SchematicItem::ResistorType ||
-               item->itemType() == SchematicItem::CapacitorType ||
-               item->itemType() == SchematicItem::InductorType) {
+               item->itemType() == SchematicItem::CapacitorType) {
+        const PassiveModelPropertiesDialog::Kind kind =
+            (item->itemType() == SchematicItem::ResistorType)
+                ? PassiveModelPropertiesDialog::Kind::Resistor
+                : PassiveModelPropertiesDialog::Kind::Capacitor;
+        PassiveModelPropertiesDialog dlg(item, kind, this);
+        if (dlg.exec() == QDialog::Accepted) {
+            QJsonObject newState = item->toJson();
+            newState["reference"] = dlg.reference();
+            newState["value"] = dlg.valueText();
+            newState["spiceModel"] = dlg.spiceModel();
+            newState["excludeFromSim"] = dlg.excludeFromSimulation();
+            newState["excludeFromPcb"] = dlg.excludeFromPcb();
+            m_undoStack->push(new BulkChangePropertyCommand(m_scene, item, newState));
+        }
+        return;
+    } else if (item->itemType() == SchematicItem::InductorType) {
         PassivePropertiesDialog dlg(item, m_undoStack, m_scene, this);
         dlg.exec();
         return;
@@ -819,6 +835,35 @@ void SchematicEditor::onItemDoubleClicked(SchematicItem* item) {
                item->itemType() == SchematicItem::DiodeType ||
                item->itemType() == SchematicItem::CustomType ||
                item->itemType() == SchematicItem::PowerType) {
+
+        const QString prefix = item->referencePrefix().trimmed().toUpper();
+        const QString typeNameLower = item->itemTypeName().trimmed().toLower();
+        if (prefix == "R" || typeNameLower == "resistor") {
+            PassiveModelPropertiesDialog dlg(item, PassiveModelPropertiesDialog::Kind::Resistor, this);
+            if (dlg.exec() == QDialog::Accepted) {
+                QJsonObject newState = item->toJson();
+                newState["reference"] = dlg.reference();
+                newState["value"] = dlg.valueText();
+                newState["spiceModel"] = dlg.spiceModel();
+                newState["excludeFromSim"] = dlg.excludeFromSimulation();
+                newState["excludeFromPcb"] = dlg.excludeFromPcb();
+                m_undoStack->push(new BulkChangePropertyCommand(m_scene, item, newState));
+            }
+            return;
+        }
+        if (prefix == "C" || typeNameLower == "capacitor") {
+            PassiveModelPropertiesDialog dlg(item, PassiveModelPropertiesDialog::Kind::Capacitor, this);
+            if (dlg.exec() == QDialog::Accepted) {
+                QJsonObject newState = item->toJson();
+                newState["reference"] = dlg.reference();
+                newState["value"] = dlg.valueText();
+                newState["spiceModel"] = dlg.spiceModel();
+                newState["excludeFromSim"] = dlg.excludeFromSimulation();
+                newState["excludeFromPcb"] = dlg.excludeFromPcb();
+                m_undoStack->push(new BulkChangePropertyCommand(m_scene, item, newState));
+            }
+            return;
+        }
         
         if (item->itemTypeName().compare("csw", Qt::CaseInsensitive) == 0) {
             CSWPropertiesDialog dlg(item, this);
@@ -1128,8 +1173,26 @@ void SchematicEditor::onSelectionDoubleClicked(const QList<SchematicItem*>& item
             }
             return;
         } else if (commonType == SchematicItem::ResistorType ||
-                   commonType == SchematicItem::CapacitorType ||
-                   commonType == SchematicItem::InductorType) {
+                   commonType == SchematicItem::CapacitorType) {
+            const PassiveModelPropertiesDialog::Kind kind =
+                (commonType == SchematicItem::ResistorType)
+                    ? PassiveModelPropertiesDialog::Kind::Resistor
+                    : PassiveModelPropertiesDialog::Kind::Capacitor;
+            PassiveModelPropertiesDialog dlg(items.first(), kind, this);
+            if (dlg.exec() == QDialog::Accepted) {
+                m_undoStack->beginMacro("Update Passive Component Properties");
+                for (SchematicItem* it : items) {
+                    QJsonObject newState = it->toJson();
+                    newState["value"] = dlg.valueText();
+                    newState["spiceModel"] = dlg.spiceModel();
+                    newState["excludeFromSim"] = dlg.excludeFromSimulation();
+                    newState["excludeFromPcb"] = dlg.excludeFromPcb();
+                    m_undoStack->push(new BulkChangePropertyCommand(m_scene, it, newState));
+                }
+                m_undoStack->endMacro();
+            }
+            return;
+        } else if (commonType == SchematicItem::InductorType) {
             PassivePropertiesDialog dlg(items.first(), m_undoStack, m_scene, this);
             dlg.exec();
             return;

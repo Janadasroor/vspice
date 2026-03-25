@@ -123,6 +123,10 @@ set(SCHEMATIC_SOURCES
     schematic/dialogs/wire_properties_dialog.h
     schematic/dialogs/passive_properties_dialog.cpp
     schematic/dialogs/passive_properties_dialog.h
+    schematic/dialogs/passive_model_properties_dialog.cpp
+    schematic/dialogs/passive_model_properties_dialog.h
+    schematic/dialogs/passive_model_picker_dialog.cpp
+    schematic/dialogs/passive_model_picker_dialog.h
     schematic/dialogs/schematic_text_properties_dialog.cpp
     schematic/dialogs/schematic_text_properties_dialog.h
     schematic/dialogs/sheet_properties_dialog.cpp

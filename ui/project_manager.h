@@ -51,6 +51,8 @@ private slots:
     void importLtspiceJfetModels();
     void importLtspiceBjtModels();
     void importLtspiceMosModels();
+    void importLtspiceResistorModels();
+    void importLtspiceCapacitorModels();
     void onSettings();
     void showAbout();
     void showHelp();

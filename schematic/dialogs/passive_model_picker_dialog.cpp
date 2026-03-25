@@ -1,0 +1,205 @@
+#include "passive_model_picker_dialog.h"
+
+#include "../../core/theme_manager.h"
+#include "../../simulator/bridge/model_library_manager.h"
+
+#include <QDialogButtonBox>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QRegularExpression>
+#include <QVBoxLayout>
+
+namespace {
+
+QString decodeSpiceText(const QByteArray& raw) {
+    if (raw.isEmpty()) return QString();
+    if (raw.size() >= 2) {
+        const unsigned char b0 = static_cast<unsigned char>(raw[0]);
+        const unsigned char b1 = static_cast<unsigned char>(raw[1]);
+        if ((b0 == 0xFF && b1 == 0xFE) || (b0 == 0xFE && b1 == 0xFF)) {
+            return QString::fromUtf16(reinterpret_cast<const char16_t*>(raw.constData() + 2), (raw.size() - 2) / 2);
+        }
+    }
+    return QString::fromUtf8(raw);
+}
+
+QStringList loadLogicalLines(const QString& filePath) {
+    QFile f(filePath);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
+    const QString content = decodeSpiceText(f.readAll());
+    f.close();
+
+    QStringList logical;
+    for (const QString& raw : content.split('\n')) {
+        const QString t = raw.trimmed();
+        if (t.isEmpty()) continue;
+        if (!logical.isEmpty() && t.startsWith('+')) {
+            logical.last().append(' ' + t.mid(1).trimmed());
+        } else {
+            logical.append(raw);
+        }
+    }
+    return logical;
+}
+
+QString kindName(PassiveModelPickerDialog::Kind kind) {
+    return kind == PassiveModelPickerDialog::Kind::Resistor ? "Resistor" : "Capacitor";
+}
+
+QStringList acceptedTypeTokens(PassiveModelPickerDialog::Kind kind) {
+    if (kind == PassiveModelPickerDialog::Kind::Resistor) {
+        return {"r", "res", "resistor"};
+    }
+    return {"c", "cap", "capacitor"};
+}
+
+QStringList preferredFiles(PassiveModelPickerDialog::Kind kind) {
+    const QString home = QDir::homePath();
+    if (kind == PassiveModelPickerDialog::Kind::Resistor) {
+        return {
+            home + "/ViospiceLib/lib/resistors_standard.lib",
+            home + "/Documents/ltspice/cmp/standard.res"
+        };
+    }
+    return {
+        home + "/ViospiceLib/lib/capacitors_standard.lib",
+        home + "/Documents/ltspice/cmp/standard.cap"
+    };
+}
+
+} // namespace
+
+PassiveModelPickerDialog::PassiveModelPickerDialog(Kind kind, QWidget* parent)
+    : QDialog(parent), m_kind(kind) {
+    setWindowTitle(QString("Pick %1 Model").arg(kindName(kind)));
+    setModal(true);
+    setMinimumSize(520, 400);
+
+    auto* layout = new QVBoxLayout(this);
+    auto* searchLayout = new QHBoxLayout();
+    searchLayout->addWidget(new QLabel("Search:"));
+    m_searchEdit = new QLineEdit();
+    m_searchEdit->setPlaceholderText("Filter models by name...");
+    searchLayout->addWidget(m_searchEdit);
+    layout->addLayout(searchLayout);
+
+    m_modelList = new QListWidget();
+    m_modelList->setAlternatingRowColors(true);
+    layout->addWidget(m_modelList);
+
+    m_detailLabel = new QLabel("Select a model");
+    m_detailLabel->setStyleSheet("color: #888; font-size: 11px; padding: 4px;");
+    m_detailLabel->setWordWrap(true);
+    layout->addWidget(m_detailLabel);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(buttons, &QDialogButtonBox::accepted, this, &PassiveModelPickerDialog::applySelected);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    connect(m_searchEdit, &QLineEdit::textChanged, this, &PassiveModelPickerDialog::filterModels);
+    connect(m_modelList, &QListWidget::itemDoubleClicked, this, &PassiveModelPickerDialog::onModelSelected);
+    connect(m_modelList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* current) {
+        if (current) {
+            m_detailLabel->setText(current->data(Qt::UserRole + 1).toString());
+        }
+    });
+
+    if (ThemeManager::theme()) {
+        setStyleSheet(ThemeManager::theme()->widgetStylesheet());
+    }
+
+    loadModels();
+}
+
+void PassiveModelPickerDialog::loadModels() {
+    m_modelList->clear();
+
+    const QStringList accepted = acceptedTypeTokens(m_kind);
+    const QRegularExpression headRe(R"(^\s*\.model\s+(\S+)\s+([^\s(]+))", QRegularExpression::CaseInsensitiveOption);
+
+    QSet<QString> seen;
+    for (const QString& filePath : preferredFiles(m_kind)) {
+        if (!QFileInfo::exists(filePath)) continue;
+        const QStringList lines = loadLogicalLines(filePath);
+        for (const QString& line : lines) {
+            const QString trimmed = line.trimmed();
+            const auto m = headRe.match(trimmed);
+            if (!m.hasMatch()) continue;
+            const QString modelName = m.captured(1).trimmed();
+            const QString typeTok = m.captured(2).trimmed().toLower();
+            if (!accepted.contains(typeTok)) continue;
+            if (modelName.isEmpty()) continue;
+            if (seen.contains(modelName.toLower())) continue;
+            seen.insert(modelName.toLower());
+
+            auto* item = new QListWidgetItem(modelName);
+            item->setData(Qt::UserRole, modelName);
+            item->setData(Qt::UserRole + 1, QString("%1\nLibrary: %2\n%3")
+                                           .arg(modelName,
+                                                QFileInfo(filePath).fileName(),
+                                                trimmed));
+            m_modelList->addItem(item);
+        }
+    }
+
+    if (m_modelList->count() == 0) {
+        const QVector<SpiceModelInfo> allModels = ModelLibraryManager::instance().allModels();
+        const QString hint = (m_kind == Kind::Resistor) ? "res" : "cap";
+        for (const auto& mi : allModels) {
+            const QString lib = QFileInfo(mi.libraryPath).fileName().toLower();
+            if (!lib.contains(hint)) continue;
+            if (seen.contains(mi.name.toLower())) continue;
+            seen.insert(mi.name.toLower());
+
+            auto* item = new QListWidgetItem(mi.name);
+            item->setData(Qt::UserRole, mi.name);
+            item->setData(Qt::UserRole + 1,
+                          QString("%1\nLibrary: %2\nType: %3\nParams: %4")
+                              .arg(mi.name,
+                                   QFileInfo(mi.libraryPath).fileName(),
+                                   mi.type,
+                                   mi.params.join(", ")));
+            m_modelList->addItem(item);
+        }
+    }
+
+    if (m_modelList->count() > 0) {
+        m_modelList->setCurrentRow(0);
+    } else {
+        m_detailLabel->setText(QString("No %1 models found. Import standard.%2 first.")
+                                   .arg(kindName(m_kind).toLower(),
+                                        m_kind == Kind::Resistor ? "res" : "cap"));
+    }
+}
+
+void PassiveModelPickerDialog::filterModels(const QString& text) {
+    for (int i = 0; i < m_modelList->count(); ++i) {
+        QListWidgetItem* item = m_modelList->item(i);
+        const bool match = text.isEmpty() || item->text().contains(text, Qt::CaseInsensitive);
+        item->setHidden(!match);
+    }
+}
+
+void PassiveModelPickerDialog::onModelSelected(QListWidgetItem* item) {
+    if (!item) return;
+    m_selectedModel = item->data(Qt::UserRole).toString();
+    accept();
+}
+
+void PassiveModelPickerDialog::applySelected() {
+    QListWidgetItem* item = m_modelList->currentItem();
+    if (item) {
+        m_selectedModel = item->data(Qt::UserRole).toString();
+    }
+    accept();
+}
+
+QString PassiveModelPickerDialog::selectedModel() const {
+    return m_selectedModel;
+}
