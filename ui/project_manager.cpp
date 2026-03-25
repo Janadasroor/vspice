@@ -406,6 +406,7 @@ QWidget* ProjectManager::createLauncherArea() {
     createAndStoreTile("Resistor Model Import", "Import LTspice standard.res resistor models", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceResistorModels);
     createAndStoreTile("Capacitor Model Import", "Import LTspice standard.cap capacitor models", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceCapacitorModels);
     createAndStoreTile("Inductor Model Import", "Import LTspice standard.ind inductor models", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceInductorModels);
+    createAndStoreTile("Import Standard Passives", "Import standard.res, standard.cap, and standard.ind in one run", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceStandardPassiveModels);
     createAndStoreTile("SPICE Model Manager", "Manage simulation models and subcircuit libraries", ":/icons/toolbar_netlist.png", &ProjectManager::openSpiceModelManager);
     createAndStoreTile("Calculator Tools", "Resistance, trace width, and impedance calculators", ":/icons/calculator_tools.png", &ProjectManager::openCalculatorTools);
     createAndStoreTile("Plugins Manager", "Manage extensions, importers, and add-ons", ":/icons/plugins_manager.png", &ProjectManager::openPluginsManager);
@@ -1189,6 +1190,7 @@ void ProjectManager::createMenuBar() {
     importersMenu->addAction("Resistor Models (standard.res)", this, &ProjectManager::importLtspiceResistorModels);
     importersMenu->addAction("Capacitor Models (standard.cap)", this, &ProjectManager::importLtspiceCapacitorModels);
     importersMenu->addAction("Inductor Models (standard.ind)", this, &ProjectManager::importLtspiceInductorModels);
+    importersMenu->addAction("Import Standard Passive Models", this, &ProjectManager::importLtspiceStandardPassiveModels);
 
     QMenu* prefsMenu = menuBar()->addMenu("&Preferences");
     prefsMenu->addAction("Settings", this, &ProjectManager::onSettings);
@@ -1909,6 +1911,12 @@ void ProjectManager::importLtspiceInductorModels() {
                                    "inductors_standard.lib",
                                    QSet<QString>{"l", "ind", "inductor"},
                                    "Inductor");
+}
+
+void ProjectManager::importLtspiceStandardPassiveModels() {
+    importLtspiceResistorModels();
+    importLtspiceCapacitorModels();
+    importLtspiceInductorModels();
 }
 
 void ProjectManager::onSettings() {
