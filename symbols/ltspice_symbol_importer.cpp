@@ -199,8 +199,14 @@ void normalizeLtspiceSymbolSize(SymbolDefinition& symbol) {
     if (!hasBody || bodyRect.height() < 1.0) return;
 
     const qreal targetHeight = 45.0;
+    if (bodyRect.height() <= targetHeight) {
+        // Keep native LTspice size for already-small symbols (e.g. cap/res/ind)
+        // to avoid over-scaling passives on the schematic.
+        return;
+    }
+
     const qreal scaleFactor = targetHeight / bodyRect.height();
-    if (scaleFactor <= 0.0 || !std::isfinite(scaleFactor)) return;
+    if (scaleFactor <= 0.0 || !std::isfinite(scaleFactor) || scaleFactor >= 1.0) return;
 
     const QPointF center = bodyRect.center();
     QList<SymbolPrimitive> scaled = symbol.primitives();
