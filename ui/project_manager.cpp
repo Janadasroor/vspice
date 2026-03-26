@@ -1668,10 +1668,63 @@ void ProjectManager::importLtspiceBatch() {
         QJsonDocument doc(def.toJson());
         file.write(doc.toJson(QJsonDocument::Indented));
         file.close();
+
+        // Sub-model import logic
+        const QString modelName = def.modelName();
+        const QString modelPath = def.modelPath();
+        if (!modelName.isEmpty()) {
+            const bool found = (ModelLibraryManager::instance().findModel(modelName) != nullptr ||
+                                ModelLibraryManager::instance().findSubcircuit(modelName) != nullptr);
+            
+            if (!found && !modelPath.isEmpty()) {
+                // Not in our library yet, try to find the source file.
+                QFileInfo asyInfo(path);
+                QString sourcePath = asyInfo.dir().filePath(modelPath);
+                
+                if (!QFileInfo::exists(sourcePath)) {
+                    // Try to find the LTspice 'lib' or root directory by walking up from srcDir
+                    QDir checkDir(asyInfo.dir());
+                    bool foundLib = false;
+                    for (int i = 0; i < 5; ++i) {
+                        if (checkDir.exists("sub") || checkDir.exists("lib/sub") || 
+                            checkDir.exists("cmp") || checkDir.exists("lib/cmp")) {
+                            foundLib = true;
+                            break;
+                        }
+                        if (!checkDir.cdUp()) break;
+                    }
+                    
+                    if (foundLib) {
+                        QString base = checkDir.absolutePath();
+                        QString trySub = QDir(base).filePath("sub/" + modelPath);
+                        if (!QFileInfo::exists(trySub)) trySub = QDir(base).filePath("lib/sub/" + modelPath);
+                        
+                        if (QFileInfo::exists(trySub)) {
+                            sourcePath = trySub;
+                        } else {
+                            QString tryCmp = QDir(base).filePath("cmp/" + modelPath);
+                            if (!QFileInfo::exists(tryCmp)) tryCmp = QDir(base).filePath("lib/cmp/" + modelPath);
+                            if (QFileInfo::exists(tryCmp)) sourcePath = tryCmp;
+                        }
+                    }
+                }
+                
+                if (QFileInfo::exists(sourcePath)) {
+                    const QString targetSubDir = QDir::homePath() + "/ViospiceLib/sub";
+                    const QString targetPath = QDir(targetSubDir).filePath(modelPath);
+                    if (!QFileInfo::exists(targetPath)) {
+                        QDir().mkpath(QFileInfo(targetPath).path());
+                        QFile::copy(sourcePath, targetPath);
+                    }
+                }
+            }
+        }
+
         imported++;
     }
 
     SymbolLibraryManager::instance().reloadUserLibraries();
+    ModelLibraryManager::instance().reload();
 
     QString msg = QString("Imported %1 / %2 symbols into:\n%3")
                       .arg(imported)

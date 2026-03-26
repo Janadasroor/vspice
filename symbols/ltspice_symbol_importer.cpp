@@ -247,6 +247,7 @@ LtspiceSymbolImporter::ImportResult LtspiceSymbolImporter::importSymbolDetailed(
     QString symattrValue;
     QString symattrSpiceModel;
     QString symattrModelFile;
+    QString symattrValue2;
 
     struct RawPin {
         QPointF pos;
@@ -326,6 +327,7 @@ LtspiceSymbolImporter::ImportResult LtspiceSymbolImporter::importSymbolDetailed(
                 if (key == "PREFIX") symbol.setReferencePrefix(val);
                 else if (key == "DESCRIPTION") symbol.setDescription(val);
                 else if (key == "VALUE") symattrValue = val;
+                else if (key == "VALUE2") symattrValue2 = val;
                 else if (key == "SPICEMODEL" || key == "MODEL") symattrSpiceModel = val;
                 else if (key == "MODELFILE") symattrModelFile = val;
             }
@@ -341,13 +343,27 @@ LtspiceSymbolImporter::ImportResult LtspiceSymbolImporter::importSymbolDetailed(
 
     const QString prefix = symbol.referencePrefix().trimmed().toUpper();
     const bool modelPrefix = (prefix == "D" || prefix == "Q" || prefix == "M" || prefix == "J" || prefix == "X");
+    
     if (!symattrSpiceModel.trimmed().isEmpty()) {
-        symbol.setModelName(symattrSpiceModel.trimmed());
+        QString sm = symattrSpiceModel.trimmed();
+        if (sm.contains(".") && (sm.endsWith(".lib", Qt::CaseInsensitive) || sm.endsWith(".sub", Qt::CaseInsensitive) || sm.endsWith(".mdl", Qt::CaseInsensitive))) {
+            symbol.setModelSource("library");
+            symbol.setModelPath(sm);
+            // If we have a Value2 or Value, use that as modelName, otherwise baseName of lib
+            if (!symattrValue2.isEmpty()) symbol.setModelName(symattrValue2);
+            else if (!symattrValue.isEmpty()) symbol.setModelName(symattrValue);
+            else symbol.setModelName(QFileInfo(sm).baseName());
+        } else {
+            symbol.setModelName(sm);
+        }
+    } else if (modelPrefix && !symattrValue2.trimmed().isEmpty()) {
+        symbol.setModelName(symattrValue2.trimmed());
     } else if (modelPrefix && !symattrValue.trimmed().isEmpty()) {
         symbol.setModelName(symattrValue.trimmed());
     } else if (!symattrValue.trimmed().isEmpty()) {
         symbol.setDefaultValue(symattrValue.trimmed());
     }
+    
     if (!symattrModelFile.trimmed().isEmpty()) {
         symbol.setModelSource("library");
         symbol.setModelPath(symattrModelFile.trimmed());

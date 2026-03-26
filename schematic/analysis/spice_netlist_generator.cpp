@@ -362,6 +362,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
 
     // 0.5 Collect model includes from symbols
     QSet<QString> includePaths;
+    QSet<QString> libPaths;
 
     // 1. Get Flattened ECO Package (Components)
     ECOPackage pkg = NetlistGenerator::generateECOPackage(scene, projectDir, nullptr);
@@ -387,7 +388,10 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         if (!sym) continue;
         if (!sym->modelPath().isEmpty()) {
             const QString resolved = resolveModelPath(sym->modelPath(), projectDir);
-            if (!resolved.isEmpty()) includePaths.insert(resolved);
+            if (!resolved.isEmpty()) {
+                if (resolved.toLower().endsWith(".lib")) libPaths.insert(resolved);
+                else includePaths.insert(resolved);
+            }
         }
     }
 
@@ -560,15 +564,17 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         }
     }
 
-    // Write .include directives (subcircuit/model files from symbol metadata)
-    if (!includePaths.isEmpty()) {
+    // Write .include and .lib directives (subcircuit/model files from symbol metadata)
+    if (!includePaths.isEmpty() || !libPaths.isEmpty()) {
         QStringList includeList = includePaths.values();
         includeList.sort();
+        QStringList libList = libPaths.values();
+        libList.sort();
 
         QStringList libRoots = ConfigManager::instance().libraryRoots();
 
         netlist += "* Model Includes\n";
-        for (const QString& inc : includeList) {
+        auto processPath = [&](const QString& inc, const QString& directive) {
             QString relPath = inc;
             for (const QString& root : libRoots) {
                 if (!root.isEmpty() && inc.startsWith(root, Qt::CaseInsensitive)) {
@@ -579,8 +585,11 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
             if (QDir::isAbsolutePath(relPath)) {
                 relPath = QFileInfo(inc).fileName();
             }
-            netlist += QString(".include \"%1\"\n").arg(relPath);
-        }
+            netlist += QString(".%1 \"%2\"\n").arg(directive, relPath);
+        };
+
+        for (const QString& inc : includeList) processPath(inc, "include");
+        for (const QString& lib : libList) processPath(lib, "lib");
         netlist += "\n";
     }
 
@@ -708,12 +717,25 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
             if (!sym->spiceModelName().isEmpty() && comp.spiceModel.isEmpty()) value = sym->spiceModelName();
 
             if (!sym->modelName().isEmpty() && comp.spiceModel.isEmpty()) {
-                if (line.startsWith("X") || line.startsWith("D") || line.startsWith("Q") || isADevice) {
-                    // Don't use modelName if it's just the device prefix (e.g., "D", "Q", "X")
-                    const QString mn = sym->modelName();
+                const QString mn = sym->modelName();
+                const bool isX = line.startsWith("X");
+                const bool isD = line.startsWith("D");
+                const bool isQ = line.startsWith("Q");
+                const bool isM = line.startsWith("M");
+
+                if (isX || isD || isQ || isM || isADevice) {
+                    // For subcircuits and complex devices, sym->modelName() is usually the SPICE model/subckt name.
+                    // Only skip if it's just the single-letter prefix (legacy placeholder).
                     if (mn.length() > 1 || mn.toLower() != line.left(1).toLower()) {
                         value = mn;
                     }
+                }
+            }
+
+            if (!sym->modelPath().isEmpty()) {
+                const QString resolved = resolveModelPath(sym->modelPath(), projectDir);
+                if (resolved.isEmpty() || !QFileInfo::exists(resolved)) {
+                    netlist += QString("* Warning: Model file '%1' not found for %2\n").arg(sym->modelPath(), ref);
                 }
             }
 
