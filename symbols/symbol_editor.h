@@ -111,6 +111,8 @@ private slots:
     void onLibSearchChanged(const QString& text);
     void onAiSymbolGenerated(const QString& json);
     void onWizardGenerate();
+    void onWizardTemplateSearchChanged(const QString& text);
+    void onWizardApplyTemplate();
     void onImportKicadSymbol();
     void onImportLtspiceSymbol();
     void onImportImage();
@@ -149,6 +151,7 @@ private:
     void createSymbolInfoPanel();
     void createLibraryBrowser();
     void createWizardPanel();
+    void refreshWizardTemplateList(const QString& query = QString());
     void createPinTable();
     void updatePinTable();
     QWidget* createSymbolMetadataWidget();
@@ -283,6 +286,8 @@ protected:
     class QDoubleSpinBox* m_pinSpacingSpin = nullptr;
     class QDoubleSpinBox* m_bodyWidthSpin = nullptr;
     class QComboBox* m_wizardStyleCombo = nullptr;
+    QLineEdit* m_wizardTemplateSearchEdit = nullptr;
+    class QComboBox* m_wizardTemplateCombo = nullptr;
     
     // Internal state
     SymbolDefinition m_symbol;

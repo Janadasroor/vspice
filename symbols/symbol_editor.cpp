@@ -319,6 +319,108 @@ QString symbolEditorStateKey(const QString& projectKey) {
     return QStringLiteral("SymbolEditor_") + QString::fromLatin1(hash);
 }
 
+struct WizardTemplateDef {
+    QString id;
+    QString name;
+    QString description;
+    QString kind; // "ic_dual", "ic_quad", "logic"
+    QString defaultCategory;
+    QString defaultPrefix;
+    QString defaultSymbolName;
+    int pins = 0;
+    qreal pitch = 10.0;
+    qreal width = 50.0;
+    QString gate; // and, nand, or, nor, xor, xnor, not, buf
+};
+
+const QList<WizardTemplateDef>& wizardTemplateDefs() {
+    static const QList<WizardTemplateDef> defs = {
+        {"ic_8pins", "IC 8 Pins (DIP/SOIC)", "Dual-inline 8-pin IC frame", "ic_dual", "IC", "U", "IC8", 8, 10.0, 50.0, ""},
+        {"ic_14pins", "IC 14 Pins (DIP/SOIC)", "Dual-inline 14-pin IC frame", "ic_dual", "IC", "U", "IC14", 14, 10.0, 60.0, ""},
+        {"ic_16pins", "IC 16 Pins (DIP/SOIC)", "Dual-inline 16-pin IC frame", "ic_dual", "IC", "U", "IC16", 16, 10.0, 65.0, ""},
+        {"ic_20pins", "IC 20 Pins (DIP/SOIC)", "Dual-inline 20-pin IC frame", "ic_dual", "IC", "U", "IC20", 20, 10.0, 70.0, ""},
+        {"ic_28pins", "IC 28 Pins (DIP/SOIC)", "Dual-inline 28-pin IC frame", "ic_dual", "IC", "U", "IC28", 28, 10.0, 80.0, ""},
+        {"ic_40pins", "IC 40 Pins (DIP/SOIC)", "Dual-inline 40-pin IC frame", "ic_dual", "IC", "U", "IC40", 40, 10.0, 95.0, ""},
+        {"ic_qfn_32", "IC 32 Pins (QFP/QFN)", "Quad package 32-pin IC frame", "ic_quad", "IC", "U", "IC32", 32, 10.0, 80.0, ""},
+        {"and_2", "AND Gate (2-input)", "Digital 2-input AND gate", "logic", "Digital", "U", "AND2", 3, 10.0, 0.0, "and"},
+        {"nand_2", "NAND Gate (2-input)", "Digital 2-input NAND gate", "logic", "Digital", "U", "NAND2", 3, 10.0, 0.0, "nand"},
+        {"or_2", "OR Gate (2-input)", "Digital 2-input OR gate", "logic", "Digital", "U", "OR2", 3, 10.0, 0.0, "or"},
+        {"nor_2", "NOR Gate (2-input)", "Digital 2-input NOR gate", "logic", "Digital", "U", "NOR2", 3, 10.0, 0.0, "nor"},
+        {"xor_2", "XOR Gate (2-input)", "Digital 2-input XOR gate", "logic", "Digital", "U", "XOR2", 3, 10.0, 0.0, "xor"},
+        {"xnor_2", "XNOR Gate (2-input)", "Digital 2-input XNOR gate", "logic", "Digital", "U", "XNOR2", 3, 10.0, 0.0, "xnor"},
+        {"not_1", "NOT Gate (Inverter)", "Digital inverter", "logic", "Digital", "U", "NOT", 2, 10.0, 0.0, "not"},
+        {"buf_1", "Buffer Gate", "Digital non-inverting buffer", "logic", "Digital", "U", "BUF", 2, 10.0, 0.0, "buf"},
+    };
+    return defs;
+}
+
+const WizardTemplateDef* findWizardTemplate(const QString& id) {
+    if (id.trimmed().isEmpty()) return nullptr;
+    const QList<WizardTemplateDef>& defs = wizardTemplateDefs();
+    for (const WizardTemplateDef& def : defs) {
+        if (def.id == id) return &def;
+    }
+    return nullptr;
+}
+
+SymbolDefinition buildLogicTemplateSymbol(const WizardTemplateDef& tpl,
+                                          const QString& symbolName,
+                                          const QString& prefix,
+                                          const QString& category) {
+    SymbolDefinition def;
+    def.setName(symbolName);
+    def.setReferencePrefix(prefix);
+    def.setCategory(category);
+    def.setDescription(tpl.description);
+
+    const QString gate = tpl.gate.toLower();
+    const bool unary = (gate == "not" || gate == "buf");
+    const bool inverted = (gate == "nand" || gate == "nor" || gate == "xnor" || gate == "not");
+
+    // Pin frame is kept on 10-unit multiples to stay grid-clean.
+    const qreal inX = -40.0;
+    const qreal outX = 40.0;
+    const qreal leadLenIn = 20.0;
+    const qreal leadLenOut = inverted ? 14.0 : 20.0;
+
+    if (unary) {
+        def.addPrimitive(SymbolPrimitive::createPin(QPointF(inX, 0.0), 1, "A", "Right", leadLenIn));
+        def.addPrimitive(SymbolPrimitive::createPin(QPointF(outX, 0.0), 2, "Y", "Left", leadLenOut));
+    } else {
+        def.addPrimitive(SymbolPrimitive::createPin(QPointF(inX, -10.0), 1, "A", "Right", leadLenIn));
+        def.addPrimitive(SymbolPrimitive::createPin(QPointF(inX, 10.0), 2, "B", "Right", leadLenIn));
+        def.addPrimitive(SymbolPrimitive::createPin(QPointF(outX, 0.0), 3, "Y", "Left", leadLenOut));
+    }
+
+    if (gate == "and" || gate == "nand") {
+        def.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, -20), QPointF(-20, 20)));
+        def.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, -20), QPointF(0, -20)));
+        def.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, 20), QPointF(0, 20)));
+        def.addPrimitive(SymbolPrimitive::createArc(QRectF(-20, -20, 40, 40), 90 * 16, -180 * 16));
+    } else if (gate == "or" || gate == "nor" || gate == "xor" || gate == "xnor") {
+        def.addPrimitive(SymbolPrimitive::createBezier(
+            QPointF(-22, -20), QPointF(-4, -20), QPointF(8, -12), QPointF(20, 0)));
+        def.addPrimitive(SymbolPrimitive::createBezier(
+            QPointF(-22, 20), QPointF(-4, 20), QPointF(8, 12), QPointF(20, 0)));
+        def.addPrimitive(SymbolPrimitive::createBezier(
+            QPointF(-22, -20), QPointF(-36, -10), QPointF(-36, 10), QPointF(-22, 20)));
+        if (gate == "xor" || gate == "xnor") {
+            def.addPrimitive(SymbolPrimitive::createBezier(
+                QPointF(-28, -20), QPointF(-42, -10), QPointF(-42, 10), QPointF(-28, 20)));
+        }
+    } else if (gate == "not" || gate == "buf") {
+        def.addPrimitive(SymbolPrimitive::createPolygon({
+            QPointF(-20, -20), QPointF(-20, 20), QPointF(18, 0)
+        }, false));
+    }
+
+    if (inverted) {
+        def.addPrimitive(SymbolPrimitive::createCircle(QPointF(23, 0), 3.0, false));
+    }
+
+    return def;
+}
+
 void translatePrimitive(SymbolPrimitive& prim, qreal dx, qreal dy) {
     switch (prim.type) {
     case SymbolPrimitive::Line:
@@ -1594,11 +1696,16 @@ void SymbolEditor::setupUI() {
     auto* wizContainer = new QWidget();
     auto* wizLayout = new QVBoxLayout(wizContainer);
     auto* wizForm = new QFormLayout();
+    wizForm->addRow("Template Search:", m_wizardTemplateSearchEdit);
+    wizForm->addRow("Template:", m_wizardTemplateCombo);
     wizForm->addRow("Style:", m_wizardStyleCombo);
     wizForm->addRow("Pins:", m_pinCountSpin);
     wizForm->addRow("Pitch:", m_pinSpacingSpin);
     wizForm->addRow("Width:", m_bodyWidthSpin);
     wizLayout->addLayout(wizForm);
+    auto* applyTplBtn = new QPushButton("Apply Template");
+    connect(applyTplBtn, &QPushButton::clicked, this, &SymbolEditor::onWizardApplyTemplate);
+    wizLayout->addWidget(applyTplBtn);
     auto* wizBtn = new QPushButton("Generate Symbol");
     connect(wizBtn, &QPushButton::clicked, this, &SymbolEditor::onWizardGenerate);
     wizLayout->addWidget(wizBtn);
@@ -2776,6 +2883,13 @@ void SymbolEditor::createLibraryBrowser() {
 }
 
 void SymbolEditor::createWizardPanel() {
+    m_wizardTemplateSearchEdit = new QLineEdit();
+    m_wizardTemplateSearchEdit->setPlaceholderText("Search template (AND, NAND, XOR, IC...)");
+    m_wizardTemplateSearchEdit->setClearButtonEnabled(true);
+
+    m_wizardTemplateCombo = new QComboBox();
+    m_wizardTemplateCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+
     m_wizardStyleCombo = new QComboBox();
     m_wizardStyleCombo->addItems({"Dual (DIP/SOIC)", "Quad (QFP/QFN)"});
 
@@ -2793,6 +2907,16 @@ void SymbolEditor::createWizardPanel() {
     m_bodyWidthSpin->setRange(5, 500);
     m_bodyWidthSpin->setValue(50.0);
     m_bodyWidthSpin->setSuffix(" units");
+
+    connect(m_wizardTemplateSearchEdit, &QLineEdit::textChanged,
+            this, &SymbolEditor::onWizardTemplateSearchChanged);
+    connect(m_wizardTemplateCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) { onWizardApplyTemplate(); });
+    refreshWizardTemplateList();
+    if (m_wizardTemplateCombo->count() > 0) {
+        m_wizardTemplateCombo->setCurrentIndex(0);
+    }
+    onWizardApplyTemplate();
 }
 
 void SymbolEditor::createPinTable() {
@@ -2915,11 +3039,91 @@ void SymbolEditor::onLibSearchChanged(const QString& text) {
 //  SymbolEditor – Wizard
 // ─────────────────────────────────────────────────────────────────────────────
 
+void SymbolEditor::refreshWizardTemplateList(const QString& query) {
+    if (!m_wizardTemplateCombo) return;
+
+    const QString selectedId = m_wizardTemplateCombo->currentData(Qt::UserRole).toString();
+    const QString q = query.trimmed().toLower();
+    m_wizardTemplateCombo->clear();
+
+    const QList<WizardTemplateDef>& defs = wizardTemplateDefs();
+    for (const WizardTemplateDef& tpl : defs) {
+        const QString haystack = (tpl.name + " " + tpl.id + " " + tpl.description + " " + tpl.defaultCategory).toLower();
+        if (!q.isEmpty() && !haystack.contains(q)) continue;
+        m_wizardTemplateCombo->addItem(QString("%1  [%2]").arg(tpl.name, tpl.defaultCategory), tpl.id);
+    }
+
+    if (m_wizardTemplateCombo->count() == 0) return;
+    const int restoreIdx = m_wizardTemplateCombo->findData(selectedId, Qt::UserRole);
+    m_wizardTemplateCombo->setCurrentIndex(restoreIdx >= 0 ? restoreIdx : 0);
+}
+
+void SymbolEditor::onWizardTemplateSearchChanged(const QString& text) {
+    refreshWizardTemplateList(text);
+}
+
+void SymbolEditor::onWizardApplyTemplate() {
+    if (!m_wizardTemplateCombo || m_wizardTemplateCombo->count() == 0) return;
+    const QString id = m_wizardTemplateCombo->currentData(Qt::UserRole).toString();
+    const WizardTemplateDef* tpl = findWizardTemplate(id);
+    if (!tpl) return;
+
+    if (tpl->kind == "ic_dual") {
+        m_wizardStyleCombo->setCurrentText("Dual (DIP/SOIC)");
+        m_pinCountSpin->setValue(qMax(2, tpl->pins));
+        m_pinSpacingSpin->setValue(tpl->pitch);
+        m_bodyWidthSpin->setValue(tpl->width);
+    } else if (tpl->kind == "ic_quad") {
+        m_wizardStyleCombo->setCurrentText("Quad (QFP/QFN)");
+        m_pinCountSpin->setValue(qMax(4, tpl->pins));
+        m_pinSpacingSpin->setValue(tpl->pitch);
+        m_bodyWidthSpin->setValue(tpl->width);
+    }
+
+    if (m_nameEdit->text().trimmed().isEmpty()) {
+        m_nameEdit->setText(tpl->defaultSymbolName);
+    }
+    if (m_prefixEdit->text().trimmed().isEmpty()) {
+        m_prefixEdit->setText(tpl->defaultPrefix);
+    }
+    if (m_categoryCombo && m_categoryCombo->findText(tpl->defaultCategory) == -1) {
+        m_categoryCombo->addItem(tpl->defaultCategory);
+    }
+    if (m_categoryCombo) {
+        m_categoryCombo->setCurrentText(tpl->defaultCategory);
+    }
+
+    if (m_statusBar) {
+        m_statusBar->showMessage(QString("Template ready: %1").arg(tpl->name), 2500);
+    }
+}
+
 void SymbolEditor::onWizardGenerate() {
     if (!m_drawnItems.isEmpty()) {
         if (QMessageBox::question(this, "Generate", "This will clear the current symbol. Continue?")
                 != QMessageBox::Yes)
             return;
+    }
+
+    const QString templateId = m_wizardTemplateCombo
+        ? m_wizardTemplateCombo->currentData(Qt::UserRole).toString()
+        : QString();
+    const WizardTemplateDef* tpl = findWizardTemplate(templateId);
+
+    if (tpl && tpl->kind == "logic") {
+        SymbolDefinition oldDef = symbolDefinition();
+        const QString name = m_nameEdit->text().trimmed().isEmpty()
+            ? tpl->defaultSymbolName
+            : m_nameEdit->text().trimmed();
+        const QString prefix = m_prefixEdit->text().trimmed().isEmpty()
+            ? tpl->defaultPrefix
+            : m_prefixEdit->text().trimmed();
+        QString category = m_categoryCombo ? m_categoryCombo->currentText().trimmed() : QString();
+        if (category.isEmpty()) category = tpl->defaultCategory;
+
+        SymbolDefinition newDef = buildLogicTemplateSymbol(*tpl, name, prefix, category);
+        m_undoStack->push(new UpdateSymbolCommand(this, oldDef, newDef, "Wizard Generate Template"));
+        return;
     }
 
     const int    pins  = m_pinCountSpin->value();
