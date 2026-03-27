@@ -151,7 +151,7 @@ private:
     void parseCommandText(const QString& command);
     void updateCommandDisplay();
     bool buildDerivedPowerWaveform(const QString& signalName, QVector<double>& time, QVector<double>& values) const;
-    QStringList connectedNetsForItem(class SchematicItem* item) const;
+    QStringList connectedNetsForItem(class SchematicItem* item, bool updateNets = true) const;
     void appendDerivedPowerWaveforms(SimResults& results) const;
 
     QGraphicsScene* m_scene = nullptr;

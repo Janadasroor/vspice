@@ -114,10 +114,12 @@ QMap<SchematicItem*, QString> SchematicAnnotator::annotate(QGraphicsScene* scene
             }
         }
         recs.append(r);
-
-        const int existing = referenceNumber(r.currentRef, r.prefix);
-        if (existing > 0) {
-            counters[r.prefix] = std::max(counters.value(r.prefix, 0), existing);
+        
+        if (!resetExisting) {
+            const int existing = referenceNumber(r.currentRef, r.prefix);
+            if (existing > 0) {
+                counters[r.prefix] = std::max(counters.value(r.prefix, 0), existing);
+            }
         }
     }
 
@@ -290,8 +292,10 @@ void SchematicAnnotator::annotateProject(const QString& rootFilePath, const QStr
             }
 
             const QString ref = obj["reference"].toString();
-            const int existing = referenceNumber(ref, prefix);
-            if (existing > 0) counters[prefix] = std::max(counters.value(prefix, 0), existing);
+            if (!resetExisting) {
+                const int existing = referenceNumber(ref, prefix);
+                if (existing > 0) counters[prefix] = std::max(counters.value(prefix, 0), existing);
+            }
             allComps.append({filePath, i, obj["y"].toDouble(), obj["x"].toDouble(), prefix, ref, type, unitCountForType(type)});
         }
     }

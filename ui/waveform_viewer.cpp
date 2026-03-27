@@ -979,6 +979,8 @@ void WaveformViewer::updatePlot(bool autoScale) {
         m_chart->removeAxis(a);
         a->deleteLater();
     }
+    // Explicitly clear pointer counters to prevent stale data logic
+    m_pointCounters.clear();
 
     if (m_signals.isEmpty()) return;
 

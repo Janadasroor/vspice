@@ -255,6 +255,7 @@ void SimulationManager::processBufferedData() {
             m_simBuffer.swap(batch);
         }
     }
+    m_streamingControl = nullptr; // Clear control after swapping final buffer
     {
         std::lock_guard<std::mutex> lock(m_logMutex);
         if (!m_logBuffer.empty()) {

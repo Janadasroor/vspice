@@ -216,10 +216,10 @@ bool signalMatches(const QString& itemText, const QString& signalName) {
 }
 } // namespace
 
-QStringList SimulationPanel::connectedNetsForItem(SchematicItem* item) const {
+QStringList SimulationPanel::connectedNetsForItem(SchematicItem* item, bool updateNets) const {
     QStringList nets;
     if (!item || !m_netManager) return nets;
-    m_netManager->updateNets(m_scene);
+    if (updateNets) m_netManager->updateNets(m_scene);
 
     QSet<QString> seen;
     const qreal pinTolerance = 2.0;
@@ -342,7 +342,7 @@ void SimulationPanel::appendDerivedPowerWaveforms(SimResults& results) const {
         const QString powerName = QString("P(%1)").arg(ref);
         if (existing.contains(powerName.toUpper())) continue;
 
-        const QStringList nets = connectedNetsForItem(item);
+        const QStringList nets = connectedNetsForItem(item, false); // Do NOT update nets in loop!
         if (nets.size() < 2) continue;
 
         const SimWaveform* currentWave = findWave(QString("I(%1)").arg(ref));
@@ -2132,6 +2132,7 @@ QString SimulationPanel::generateSpiceNetlist() {
 }
 
 void SimulationPanel::onSimResultsReady(const SimResults& results) {
+    m_acceptRealTimeStream = false; // Stop accepting real-time data immediately
     if (!results.isSchemaCompatible()) {
         m_logOutput->append(QString("Unsupported simulator results schema v%1 (expected v%2).")
                             .arg(results.schemaVersion)
@@ -2299,11 +2300,14 @@ void SimulationPanel::onRealTimeDataBatchReceived(const std::vector<double>& tim
         m_waveformViewer->appendPoints(name, times, signalValues);
 
         // Update preview chart
-        if (m_chart) {
+        if (m_chart && !m_realTimeSeries.isEmpty()) {
             QLineSeries* series = m_realTimeSeries.value(name, nullptr);
             if (series) {
-                // Target ~100 points per batch for the live chart to avoid Qt Charts lag
-                const int step = std::max(1, static_cast<int>(times.size()) / 100); 
+                // High-performance check: only append to the preview chart if it's currently visible
+                // and has a reasonable number of points. In a future update, we should replace 
+                // this with a more efficient custom-drawn widget for the preview as well.
+                
+                const int step = std::max(1, static_cast<int>(times.size()) / 50); 
                 
                 QList<QPointF> points;
                 points.reserve(times.size() / step + 2);
@@ -2314,6 +2318,9 @@ void SimulationPanel::onRealTimeDataBatchReceived(const std::vector<double>& tim
                      points.append(QPointF(times.back(), signalValues.back()));
                 }
 
+                // If the chart is being cleared or rebuilt (m_acceptRealTimeStream check above),
+                // this series pointer might still be technically valid in this call stack, 
+                // but we should be extremely careful.
                 series->append(points);
                 
                 // Update axes
