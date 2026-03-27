@@ -104,6 +104,13 @@ public:
     void setShowCrosshair(bool enabled) { m_showCrosshair = enabled; viewport()->update(); }
     bool isCrosshairEnabled() const { return m_showCrosshair; }
 
+    enum SelectionFilter { SelectAll, SelectComponents, SelectWires };
+    void setSelectionFilter(SelectionFilter filter) { m_selectionFilter = filter; }
+    SelectionFilter selectionFilter() const { return m_selectionFilter; }
+    
+    void setHandToolActive(bool active);
+    bool isHandToolActive() const { return m_handToolActive; }
+
     // Live ERC Feedback
     void showLiveERCMarkers(const QList<struct ERCViolation>& violations);
     void clearLiveERCMarkers();
@@ -115,6 +122,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
     void drawBackground(QPainter *painter, const QRectF &rect) override;
     void drawForeground(QPainter *painter, const QRectF &rect) override;
@@ -149,6 +157,9 @@ private:
     QGraphicsPixmapItem* m_probeCursorItem = nullptr;
     bool m_probeCursorVisible = false;
     SchematicProbeTool::ProbeKind m_probeCursorKind = SchematicProbeTool::ProbeKind::Voltage;
+    bool m_spacePressed = false;
+    bool m_handToolActive = false;
+    SelectionFilter m_selectionFilter = SelectAll;
 
     QTimer* m_autoScrollTimer;
     QPoint m_autoScrollDelta;

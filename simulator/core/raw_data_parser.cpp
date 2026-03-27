@@ -119,8 +119,8 @@ bool RawDataParser::loadRawAscii(const QString& path, RawData* out, QString* err
         }
     }
 
-    if (!collectingData || varNames.isEmpty() || numVariables <= 0) {
-        if (error) *error = "Raw file missing Variables/Values/Binary sections: " + path;
+    if (!collectingData || varNames.isEmpty() || numVariables <= 0 || numVariables > 100000 || numPoints < 0 || numPoints > 100000000) {
+        if (error) *error = QString("Raw file has invalid or excessive metadata: Vars=%1, Points=%2").arg(numVariables).arg(numPoints);
         return false;
     }
 
@@ -129,133 +129,138 @@ bool RawDataParser::loadRawAscii(const QString& path, RawData* out, QString* err
     data.numPoints = numPoints;
     data.varNames = varNames;
     
-    if (numPoints > 0) {
-        data.x.reserve(numPoints);
-        data.y.resize(numVariables - 1);
-        data.yPhase.resize(numVariables - 1);
-        data.hasPhase.resize(numVariables - 1, false);
-        for (int i = 0; i < data.y.size(); ++i) data.y[i].reserve(numPoints);
-        for (int i = 0; i < data.yPhase.size(); ++i) data.yPhase[i].reserve(numPoints);
+    try {
+        if (numPoints > 0) {
+            data.x.reserve(numPoints);
+            data.y.resize(numVariables - 1);
+            data.yPhase.resize(numVariables - 1);
+            data.hasPhase.resize(numVariables - 1, false);
+            for (int i = 0; i < data.y.size(); ++i) data.y[i].reserve(numPoints);
+            for (int i = 0; i < data.yPhase.size(); ++i) data.yPhase[i].reserve(numPoints);
 
-        if (isBinary) {
-            qint64 totalDoubles = (qint64)numPoints * numVariables;
-            if (isComplex) {
-                // Complex data uses real+imag for each variable, including x.
-                totalDoubles = (qint64)numPoints * numVariables * 2;
-            }
-            qint64 remainingBytes = endPtr - dataPtr;
-            if (remainingBytes >= totalDoubles * (qint64)sizeof(double)) {
-                for (int p = 0; p < numPoints; ++p) {
-                    double val;
-                    if (isComplex) {
-                        double re = 0.0, im = 0.0;
-                        memcpy(&re, dataPtr, sizeof(double)); dataPtr += sizeof(double);
-                        memcpy(&im, dataPtr, sizeof(double)); dataPtr += sizeof(double);
-                        data.x.push_back(re); // freq/time is typically real
-                        for (int v = 1; v < numVariables; ++v) {
+            if (isBinary) {
+                qint64 totalDoubles = (qint64)numPoints * numVariables;
+                if (isComplex) {
+                    // Complex data uses real+imag for each variable, including x.
+                    totalDoubles = (qint64)numPoints * numVariables * 2;
+                }
+                qint64 remainingBytes = endPtr - dataPtr;
+                if (remainingBytes >= totalDoubles * (qint64)sizeof(double)) {
+                    for (int p = 0; p < numPoints; ++p) {
+                        double val;
+                        if (isComplex) {
+                            double re = 0.0, im = 0.0;
                             memcpy(&re, dataPtr, sizeof(double)); dataPtr += sizeof(double);
                             memcpy(&im, dataPtr, sizeof(double)); dataPtr += sizeof(double);
-                            const double mag = std::hypot(re, im);
-                            const double phase = std::atan2(im, re) * 180.0 / std::acos(-1.0);
-                            data.y[v - 1].push_back(mag);
-                            data.yPhase[v - 1].push_back(phase);
-                            data.hasPhase[v - 1] = true;
-                        }
-                    } else {
-                        memcpy(&val, dataPtr, sizeof(double));
-                        dataPtr += sizeof(double);
-                        data.x.push_back(val);
-                        for (int v = 1; v < numVariables; ++v) {
+                            data.x.push_back(re); // freq/time is typically real
+                            for (int v = 1; v < numVariables; ++v) {
+                                memcpy(&re, dataPtr, sizeof(double)); dataPtr += sizeof(double);
+                                memcpy(&im, dataPtr, sizeof(double)); dataPtr += sizeof(double);
+                                const double mag = std::hypot(re, im);
+                                const double phase = std::atan2(im, re) * 180.0 / std::acos(-1.0);
+                                data.y[v - 1].push_back(mag);
+                                data.yPhase[v - 1].push_back(phase);
+                                data.hasPhase[v - 1] = true;
+                            }
+                        } else {
                             memcpy(&val, dataPtr, sizeof(double));
                             dataPtr += sizeof(double);
-                            data.y[v - 1].push_back(val);
+                            data.x.push_back(val);
+                            for (int v = 1; v < numVariables; ++v) {
+                                memcpy(&val, dataPtr, sizeof(double));
+                                dataPtr += sizeof(double);
+                                data.y[v - 1].push_back(val);
+                            }
                         }
                     }
+                } else {
+                    if (error) *error = QString("Raw file binary payload is incomplete: %1 (Expected %2 bytes, got %3)").arg(path).arg(totalDoubles * sizeof(double)).arg(remainingBytes);
+                    return false;
                 }
             } else {
-                if (error) *error = QString("Raw file binary payload is incomplete: %1 (Expected %2 bytes, got %3)").arg(path).arg(totalDoubles * sizeof(double)).arg(remainingBytes);
-                return false;
-            }
-        } else {
-            static const QRegularExpression spaceRe("\\s+");
-            auto getNextToken = [&]() -> QByteArray {
-                while (dataPtr < endPtr) {
-                    const char* start = dataPtr;
-                    while (dataPtr < endPtr && !isspace(*dataPtr)) dataPtr++;
-                    QByteArray word(start, dataPtr - start);
-                    while (dataPtr < endPtr && isspace(*dataPtr)) dataPtr++;
-                    if (!word.isEmpty()) return word;
-                }
-                return {};
-            };
+                static const QRegularExpression spaceRe("\\s+");
+                auto getNextToken = [&]() -> QByteArray {
+                    while (dataPtr < endPtr) {
+                        const char* start = dataPtr;
+                        while (dataPtr < endPtr && !isspace(*dataPtr)) dataPtr++;
+                        QByteArray word(start, dataPtr - start);
+                        while (dataPtr < endPtr && isspace(*dataPtr)) dataPtr++;
+                        if (!word.isEmpty()) return word;
+                    }
+                    return {};
+                };
 
-            auto parseToken = [&](const QByteArray& token, double& magOut, double& phaseOut, bool& isComplexOut) {
-                const QString raw = QString::fromLatin1(token).trimmed();
-                if (raw.isEmpty()) return false;
+                auto parseToken = [&](const QByteArray& token, double& magOut, double& phaseOut, bool& isComplexOut) {
+                    const QString raw = QString::fromLatin1(token).trimmed();
+                    if (raw.isEmpty()) return false;
 
-                QString t = raw;
-                if (t.startsWith('(') && t.endsWith(')')) {
-                    t = t.mid(1, t.size() - 2).trimmed();
-                }
+                    QString t = raw;
+                    if (t.startsWith('(') && t.endsWith(')')) {
+                        t = t.mid(1, t.size() - 2).trimmed();
+                    }
 
-                if (t.contains(',')) {
-                    const QStringList parts = t.split(',', Qt::SkipEmptyParts);
-                    if (parts.size() >= 2) {
-                        bool ok1 = false, ok2 = false;
-                        const double re = QLocale::c().toDouble(parts[0].trimmed(), &ok1);
-                        const double im = QLocale::c().toDouble(parts[1].trimmed(), &ok2);
-                        if (ok1 && ok2) {
-                            magOut = std::hypot(re, im);
-                            phaseOut = std::atan2(im, re) * 180.0 / std::acos(-1.0);
-                            isComplexOut = true;
-                            return true;
+                    if (t.contains(',')) {
+                        const QStringList parts = t.split(',', Qt::SkipEmptyParts);
+                        if (parts.size() >= 2) {
+                            bool ok1 = false, ok2 = false;
+                            const double re = QLocale::c().toDouble(parts[0].trimmed(), &ok1);
+                            const double im = QLocale::c().toDouble(parts[1].trimmed(), &ok2);
+                            if (ok1 && ok2) {
+                                magOut = std::hypot(re, im);
+                                phaseOut = std::atan2(im, re) * 180.0 / std::acos(-1.0);
+                                isComplexOut = true;
+                                return true;
+                            }
                         }
                     }
-                }
 
-                bool ok = false;
-                const double val = QLocale::c().toDouble(t, &ok);
-                if (!ok) return false;
-                magOut = val;
-                phaseOut = 0.0;
-                isComplexOut = false;
-                return true;
-            };
-
-            for (int p = 0; p < numPoints; ++p) {
-                // In Values: format, the first variable is prefixed by an index
-                getNextToken(); // skip index
-                {
-                    const QByteArray xTok = getNextToken();
-                    const QString raw = QString::fromLatin1(xTok).trimmed();
-                    double xVal = 0.0;
                     bool ok = false;
-                    if (raw.contains(',')) {
-                        const QStringList parts = raw.split(',', Qt::SkipEmptyParts);
-                        if (!parts.isEmpty()) {
-                            xVal = QLocale::c().toDouble(parts[0].trimmed(), &ok);
+                    const double val = QLocale::c().toDouble(t, &ok);
+                    if (!ok) return false;
+                    magOut = val;
+                    phaseOut = 0.0;
+                    isComplexOut = false;
+                    return true;
+                };
+
+                for (int p = 0; p < numPoints; ++p) {
+                    // In Values: format, the first variable is prefixed by an index
+                    getNextToken(); // skip index
+                    {
+                        const QByteArray xTok = getNextToken();
+                        const QString raw = QString::fromLatin1(xTok).trimmed();
+                        double xVal = 0.0;
+                        bool ok = false;
+                        if (raw.contains(',')) {
+                            const QStringList parts = raw.split(',', Qt::SkipEmptyParts);
+                            if (!parts.isEmpty()) {
+                                xVal = QLocale::c().toDouble(parts[0].trimmed(), &ok);
+                            }
+                        } else {
+                            xVal = QLocale::c().toDouble(raw, &ok);
                         }
-                    } else {
-                        xVal = QLocale::c().toDouble(raw, &ok);
+                        data.x.push_back(ok ? xVal : 0.0);
                     }
-                    data.x.push_back(ok ? xVal : 0.0);
-                }
-                for (int v = 1; v < numVariables; ++v) {
-                    const QByteArray tok = getNextToken();
-                    double mag = 0.0;
-                    double phase = 0.0;
-                    bool isComplex = false;
-                    if (!parseToken(tok, mag, phase, isComplex)) {
-                        mag = 0.0;
-                        phase = 0.0;
-                        isComplex = false;
+                    for (int v = 1; v < numVariables; ++v) {
+                        const QByteArray tok = getNextToken();
+                        double mag = 0.0;
+                        double phase = 0.0;
+                        bool isComplexOut = false;
+                        if (!parseToken(tok, mag, phase, isComplexOut)) {
+                            mag = 0.0;
+                            phase = 0.0;
+                            isComplexOut = false;
+                        }
+                        data.y[v - 1].push_back(mag);
+                        data.yPhase[v - 1].push_back(phase);
+                        if (isComplexOut) data.hasPhase[v - 1] = true;
                     }
-                    data.y[v - 1].push_back(mag);
-                    data.yPhase[v - 1].push_back(phase);
-                    if (isComplex) data.hasPhase[v - 1] = true;
                 }
             }
         }
+    } catch (const std::bad_alloc&) {
+        if (error) *error = "Memory allocation failed for simulation results.";
+        return false;
     }
 
     *out = std::move(data);

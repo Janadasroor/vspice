@@ -26,6 +26,8 @@ SimManager::SimManager(QObject* parent) : QObject(parent) {
     connect(this, &SimManager::generationFailed, this, [this](const QString& error) {
         emit errorOccurred(error);
     });
+    
+    m_resultsPending = false;
 }
 
 void SimManager::runDCOP(QGraphicsScene* scene, NetManager* netMgr) {
@@ -176,11 +178,18 @@ void SimManager::startNgspiceWithNetlist(const QString& netlistContent) {
     connect(&sm, &SimulationManager::realTimeDataBatchReceived, this, &SimManager::realTimeDataBatchReceived, Qt::UniqueConnection);
     
     connect(&sm, &SimulationManager::rawResultsReady, this, [this, safeTempFile](const QString& path) {
+        m_resultsPending = true;
         auto* watcher = new QFutureWatcher<std::pair<bool, SimResults>>(this);
         connect(watcher, &QFutureWatcher<std::pair<bool, SimResults>>::finished, this, [this, watcher, safeTempFile]() {
+            if (!m_control && !m_resultsPending) {
+                watcher->deleteLater();
+                return; // Already cleaned up or another watcher finished?
+            }
+            
             auto result = watcher->result();
             watcher->deleteLater();
             
+            m_resultsPending = false;
             if (result.first) {
                 emit simulationFinished(result.second);
             } else {
@@ -208,15 +217,17 @@ void SimManager::startNgspiceWithNetlist(const QString& netlistContent) {
     
     // Handle the simulation engine finishing (it fires regardless of result parsing)
     connect(&sm, &SimulationManager::simulationFinished, this, [this, safeTempFile]() {
-        // If we don't have results coming (e.g. error), we must clean up here.
-        // If results ARE coming, rawResultsReady watcher will handle it.
-        // We use a small delay or a state check to be safe.
-        QTimer::singleShot(500, this, [this, safeTempFile]() {
-            if (m_control) { // Still running? Then no results were ready or they failed
+        // Results might already be in flight via rawResultsReady handler.
+        // We wait a bit to see if they arrive. If not, we cleanup.
+        QTimer::singleShot(2000, this, [this, safeTempFile]() {
+            if (m_control && !m_resultsPending) {
                 emit logMessage("Ngspice finished without RAW results; closing simulation run.");
                 emit simulationFinished(SimResults());
                 if (safeTempFile) safeTempFile->deleteLater();
                 cleanupSimulation();
+            } else if (m_control && m_resultsPending) {
+                // Still waiting for the heavy parser? Let it finish.
+                // But if it takes TOO long, we might still want a timeout.
             }
         });
     });
@@ -226,8 +237,12 @@ void SimManager::startNgspiceWithNetlist(const QString& netlistContent) {
 
 void SimManager::cleanupSimulation() {
     if (m_control) {
-        delete m_control;
+        SimControl* ctrl = m_control;
         m_control = nullptr;
+        // Delay deletion to ensure any pending signals/threads are done
+        QTimer::singleShot(100, [ctrl]() {
+            if (ctrl) delete ctrl;
+        });
     }
 }
 

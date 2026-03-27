@@ -33,8 +33,29 @@
 #include <QDockWidget>
 #include <QDateTime>
 #include <QCheckBox>
+#include <QDialog>
+#include <QListWidget>
+#include <QPlainTextEdit>
+#include <QSplitter>
+#include <QToolButton>
+#include <QKeyEvent>
 
 namespace {
+QString compactErrorSummary(const QString& raw, int maxLen = 180) {
+    QString text = raw;
+    text.replace("\r\n", "\n");
+    text = text.trimmed();
+    if (text.isEmpty()) return QString("Unknown error");
+    const int nl = text.indexOf('\n');
+    if (nl >= 0) text = text.left(nl).trimmed();
+    if (text.size() > maxLen) text = text.left(maxLen) + "...";
+    return text;
+}
+
+QString nowTimeChip() {
+    return QDateTime::currentDateTime().toString("HH:mm");
+}
+
 QString markdownDocStyleSheet() {
     bool isLight = ThemeManager::theme() && ThemeManager::theme()->type() == PCBTheme::Light;
     if (isLight) {
@@ -81,72 +102,88 @@ QString markdownDocStyleSheet() {
 
 QString wrapModelCard(const QString& bodyHtml) {
     bool isLight = ThemeManager::theme() && ThemeManager::theme()->type() == PCBTheme::Light;
+    const QString ts = nowTimeChip();
     if (isLight) {
         return QString(
+            "<div style='display:block; width:100%;'>"
             "<div style='"
             "background: #ffffff;"
             "color: #1e293b;"
-            "padding: 18px 20px;"
-            "border-radius: 10px;"
+            "padding: 14px 16px;"
+            "border-radius: 14px;"
             "border: 1px solid #e2e8f0;"
-            "margin: 12px 0 22px 0;"
+            "margin: 6px 0 12px 0;"
+            "max-width: 92%;"
             "box-shadow: 0 1px 3px rgba(0,0,0,0.05);"
-            "'>%1</div>"
-        ).arg(bodyHtml);
+            "'>"
+            "<div style='font-size:10px; color:#64748b; margin-bottom:7px; font-weight:600;'>Viora AI · %2</div>"
+            "%1</div>"
+            "<div style='height:8px;'></div>"
+            "</div>"
+        ).arg(bodyHtml, ts);
     }
     return QString(
+        "<div style='display:block; width:100%;'>"
         "<div style='"
         "background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #0f1520, stop:1 #0c1119);"
         "color: #d0d7de;"
-        "padding: 18px 20px;"
-        "border-radius: 10px;"
+        "padding: 14px 16px;"
+        "border-radius: 14px;"
         "border: 1px solid #2b3442;"
-        "margin: 12px 0 22px 0;"
+        "margin: 6px 0 12px 0;"
+        "max-width: 92%;"
         "box-shadow: 0 2px 8px rgba(0,0,0,0.25);"
-        "'>%1</div>"
-    ).arg(bodyHtml);
+        "'>"
+        "<div style='font-size:10px; color:#9fb0c8; margin-bottom:7px; font-weight:600;'>Viora AI · %2</div>"
+        "%1</div>"
+        "<div style='height:8px;'></div>"
+        "</div>"
+    ).arg(bodyHtml, ts);
 }
 
 QString wrapUserCard(const QString& textHtml, const QString& headerHtml = QString()) {
     bool isLight = ThemeManager::theme() && ThemeManager::theme()->type() == PCBTheme::Light;
+    const QString ts = nowTimeChip();
     if (isLight) {
         return QString(
-            "<div style='margin-bottom: 24px; text-align: right;'>"
+            "<div style='display:block; width:100%; margin: 6px 0 12px 0; text-align: right;'>"
             "<div class='user-card' style='"
             "background: #f1f5f9;"
             "color: #334155;"
-            "padding: 12px 14px;"
-            "border-radius: 10px;"
+            "padding: 10px 12px;"
+            "border-radius: 14px;"
             "border: 1px solid #e2e8f0;"
             "display: inline-block;"
-            "max-width: 86%;"
+            "max-width: 84%;"
             "text-align: left;"
             "'>"
             "%2"
+            "<div style='font-size:10px; color:#64748b; margin: 0 0 6px 0; font-weight:600; text-align:right;'>You · %3</div>"
             "<div style='line-height: 1.55;'>%1</div>"
             "</div>"
             "</div>"
-            "<br>"
-        ).arg(textHtml, headerHtml);
+            "<div style='height:8px;'></div>"
+        ).arg(textHtml, headerHtml, ts);
     }
     return QString(
-        "<div style='margin-bottom: 24px; text-align: right;'>"
+        "<div style='display:block; width:100%; margin: 6px 0 12px 0; text-align: right;'>"
         "<div class='user-card' style='"
         "background: #182131;"
         "color: #e6edf3;"
-        "padding: 12px 14px;"
-        "border-radius: 10px;"
+        "padding: 10px 12px;"
+        "border-radius: 14px;"
         "border: 1px solid #30405a;"
         "display: inline-block;"
-        "max-width: 86%;"
+        "max-width: 84%;"
         "text-align: left;"
         "'>"
         "%2"
+        "<div style='font-size:10px; color:#9fb0c8; margin: 0 0 6px 0; font-weight:600; text-align:right;'>You · %3</div>"
         "<div style='line-height: 1.55;'>%1</div>"
         "</div>"
         "</div>"
-        "<br>"
-    ).arg(textHtml, headerHtml);
+        "<div style='height:8px;'></div>"
+    ).arg(textHtml, headerHtml, ts);
 }
 } // namespace
 
@@ -249,7 +286,7 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     // Header Toolbar
     QWidget* header = new QWidget(this);
     header->setStyleSheet(QString("background-color: %1; border-bottom: 1px solid %2;").arg(headerBg, border));
-    header->setFixedHeight(36);
+    header->setFixedHeight(40);
     QHBoxLayout* headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(8, 0, 8, 0);
     headerLayout->setSpacing(4);
@@ -402,11 +439,16 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     m_errorLabel = new QLabel(m_errorBanner);
     m_errorLabel->setStyleSheet("color: #b91c1c; font-size: 12px; font-weight: bold;");
     m_errorLabel->setWordWrap(true);
+    m_errorDetailsButton = new QPushButton("DETAILS", m_errorBanner);
+    m_errorDetailsButton->setFixedHeight(24);
+    m_errorDetailsButton->setStyleSheet("QPushButton { background: #ffffff; color: #991b1b; border: 1px solid #ef4444; border-radius: 6px; padding: 0 10px; font-weight: bold; font-size: 10px; }");
+    connect(m_errorDetailsButton, &QPushButton::clicked, this, &GeminiPanel::onViewErrorDetailsClicked);
     m_errorDismissButton = new QPushButton("DISMISS", m_errorBanner);
     m_errorDismissButton->setFixedHeight(24);
     m_errorDismissButton->setStyleSheet("QPushButton { background: #ef4444; color: #fff; border-radius: 6px; padding: 0 10px; font-weight: bold; font-size: 10px; }");
     connect(m_errorDismissButton, &QPushButton::clicked, this, &GeminiPanel::onDismissErrorClicked);
     errorLayout->addWidget(m_errorLabel, 1);
+    errorLayout->addWidget(m_errorDetailsButton);
     errorLayout->addWidget(m_errorDismissButton);
     m_errorBanner->hide();
     mainLayout->addWidget(m_errorBanner);
@@ -429,7 +471,7 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
         " background-color: %1;"
         " color: %2;"
         " border: none;"
-        " padding: 22px;"
+        " padding: 14px;"
         " font-family: 'Inter', 'Segoe UI', sans-serif;"
         " font-size: 13px;"
         " line-height: 1.6;"
@@ -466,10 +508,16 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     m_includeScreenshotCheck = new QCheckBox(this);
     m_includeScreenshotCheck->hide();
 
-    m_inputField = new QLineEdit(this);
-    m_inputField->setPlaceholderText("Ask viospice AI...");
-    m_inputField->setStyleSheet(QString("QLineEdit { background: transparent; color: %1; border: none; padding: 4px 0; font-size: 13px; }").arg(fg));
-    connect(m_inputField, &QLineEdit::returnPressed, this, &GeminiPanel::onSendClicked);
+    m_inputField = new QTextEdit(this);
+    m_inputField->setPlaceholderText("Message Viora AI...  (Enter = send, Shift+Enter = new line)");
+    m_inputField->setFixedHeight(72);
+    m_inputField->setAcceptRichText(false);
+    m_inputField->setStyleSheet(QString(
+        "QTextEdit { background: transparent; color: %1; border: none; padding: 2px 0; font-size: 13px; }"
+        "QTextEdit:disabled { color: %2; }")
+        .arg(fg, theme ? theme->textSecondary().name() : "#888"));
+    m_inputField->installEventFilter(this);
+    connect(m_inputField, &QTextEdit::textChanged, this, &GeminiPanel::updateSendEnabled);
     composerLayout->addWidget(m_inputField);
 
     QHBoxLayout* toolsRow = new QHBoxLayout();
@@ -477,7 +525,7 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     toolsRow->setSpacing(6);
     toolsRow->setAlignment(Qt::AlignVCenter);
 
-    QString toolBtnStyle = QString("QPushButton { background: %1; color: %2; border: 1px solid %3; border-radius: 4px; font-size: 9px; font-weight: bold; padding: 0 8px; } QPushButton:hover { background: %4; border-color: %5; }")
+    QString toolBtnStyle = QString("QPushButton { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; font-size: 10px; font-weight: bold; padding: 0 8px; } QPushButton:hover { background: %4; border-color: %5; }")
         .arg((theme && theme->type() == PCBTheme::Light) ? "#f8fafc" : "#21262d")
         .arg(fg, border)
         .arg((theme && theme->type() == PCBTheme::Light) ? "#f1f5f9" : "#30363d")
@@ -488,7 +536,7 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     m_refreshModelsButton->setStyleSheet(toolBtnStyle);
     connect(m_refreshModelsButton, &QPushButton::clicked, this, &GeminiPanel::onRefreshModelsClicked);
 
-    QString comboStyle = QString("QComboBox { background: %1; color: %2; border: 1px solid %3; border-radius: 4px; padding: 0 16px 0 6px; font-size: 10px; font-weight: bold; } QComboBox::drop-down { border: none; width: 16px; } QComboBox QAbstractItemView { background: %4; color: %2; border: 1px solid %3; selection-background-color: %5; }")
+    QString comboStyle = QString("QComboBox { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; padding: 0 16px 0 6px; font-size: 10px; font-weight: bold; } QComboBox::drop-down { border: none; width: 16px; } QComboBox QAbstractItemView { background: %4; color: %2; border: 1px solid %3; selection-background-color: %5; }")
         .arg((theme && theme->type() == PCBTheme::Light) ? "#f8fafc" : "#21262d")
         .arg(fg, border, bg)
         .arg((theme && theme->type() == PCBTheme::Light) ? "#eff6ff" : "#30363d");
@@ -519,14 +567,15 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
 
     m_sendButton = new QPushButton("SEND", this);
     m_sendButton->setFixedHeight(24);
-    m_sendButton->setStyleSheet(QString("QPushButton { background: %1; color: white; border: 1px solid %2; border-radius: 4px; font-weight: bold; font-size: 10px; padding: 0 12px; } QPushButton:hover { background: %3; }")
+    m_sendButton->setStyleSheet(QString("QPushButton { background: %1; color: white; border: 1px solid %2; border-radius: 6px; font-weight: bold; font-size: 10px; padding: 0 12px; } QPushButton:hover { background: %3; }")
         .arg("#238636", "#2ea043", "#2ea043"));
     connect(m_sendButton, &QPushButton::clicked, this, &GeminiPanel::onSendClicked);
+    m_sendButton->setEnabled(false);
 
     m_stopButton = new QPushButton("STOP", this);
     m_stopButton->setFixedHeight(24);
     m_stopButton->hide();
-    m_stopButton->setStyleSheet("QPushButton { background: #ef4444; color: white; border: 1px solid #ef4444; border-radius: 4px; font-weight: bold; font-size: 10px; padding: 0 12px; } QPushButton:hover { background: #dc2626; }");
+    m_stopButton->setStyleSheet("QPushButton { background: #ef4444; color: white; border: 1px solid #ef4444; border-radius: 6px; font-weight: bold; font-size: 10px; padding: 0 12px; } QPushButton:hover { background: #dc2626; }");
     connect(m_stopButton, &QPushButton::clicked, this, &GeminiPanel::onStopClicked);
 
     toolsRow->addWidget(m_refreshModelsButton);
@@ -545,6 +594,7 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     m_thinkingPulseTimer->setInterval(500);
     connect(m_thinkingPulseTimer, &QTimer::timeout, this, &GeminiPanel::updateThinkingPulse);
     updateApiKeyVisibility();
+    updateSendEnabled();
     if (!ConfigManager::instance().geminiApiKey().isEmpty()) {
         QTimer::singleShot(0, this, &GeminiPanel::refreshModelList);
     }
@@ -654,7 +704,7 @@ void GeminiPanel::loadHistoryFromFile(const QString& filePath) {
                 m_chatArea->insertHtml(wrapModelCard(doc.toHtml()));
             }
 
-            m_chatArea->insertHtml("<br>");
+            m_chatArea->insertHtml("<div style='height: 4px;'></div>");
         }
         m_chatArea->verticalScrollBar()->setValue(m_chatArea->verticalScrollBar()->maximum());
     }
@@ -685,9 +735,35 @@ void GeminiPanel::setUndoStack(QUndoStack* stack) {
     qDebug() << "Gemini AI: Undo stack set to" << stack << (stack ? " (Valid)" : " (NULL!)");
 }
 
+bool GeminiPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_inputField && event && event->type() == QEvent::KeyPress) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        const bool enterPressed = (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter);
+        if (enterPressed) {
+            const Qt::KeyboardModifiers mods = keyEvent->modifiers();
+            const bool wantsNewline = mods.testFlag(Qt::ShiftModifier);
+            if (!wantsNewline) {
+                onSendClicked();
+                return true;
+            }
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void GeminiPanel::updateSendEnabled() {
+    if (!m_sendButton || !m_inputField) return;
+    const bool hasText = !m_inputField->toPlainText().trimmed().isEmpty();
+    m_sendButton->setEnabled(!m_isWorking && hasText);
+}
+
 void GeminiPanel::onSendClicked() {
-    QString t = m_inputField->text().trimmed();
-    if (!t.isEmpty()) { m_inputField->clear(); askPrompt(t, m_includeContextCheck->isChecked()); }
+    const QString t = m_inputField->toPlainText().trimmed();
+    if (!t.isEmpty()) {
+        m_inputField->clear();
+        askPrompt(t, m_includeContextCheck->isChecked());
+    }
+    updateSendEnabled();
 }
 void GeminiPanel::clearHistory() {
     if (m_process) {
@@ -708,6 +784,10 @@ void GeminiPanel::clearHistory() {
     m_errorBuffer.clear();
     m_responseStartPos = 0;
     m_isWorking = false;
+    m_errorHistory.clear();
+    if (m_errorHistoryList) m_errorHistoryList->clear();
+    if (m_errorSummaryView) m_errorSummaryView->clear();
+    if (m_errorRawView) m_errorRawView->clear();
     m_thinkingPulseTimer->stop();
     if (m_statusButton) m_statusButton->hide();
     if (m_thinkingDisplay) m_thinkingDisplay->clear();
@@ -723,6 +803,9 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext) {
     if (m_isWorking) return;
     QString key = ConfigManager::instance().geminiApiKey();
     if (key.isEmpty()) {
+        reportError("API Key Missing",
+                    "Gemini API key is not configured.\nOpen the AI panel key field, paste your key, then press SAVE.",
+                    true);
         m_chatArea->append("<div style='color: #f85149; background: #161b22; padding: 10px; border-radius: 6px; border: 1px solid #30363d;'><b>API Key Missing</b></div>");
         m_apiKeyContainer->show(); return;
     }
@@ -734,20 +817,15 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext) {
     if (undoIndex != -1) {
         checkpointIconHtml = QString(
             "<a class='undo-link' href='checkpoint:%1' title='Retrieve changes from this point' "
-            "style='display:inline-block; width:18px; height:18px; line-height:18px; text-align:center; "
-            "border-radius:4px; border:1px solid #30363d; background:#21262d; color:#c9d1d9; text-decoration:none; font-size:11px;'>"
+            "style='display:inline-block; min-width:20px; height:18px; line-height:18px; text-align:center; "
+            "border-radius:9px; border:1px solid #3a4558; background:#1f2a3a; color:#dce7f6; text-decoration:none; font-size:9px; font-weight:600; padding:0 6px;'>"
             "RET</a>"
         ).arg(undoIndex);
     }
     QString checkpointHeaderHtml;
     if (!checkpointIconHtml.isEmpty()) {
         checkpointHeaderHtml = QString(
-            "<table width='100%' cellspacing='0' cellpadding='0' style='margin: 0 0 4px 0; border: none;'>"
-            "<tr>"
-            "<td>&nbsp;</td>"
-            "<td align='right' style='width: 32px;'>%1</td>"
-            "</tr>"
-            "</table>"
+            "<div style='width:100%; text-align:right; margin: 0 0 4px 0;'>%1</div>"
         ).arg(checkpointIconHtml);
     }
 
@@ -755,7 +833,7 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext) {
     m_chatArea->moveCursor(QTextCursor::End);
     m_chatArea->insertHtml(wrapUserCard(text.toHtmlEscaped(), checkpointHeaderHtml));
 
-    m_chatArea->insertHtml("<br><br>"); // Absolute separation
+    m_chatArea->insertHtml("<div style='height: 6px;'></div>");
     m_chatArea->verticalScrollBar()->setValue(m_chatArea->verticalScrollBar()->maximum());
     
     // Capture the start position for streaming response AFTER prompt is in
@@ -810,7 +888,7 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext) {
         if (!d.isEmpty()) {
             QString err = QString::fromUtf8(d);
             m_errorBuffer += err;
-            showErrorBanner(m_errorBuffer);
+            showErrorBanner(compactErrorSummary(m_errorBuffer), m_errorBuffer);
         }
     });
     connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &GeminiPanel::onProcessFinished);
@@ -915,7 +993,9 @@ void GeminiPanel::onProcessFinished(int ec) {
 
     m_thinkingPulseTimer->stop();
 
-    if (!m_errorBuffer.trimmed().isEmpty()) showErrorBanner(m_errorBuffer);
+    if (!m_errorBuffer.trimmed().isEmpty()) {
+        reportError("Viora AI Backend Error", m_errorBuffer, ec != 0);
+    }
 
     if (ec != 0) {
         m_chatArea->moveCursor(QTextCursor::End);
@@ -941,9 +1021,9 @@ void GeminiPanel::onProcessFinished(int ec) {
         if (m_mode == "symbol") code = ext("json", "```json"); else if (m_mode == "logic") code = ext("python", "```python"); else code = ext("fluxscript", "```fluxscript");
         if (!code.isEmpty()) { m_lastGeneratedCode = code; m_copyButton->setEnabled(true); if (m_mode == "symbol") emit symbolJsonGenerated(code); else if (m_mode == "logic") emit pythonScriptGenerated(code); else emit fluxScriptGenerated(code); }
     }
-    m_isWorking = false; m_inputField->setEnabled(true); m_stopButton->hide(); m_sendButton->show(); m_sendButton->setEnabled(true);
+    m_isWorking = false; m_inputField->setEnabled(true); m_stopButton->hide(); m_sendButton->show(); updateSendEnabled();
     saveHistory();
-    QTimer::singleShot(100, m_inputField, qOverload<>(&QLineEdit::setFocus));
+    QTimer::singleShot(100, this, [this]() { if (m_inputField) m_inputField->setFocus(); });
 }
 
 void GeminiPanel::onCopyClicked() { if (!m_lastGeneratedCode.isEmpty()) { QApplication::clipboard()->setText(m_lastGeneratedCode); m_copyButton->setText("COPIED"); QTimer::singleShot(2000, this, [this](){ if (m_copyButton) m_copyButton->setText("COPY CODE"); }); } }
@@ -990,7 +1070,7 @@ void GeminiPanel::onRefreshModelsClicked() {
 void GeminiPanel::refreshModelList() {
     QString key = ConfigManager::instance().geminiApiKey().trimmed();
     if (key.isEmpty()) {
-        showErrorBanner("Cannot fetch models: API key is missing.");
+        reportError("Model Fetch Error", "Cannot fetch models: API key is missing.", true);
         m_apiKeyContainer->show();
         return;
     }
@@ -1039,14 +1119,16 @@ void GeminiPanel::onModelFetchFinished(int exitCode, QProcess::ExitStatus) {
     }
 
     if (exitCode != 0) {
-        showErrorBanner(QString("Model fetch failed: %1").arg(m_modelFetchStdErr.trimmed().isEmpty() ? "Unknown error" : m_modelFetchStdErr.trimmed()));
+        reportError("Model Fetch Error",
+                    QString("Model fetch failed: %1").arg(m_modelFetchStdErr.trimmed().isEmpty() ? "Unknown error" : m_modelFetchStdErr.trimmed()),
+                    true);
         return;
     }
 
     QJsonParseError parseError;
     const QJsonDocument doc = QJsonDocument::fromJson(stdoutText.toUtf8(), &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
-        showErrorBanner("Model fetch failed: invalid response format.");
+        reportError("Model Fetch Error", "Model fetch failed: invalid response format.", true);
         return;
     }
 
@@ -1066,7 +1148,7 @@ void GeminiPanel::onModelFetchFinished(int exitCode, QProcess::ExitStatus) {
         }
     }
     if (models.isEmpty()) {
-        showErrorBanner("No Gemini models were returned for this API key.");
+        reportError("Model Fetch Error", "No Gemini models were returned for this API key.", true);
         return;
     }
 
@@ -1109,12 +1191,16 @@ void GeminiPanel::onModelFetchFinished(int exitCode, QProcess::ExitStatus) {
     hideErrorBanner();
 }
 
-void GeminiPanel::showErrorBanner(const QString& errorText) {
+void GeminiPanel::showErrorBanner(const QString& summaryText, const QString& detailsText) {
     if (!m_errorBanner || !m_errorLabel) return;
-    QString cleaned = errorText.trimmed();
+    QString cleaned = summaryText.trimmed();
     if (cleaned.isEmpty()) return;
-    if (cleaned.size() > 2000) cleaned = cleaned.left(2000) + "...";
+    if (cleaned.size() > 320) cleaned = cleaned.left(320) + "...";
+    if (!detailsText.trimmed().isEmpty()) m_lastErrorDetails = detailsText.trimmed();
     m_errorLabel->setText(QString("Backend Error: %1").arg(cleaned.toHtmlEscaped().replace("\n", "<br>")));
+    if (m_errorDetailsButton) {
+        m_errorDetailsButton->setVisible(!m_lastErrorDetails.trimmed().isEmpty());
+    }
     m_errorBanner->show();
 }
 
@@ -1124,7 +1210,134 @@ void GeminiPanel::hideErrorBanner() {
     m_errorBanner->hide();
 }
 
+void GeminiPanel::appendErrorHistory(const QString& title, const QString& detailsText) {
+    const QString details = detailsText.trimmed();
+    if (details.isEmpty()) return;
+    ErrorRecord rec;
+    rec.timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+    rec.title = title.trimmed().isEmpty() ? "Viora AI Error" : title.trimmed();
+    rec.details = details;
+    m_errorHistory.append(rec);
+    if (m_errorHistory.size() > 200) {
+        m_errorHistory.removeFirst();
+    }
+}
+
+void GeminiPanel::ensureErrorDialog() {
+    if (m_errorDialog) return;
+
+    m_errorDialog = new QDialog(this);
+    m_errorDialog->setWindowTitle("Viora AI Error Center");
+    m_errorDialog->setModal(false);
+    m_errorDialog->resize(860, 520);
+
+    QVBoxLayout* root = new QVBoxLayout(m_errorDialog);
+    root->setContentsMargins(10, 10, 10, 10);
+    root->setSpacing(8);
+
+    QSplitter* split = new QSplitter(Qt::Horizontal, m_errorDialog);
+    m_errorHistoryList = new QListWidget(split);
+    m_errorHistoryList->setMinimumWidth(280);
+    m_errorSummaryView = new QTextEdit(split);
+    m_errorSummaryView->setReadOnly(true);
+    split->setStretchFactor(0, 0);
+    split->setStretchFactor(1, 1);
+    root->addWidget(split, 1);
+
+    m_errorRawToggle = new QToolButton(m_errorDialog);
+    m_errorRawToggle->setText("Show Raw Logs");
+    m_errorRawToggle->setCheckable(true);
+    root->addWidget(m_errorRawToggle, 0, Qt::AlignLeft);
+
+    m_errorRawView = new QPlainTextEdit(m_errorDialog);
+    m_errorRawView->setReadOnly(true);
+    m_errorRawView->setVisible(false);
+    m_errorRawView->setMaximumBlockCount(20000);
+    root->addWidget(m_errorRawView, 1);
+
+    QHBoxLayout* footer = new QHBoxLayout();
+    footer->addStretch(1);
+    QPushButton* copyBtn = new QPushButton("Copy Details", m_errorDialog);
+    QPushButton* closeBtn = new QPushButton("Close", m_errorDialog);
+    footer->addWidget(copyBtn);
+    footer->addWidget(closeBtn);
+    root->addLayout(footer);
+
+    connect(m_errorRawToggle, &QToolButton::toggled, this, [this](bool on) {
+        if (!m_errorRawView || !m_errorRawToggle) return;
+        m_errorRawView->setVisible(on);
+        m_errorRawToggle->setText(on ? "Hide Raw Logs" : "Show Raw Logs");
+    });
+    connect(m_errorHistoryList, &QListWidget::currentRowChanged, this, &GeminiPanel::selectErrorHistoryRow);
+    connect(copyBtn, &QPushButton::clicked, this, [this]() {
+        const int row = m_errorHistoryList ? m_errorHistoryList->currentRow() : -1;
+        if (row < 0 || row >= m_errorHistory.size()) return;
+        QApplication::clipboard()->setText(m_errorHistory[row].details);
+    });
+    connect(closeBtn, &QPushButton::clicked, m_errorDialog, &QDialog::hide);
+}
+
+void GeminiPanel::populateErrorDialogHistory() {
+    if (!m_errorHistoryList) return;
+    m_errorHistoryList->clear();
+    for (const ErrorRecord& rec : m_errorHistory) {
+        m_errorHistoryList->addItem(QString("[%1] %2 - %3")
+            .arg(rec.timestamp, rec.title, compactErrorSummary(rec.details, 54)));
+    }
+}
+
+void GeminiPanel::selectErrorHistoryRow(int row) {
+    if (!m_errorSummaryView || !m_errorRawView) return;
+    if (row < 0 || row >= m_errorHistory.size()) {
+        m_errorSummaryView->clear();
+        m_errorRawView->clear();
+        return;
+    }
+    const ErrorRecord& rec = m_errorHistory[row];
+    m_errorSummaryView->setHtml(QString(
+        "<div style='font-weight:700; font-size:14px;'>%1</div>"
+        "<div style='color:#6b7280; font-size:11px; margin: 4px 0 10px 0;'>%2</div>"
+        "<div>%3</div>")
+        .arg(rec.title.toHtmlEscaped(),
+             rec.timestamp.toHtmlEscaped(),
+             compactErrorSummary(rec.details, 1200).toHtmlEscaped().replace("\n", "<br>")));
+    m_errorRawView->setPlainText(rec.details);
+}
+
+void GeminiPanel::showErrorDialog(const QString& title, const QString& detailsText) {
+    const QString details = detailsText.trimmed();
+    if (!details.isEmpty()) {
+        appendErrorHistory(title, details);
+    }
+    if (m_errorHistory.isEmpty()) return;
+
+    ensureErrorDialog();
+    populateErrorDialogHistory();
+    if (m_errorHistoryList) {
+        m_errorHistoryList->setCurrentRow(m_errorHistory.size() - 1);
+    }
+    m_errorDialog->show();
+    m_errorDialog->raise();
+    m_errorDialog->activateWindow();
+}
+
+void GeminiPanel::reportError(const QString& title, const QString& detailsText, bool openDialog) {
+    m_lastErrorTitle = title.trimmed().isEmpty() ? "Viora AI Error" : title.trimmed();
+    m_lastErrorDetails = detailsText.trimmed();
+    if (m_lastErrorDetails.isEmpty()) return;
+    appendErrorHistory(m_lastErrorTitle, m_lastErrorDetails);
+    showErrorBanner(compactErrorSummary(m_lastErrorDetails), m_lastErrorDetails);
+    if (openDialog) {
+        showErrorDialog(QString(), QString());
+    }
+}
+
 void GeminiPanel::onDismissErrorClicked() {
     m_errorBuffer.clear();
     hideErrorBanner();
+}
+
+void GeminiPanel::onViewErrorDetailsClicked() {
+    if (m_lastErrorDetails.trimmed().isEmpty() && m_errorHistory.isEmpty()) return;
+    showErrorDialog(QString(), QString());
 }

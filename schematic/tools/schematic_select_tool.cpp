@@ -7,6 +7,7 @@
 #include <QGraphicsLineItem>
 #include <QGraphicsEllipseItem>
 #include <QPen>
+#include <QPainter>
 #include <QMouseEvent>
 #include <QTimer>
 #include "flux/core/net_manager.h"
@@ -948,6 +949,15 @@ void SchematicSelectTool::deactivate() {
     m_vertexDragActive = false;
     m_vertexWire = nullptr;
     m_vertexIndex = -1;
+    m_rigidGroupMove = false;
+    m_dragSelection.clear();
+    if (m_dragViewOptimized && view()) {
+        view()->setViewportUpdateMode(m_prevViewportUpdateMode);
+        view()->setRenderHint(QPainter::Antialiasing, m_prevAntialiasing);
+        view()->setRenderHint(QPainter::TextAntialiasing, m_prevTextAntialiasing);
+        m_dragViewOptimized = false;
+    }
+    m_hasLastAppliedMove = false;
     m_tJunctions.clear();
     SchematicTool::deactivate();
 }
@@ -1152,11 +1162,33 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
 
             // Capture initial positions of ALL selected items
             QList<QGraphicsItem*> selectedItems = view()->scene()->selectedItems();
+            bool selectedHasWire = false;
             for (QGraphicsItem* selItem : selectedItems) {
                 SchematicItem* sItem = dynamic_cast<SchematicItem*>(selItem);
                 if (sItem) {
                     m_initialPositions[sItem] = sItem->pos();
+                    if (sItem->itemType() == SchematicItem::WireType) {
+                        selectedHasWire = true;
+                        WireItem* wire = static_cast<WireItem*>(sItem);
+                        m_initialWirePoints[wire] = wire->points();
+                    }
                 }
+            }
+            m_rigidGroupMove = (selectedItems.size() > 1 && selectedHasWire);
+            m_dragSelection.clear();
+            m_dragSelection.reserve(m_initialPositions.size());
+            for (auto it = m_initialPositions.constBegin(); it != m_initialPositions.constEnd(); ++it) {
+                if (it.key()) m_dragSelection.append(it.key());
+            }
+            m_hasLastAppliedMove = false;
+            if (!m_dragViewOptimized) {
+                m_prevViewportUpdateMode = view()->viewportUpdateMode();
+                m_prevAntialiasing = view()->renderHints().testFlag(QPainter::Antialiasing);
+                m_prevTextAntialiasing = view()->renderHints().testFlag(QPainter::TextAntialiasing);
+                view()->setViewportUpdateMode(QGraphicsView::MinimalViewportUpdate);
+                view()->setRenderHint(QPainter::Antialiasing, false);
+                view()->setRenderHint(QPainter::TextAntialiasing, false);
+                m_dragViewOptimized = true;
             }
 
             auto rememberWire = [this](WireItem* wire) {
@@ -1170,7 +1202,7 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
             };
 
             // Find connected items for "Rubber banding"
-            for (QGraphicsItem* selItem : selectedItems) {
+            if (!m_rigidGroupMove) for (QGraphicsItem* selItem : selectedItems) {
                 SchematicItem* sItem = dynamic_cast<SchematicItem*>(selItem);
                 if (!sItem) continue;
 
@@ -1420,17 +1452,17 @@ void SchematicSelectTool::mousePressEvent(QMouseEvent* event) {
                 }
             };
 
-            for (QGraphicsItem* selItem : selectedItems) {
+            if (!m_rigidGroupMove) for (QGraphicsItem* selItem : selectedItems) {
                 if (WireItem* selectedWire = dynamic_cast<WireItem*>(selItem)) {
                     discoverTJunctionsForMovingWire(selectedWire);
                 }
             }
-            for (const AttachedWire& aw : m_attachedWires) {
+            if (!m_rigidGroupMove) for (const AttachedWire& aw : m_attachedWires) {
                 discoverTJunctionsForMovingWire(aw.wire);
             }
 
             // Capture anchors for wire endpoints so they can be re-snapped on release.
-            for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
+            if (!m_rigidGroupMove) for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
                 WireItem* wire = it.key();
                 if (!wire) continue;
                 WireEndpointAnchor anchor;
@@ -1627,14 +1659,31 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
             } else {
                 m_axisLockActive = false;
             }
+
+            // Tiny pointer jitter produces excessive repaints on large selections.
+            // Skip updates until the accumulated move changes meaningfully.
+            if (m_hasLastAppliedMove &&
+                qAbs(totalMove.x() - m_lastAppliedTotalMove.x()) < 0.35 &&
+                qAbs(totalMove.y() - m_lastAppliedTotalMove.y()) < 0.35) {
+                event->accept();
+                return;
+            }
             
-            QList<QGraphicsItem*> selectedItems = view()->scene()->selectedItems();
-            for (QGraphicsItem* item : selectedItems) {
-                if (m_segmentDragActive && item == m_segmentWire) continue;
-                if (m_vertexDragActive && item == m_vertexWire) continue;
-                
-                SchematicItem* sItem = dynamic_cast<SchematicItem*>(item);
-                if (sItem && m_initialPositions.contains(sItem)) {
+            const QList<SchematicItem*> dragItems =
+                m_dragSelection.isEmpty() ? QList<SchematicItem*>() : m_dragSelection;
+            if (!dragItems.isEmpty()) {
+                for (SchematicItem* sItem : dragItems) {
+                    if (!sItem || !m_initialPositions.contains(sItem)) continue;
+                    if (m_segmentDragActive && sItem == m_segmentWire) continue;
+                    if (m_vertexDragActive && sItem == m_vertexWire) continue;
+                    // Avoid double-transform jitter: when a label/net label is a child of a selected
+                    // schematic item, let the parent carry it during group drag.
+                    if ((sItem->itemType() == SchematicItem::LabelType ||
+                         sItem->itemType() == SchematicItem::NetLabelType) &&
+                        sItem->parentItem() && sItem->parentItem()->isSelected()) {
+                        continue;
+                    }
+
                     if (sItem->itemType() == SchematicItem::WireType) {
                         WireItem* wire = static_cast<WireItem*>(sItem);
                         if (m_initialWirePoints.contains(wire)) {
@@ -1646,22 +1695,34 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
                     } else {
                         QPointF initialPos = m_initialPositions[sItem];
                         QPointF targetPos = initialPos + totalMove;
-                        if (sItem->itemType() == SchematicItem::LabelType ||
-                            sItem->itemType() == SchematicItem::NetLabelType) {
-                            // Labels are child items; move in scene coords so rotation doesn't skew dragging.
-                            if (QGraphicsItem* parent = sItem->parentItem()) {
-                                const QPointF initialScene = parent->mapToScene(initialPos);
-                                const QPointF targetScene = initialScene + totalMove;
-                                sItem->setPos(parent->mapFromScene(targetScene));
-                            } else {
-                                sItem->setPos(targetPos);
-                            }
-                        } else {
-                            sItem->setPos(view()->snapToGridOrPin(targetPos).point);
+                        // Keep group-drag movement continuous for smooth visuals.
+                        // Per-item snapping during drag causes visible jitter vs wire movement.
+                        sItem->setPos(targetPos);
+                    }
+                }
+            } else {
+                QList<QGraphicsItem*> selectedItems = view()->scene()->selectedItems();
+                for (QGraphicsItem* item : selectedItems) {
+                    if (m_segmentDragActive && item == m_segmentWire) continue;
+                    if (m_vertexDragActive && item == m_vertexWire) continue;
+                    SchematicItem* sItem = dynamic_cast<SchematicItem*>(item);
+                    if (!sItem || !m_initialPositions.contains(sItem)) continue;
+                    if (sItem->itemType() == SchematicItem::WireType) {
+                        WireItem* wire = static_cast<WireItem*>(sItem);
+                        if (m_initialWirePoints.contains(wire)) {
+                            const QList<QPointF> orig = m_initialWirePoints.value(wire);
+                            QList<QPointF> moved;
+                            for (const QPointF& p : orig) moved.append(p + totalMove);
+                            wire->setPoints(moved);
                         }
+                    } else {
+                        QPointF initialPos = m_initialPositions[sItem];
+                        sItem->setPos(initialPos + totalMove);
                     }
                 }
             }
+            m_lastAppliedTotalMove = totalMove;
+            m_hasLastAppliedMove = true;
         } else if (m_isDragging) {
              QPointF sceneDelta = view()->mapToScene(event->pos()) - view()->mapToScene(m_lastMousePos);
              const bool shiftHeld = event->modifiers() & Qt::ShiftModifier;
@@ -1679,22 +1740,39 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
                  m_axisLockActive = false;
              }
              if (sceneDelta.manhattanLength() > 0.001) {
-                QList<QGraphicsItem*> selectedItems = view()->scene()->selectedItems();
-                for (QGraphicsItem* item : selectedItems) {
-                    if (m_segmentDragActive && item == m_segmentWire) continue;
-                    if (m_vertexDragActive && item == m_vertexWire) continue;
-                    if (SchematicItem* sItem = dynamic_cast<SchematicItem*>(item)) {
+                const QList<SchematicItem*> dragItems =
+                    m_dragSelection.isEmpty() ? QList<SchematicItem*>() : m_dragSelection;
+                if (!dragItems.isEmpty()) {
+                    for (SchematicItem* sItem : dragItems) {
+                        if (!sItem) continue;
+                        if (m_segmentDragActive && sItem == m_segmentWire) continue;
+                        if (m_vertexDragActive && sItem == m_vertexWire) continue;
                         if (sItem->itemType() == SchematicItem::LabelType ||
                             sItem->itemType() == SchematicItem::NetLabelType) {
-                            if (QGraphicsItem* parent = sItem->parentItem()) {
-                                const QPointF initialScene = parent->mapToScene(sItem->pos());
-                                const QPointF targetScene = initialScene + sceneDelta;
-                                sItem->setPos(parent->mapFromScene(targetScene));
+                            if (sItem->parentItem() && sItem->parentItem()->isSelected()) {
                                 continue;
                             }
                         }
+                        sItem->setPos(sItem->pos() + sceneDelta);
                     }
-                    item->setPos(item->pos() + sceneDelta);
+                } else {
+                    QList<QGraphicsItem*> selectedItems = view()->scene()->selectedItems();
+                    for (QGraphicsItem* item : selectedItems) {
+                        if (m_segmentDragActive && item == m_segmentWire) continue;
+                        if (m_vertexDragActive && item == m_vertexWire) continue;
+                        if (SchematicItem* sItem = dynamic_cast<SchematicItem*>(item)) {
+                            if (sItem->itemType() == SchematicItem::LabelType ||
+                                sItem->itemType() == SchematicItem::NetLabelType) {
+                                if (QGraphicsItem* parent = sItem->parentItem()) {
+                                    const QPointF initialScene = parent->mapToScene(sItem->pos());
+                                    const QPointF targetScene = initialScene + sceneDelta;
+                                    sItem->setPos(parent->mapFromScene(targetScene));
+                                    continue;
+                                }
+                            }
+                        }
+                        item->setPos(item->pos() + sceneDelta);
+                    }
                 }
             }
         }
@@ -1747,12 +1825,8 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
             }
         }
         
-        // --- REAL-TIME ERC RADAR ---
-        QList<SchematicItem*> selected;
-        for (auto* it : view()->scene()->selectedItems()) {
-            if (auto* si = dynamic_cast<SchematicItem*>(it)) selected.append(si);
-        }
-        if (!selected.isEmpty()) emit view()->runLiveERC(selected);
+        // Skip live ERC during drag for responsiveness.
+        // ERC updates on release/selection changes.
 
         m_lastMousePos = event->pos();
         event->accept();
@@ -1796,7 +1870,8 @@ void SchematicSelectTool::mouseReleaseEvent(QMouseEvent* event) {
     
     if (m_isDragging && (!m_initialPositions.isEmpty() || !m_initialWirePoints.isEmpty())) {
         // --- FINAL CONNECTION RECONCILIATION ---
-        if (!m_attachedWires.isEmpty()) {
+        // Skip all auto-reconcile/orthogonal cleanup when rigid group move is active.
+        if (!m_rigidGroupMove && !m_attachedWires.isEmpty()) {
             // Propagate moved vertices to neighboring unselected wire endpoints.
             for (const AttachedWire& aw : m_attachedWires) {
                 if (m_segmentDragActive && aw.wire == m_segmentWire) continue;
@@ -1855,7 +1930,7 @@ void SchematicSelectTool::mouseReleaseEvent(QMouseEvent* event) {
         }
 
         // Keep endpoint-on-segment T-junctions attached.
-        for (const TJunctionTracker& tj : m_tJunctions) {
+        if (!m_rigidGroupMove) for (const TJunctionTracker& tj : m_tJunctions) {
             const QList<QPointF> movingPts = tj.movingWire->points();
             if (tj.segmentIndex < 0 || tj.segmentIndex >= movingPts.size() - 1) continue;
 
@@ -1872,96 +1947,98 @@ void SchematicSelectTool::mouseReleaseEvent(QMouseEvent* event) {
             tj.attachedWire->setPoints(updatedPoints);
         }
 
-        // Final orthogonal cleanup for wires that were originally orthogonal.
-        auto buildIgnoreSet = [this](WireItem* wire) {
-            QSet<SchematicItem*> ignore;
-            if (m_initialWireAnchors.contains(wire)) {
-                const WireEndpointAnchor& anchor = m_initialWireAnchors[wire];
-                if (anchor.startItem) ignore.insert(anchor.startItem);
-                if (anchor.endItem) ignore.insert(anchor.endItem);
-            }
-            return ignore;
-        };
-
-        for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
-            WireItem* wire = it.key();
-            if (!wire) continue;
-            const QList<QPointF>& orig = it.value();
-            if (isOrthogonalWire(orig) || isMostlyOrthogonalWire(orig)) {
-                QList<QPointF> curr = wire->points();
-                if (orig.size() <= 3) {
-                    curr = rebuildSimpleOrthogonal(curr, orig, view());
+        if (!m_rigidGroupMove) {
+            // Final orthogonal cleanup for wires that were originally orthogonal.
+            auto buildIgnoreSet = [this](WireItem* wire) {
+                QSet<SchematicItem*> ignore;
+                if (m_initialWireAnchors.contains(wire)) {
+                    const WireEndpointAnchor& anchor = m_initialWireAnchors[wire];
+                    if (anchor.startItem) ignore.insert(anchor.startItem);
+                    if (anchor.endItem) ignore.insert(anchor.endItem);
                 }
-                forceOrthogonal(curr);
+                return ignore;
+            };
+
+            for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
+                WireItem* wire = it.key();
+                if (!wire) continue;
+                const QList<QPointF>& orig = it.value();
+                if (isOrthogonalWire(orig) || isMostlyOrthogonalWire(orig)) {
+                    QList<QPointF> curr = wire->points();
+                    if (orig.size() <= 3) {
+                        curr = rebuildSimpleOrthogonal(curr, orig, view());
+                    }
+                    forceOrthogonal(curr);
+                    wire->setPoints(curr);
+                }
+            }
+
+            // Re-snap attached wire endpoints to their pins after cleanup.
+            if (!m_attachedWires.isEmpty()) {
+                for (const AttachedWire& aw : m_attachedWires) {
+                    if (!aw.wire || !aw.anchor) continue;
+                    if (aw.anchor->itemType() == SchematicItem::WireType) continue;
+                    const QList<QPointF> pins = aw.anchor->connectionPoints();
+                    if (aw.anchorPointIndex < 0 || aw.anchorPointIndex >= pins.size()) continue;
+                    const QPointF pinScene = aw.anchor->mapToScene(pins[aw.anchorPointIndex]);
+                    QList<QPointF> pts;
+                    if (m_topologyLockedWires.contains(aw.wire)) {
+                        pts = moveAttachedWireEndpointPreserveTopology(
+                            aw.wire,
+                            aw.isStartPoint,
+                            pinScene,
+                            aw.isHorizontal,
+                            aw.isVertical
+                        );
+                    } else {
+                        const bool keepNeighborFixed = aw.neighborExternallyAnchored;
+                        QPointF fixedNeighborScene = aw.neighborExternallyAnchored ? aw.externalAnchorScenePos : aw.neighborScenePos;
+                        bool isH = aw.isHorizontal;
+                        bool isV = aw.isVertical;
+                        adjustEndpointOrientationForDrag(aw, pinScene, keepNeighborFixed, isH, isV);
+                        fixedNeighborScene = adjustFixedNeighborSceneForSliding(aw, pinScene, fixedNeighborScene);
+                        pts = moveAttachedWireEndpoint(
+                            aw.wire,
+                            aw.isStartPoint,
+                            pinScene,
+                            isH,
+                            isV,
+                            keepNeighborFixed,
+                            fixedNeighborScene
+                        );
+                    }
+                    if (m_initialWirePoints.contains(aw.wire)) {
+                        const QList<QPointF>& orig = m_initialWirePoints.value(aw.wire);
+                        if (isOrthogonalWire(orig) && orig.size() <= 3) {
+                            pts = rebuildSimpleOrthogonal(pts, orig, view());
+                        }
+                    }
+                    aw.wire->setPoints(pts);
+                }
+            }
+
+            // Clamp endpoints to their original anchors (pins) to prevent drift.
+            if (!m_initialWireAnchors.isEmpty()) {
+                for (auto it = m_initialWireAnchors.begin(); it != m_initialWireAnchors.end(); ++it) {
+                    applyEndpointAnchorsToWire(it.key(), it.value());
+                }
+            }
+
+            // Final obstacle avoidance for simple L-wires after anchors are clamped.
+            for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
+                WireItem* wire = it.key();
+                if (!wire) continue;
+                const QList<QPointF>& orig = it.value();
+                if (orig.size() != 3) continue;
+                QList<QPointF> curr = wire->points();
+                curr = nudgeLWireAwayFromObstacles(wire, curr, view(), buildIgnoreSet(wire));
                 wire->setPoints(curr);
             }
-        }
 
-    // Re-snap attached wire endpoints to their pins after cleanup.
-        if (!m_attachedWires.isEmpty()) {
-            for (const AttachedWire& aw : m_attachedWires) {
-                if (!aw.wire || !aw.anchor) continue;
-                if (aw.anchor->itemType() == SchematicItem::WireType) continue;
-                const QList<QPointF> pins = aw.anchor->connectionPoints();
-                if (aw.anchorPointIndex < 0 || aw.anchorPointIndex >= pins.size()) continue;
-                const QPointF pinScene = aw.anchor->mapToScene(pins[aw.anchorPointIndex]);
-                QList<QPointF> pts;
-                if (m_topologyLockedWires.contains(aw.wire)) {
-                    pts = moveAttachedWireEndpointPreserveTopology(
-                        aw.wire,
-                        aw.isStartPoint,
-                        pinScene,
-                        aw.isHorizontal,
-                        aw.isVertical
-                    );
-                } else {
-                    const bool keepNeighborFixed = aw.neighborExternallyAnchored;
-                    QPointF fixedNeighborScene = aw.neighborExternallyAnchored ? aw.externalAnchorScenePos : aw.neighborScenePos;
-                    bool isH = aw.isHorizontal;
-                    bool isV = aw.isVertical;
-                    adjustEndpointOrientationForDrag(aw, pinScene, keepNeighborFixed, isH, isV);
-                    fixedNeighborScene = adjustFixedNeighborSceneForSliding(aw, pinScene, fixedNeighborScene);
-                    pts = moveAttachedWireEndpoint(
-                        aw.wire,
-                        aw.isStartPoint,
-                        pinScene,
-                        isH,
-                        isV,
-                        keepNeighborFixed,
-                        fixedNeighborScene
-                    );
-                }
-                if (m_initialWirePoints.contains(aw.wire)) {
-                    const QList<QPointF>& orig = m_initialWirePoints.value(aw.wire);
-                    if (isOrthogonalWire(orig) && orig.size() <= 3) {
-                        pts = rebuildSimpleOrthogonal(pts, orig, view());
-                    }
-                }
-                aw.wire->setPoints(pts);
+            for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
+                if (m_topologyLockedWires.contains(it.key())) continue;
+                it.key()->setPoints(simplifyWirePoints(it.key()->points()));
             }
-        }
-
-        // Clamp endpoints to their original anchors (pins) to prevent drift.
-        if (!m_initialWireAnchors.isEmpty()) {
-            for (auto it = m_initialWireAnchors.begin(); it != m_initialWireAnchors.end(); ++it) {
-                applyEndpointAnchorsToWire(it.key(), it.value());
-            }
-        }
-
-        // Final obstacle avoidance for simple L-wires after anchors are clamped.
-        for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
-            WireItem* wire = it.key();
-            if (!wire) continue;
-            const QList<QPointF>& orig = it.value();
-            if (orig.size() != 3) continue;
-            QList<QPointF> curr = wire->points();
-            curr = nudgeLWireAwayFromObstacles(wire, curr, view(), buildIgnoreSet(wire));
-            wire->setPoints(curr);
-        }
-
-        for (auto it = m_initialWirePoints.begin(); it != m_initialWirePoints.end(); ++it) {
-            if (m_topologyLockedWires.contains(it.key())) continue;
-            it.key()->setPoints(simplifyWirePoints(it.key()->points()));
         }
 
         if (view()->undoStack()) {
@@ -1998,18 +2075,20 @@ void SchematicSelectTool::mouseReleaseEvent(QMouseEvent* event) {
                     view()->undoStack()->push(new MoveItemCommand(view()->scene(), movedItems, oldPos, newPos));
                     
                     // Auto-cut wires after move
-                    QList<WireItem*> attached;
-                    for (const AttachedWire& aw : m_attachedWires) {
-                        if (aw.wire && !attached.contains(aw.wire)) attached.append(aw.wire);
-                    }
-                    for (SchematicItem* item : movedItems) {
-                        const QList<WireItem*> pinConnected = collectConnectedWiresAtPins(view(), item);
-                        for (WireItem* wire : pinConnected) {
-                            if (wire && !attached.contains(wire)) attached.append(wire);
+                    if (!m_rigidGroupMove) {
+                        QList<WireItem*> attached;
+                        for (const AttachedWire& aw : m_attachedWires) {
+                            if (aw.wire && !attached.contains(aw.wire)) attached.append(aw.wire);
                         }
-                    }
-                    for (SchematicItem* item : movedItems) {
-                        SchematicWireUtils::splitWiresByComponent(item, view()->scene(), view()->undoStack(), attached);
+                        for (SchematicItem* item : movedItems) {
+                            const QList<WireItem*> pinConnected = collectConnectedWiresAtPins(view(), item);
+                            for (WireItem* wire : pinConnected) {
+                                if (wire && !attached.contains(wire)) attached.append(wire);
+                            }
+                        }
+                        for (SchematicItem* item : movedItems) {
+                            SchematicWireUtils::splitWiresByComponent(item, view()->scene(), view()->undoStack(), attached);
+                        }
                     }
                 }
                 
@@ -2037,6 +2116,15 @@ void SchematicSelectTool::mouseReleaseEvent(QMouseEvent* event) {
     m_tJunctions.clear();
     m_initialPositions.clear();
     m_initialWirePoints.clear();
+    m_rigidGroupMove = false;
+    m_dragSelection.clear();
+    m_hasLastAppliedMove = false;
+    if (m_dragViewOptimized && view()) {
+        view()->setViewportUpdateMode(m_prevViewportUpdateMode);
+        view()->setRenderHint(QPainter::Antialiasing, m_prevAntialiasing);
+        view()->setRenderHint(QPainter::TextAntialiasing, m_prevTextAntialiasing);
+        m_dragViewOptimized = false;
+    }
 
     // Refresh net highlights after move
     if (view()) {

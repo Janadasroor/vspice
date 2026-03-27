@@ -2615,18 +2615,18 @@ void SymbolEditor::createMenuBar() {
         }
     });
     viewMenu->addSeparator();
-    auto* toggleMaxAct = viewMenu->addAction("Toggle Maximize", this, [this]() {
-        if (isMaximized()) {
-            showNormal();
+    auto* toggleMaxAct = viewMenu->addAction("Toggle Maximize", QKeySequence("F11"), [this]() {
+        if (this->isMaximized()) {
+            this->showNormal();
             return;
         }
-        setWindowState(windowState() | Qt::WindowMaximized);
-        if (!isMaximized()) {
-            if (QScreen* s = window()->screen()) {
-                setGeometry(s->availableGeometry());
+        this->setWindowState(this->windowState() | Qt::WindowMaximized);
+        if (!this->isMaximized()) {
+            if (QScreen* s = this->window()->screen()) {
+                this->setGeometry(s->availableGeometry());
             }
         }
-    }, QKeySequence("F11"));
+    });
     
     viewMenu->addSeparator();
     viewMenu->addAction("Reset Default Layout", [this]() {

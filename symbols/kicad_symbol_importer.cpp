@@ -482,17 +482,30 @@ SymbolDefinition importSymbolFromContent(const QString& content, const QString& 
             def.setSpiceModelName(dev); // Use as default model type/name if name not set
             if (dev == "SUBCKT") def.setModelName(dev);
         }
-        else if (keyL == "sim.pins") {
-            // KiCad format: "1=A 2=K" or "1=C 2=B 3=E"
-            QStringList pairs = val.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+        else if (keyL == "sim.pins" || keyL == "spice_node_sequence" || keyL == "spice_node_order") {
+            // KiCad modern format: "1=A 2=K" or "1=C 2=B 3=E"
+            // KiCad legacy format: "1 2 3 4" (space separated list of symbol pin numbers in SPICE order)
+            QStringList parts = val.split(QRegularExpression("[\\s,;]+"), Qt::SkipEmptyParts);
             QMap<int, QString> mapping;
-            for (const QString& pair : pairs) {
-                QStringList kv = pair.split('=');
-                if (kv.size() == 2) {
+            bool isLegacy = !val.contains('=');
+            
+            if (isLegacy) {
+                // In legacy Spice_Node_Sequence, the index is the SPICE node position, 
+                // and the value is the SYMBOL pin number.
+                for (int i = 0; i < parts.size(); ++i) {
                     bool ok;
-                    int pinNum = kv[0].toInt(&ok);
-                    if (ok) mapping[pinNum] = kv[1].trimmed();
-                    else mapping[mapping.size() + 1] = kv[1].trimmed(); // Fallback
+                    int symPin = parts[i].toInt(&ok);
+                    if (ok) mapping[symPin] = QString::number(i + 1); // Mapping symPin -> subcktPinPos
+                }
+            } else {
+                for (const QString& pair : parts) {
+                    QStringList kv = pair.split('=');
+                    if (kv.size() == 2) {
+                        bool ok;
+                        int pinNum = kv[0].toInt(&ok);
+                        if (ok) mapping[pinNum] = kv[1].trimmed();
+                        else mapping[mapping.size() + 1] = kv[1].trimmed(); // Fallback
+                    }
                 }
             }
             if (!mapping.isEmpty()) def.setSpiceNodeMapping(mapping);

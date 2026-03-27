@@ -3,6 +3,8 @@
 
 #include "schematic_tool.h"
 #include <QSet>
+#include <QList>
+#include <QGraphicsView>
 
 class SchematicSelectTool : public SchematicTool {
     Q_OBJECT
@@ -69,6 +71,14 @@ private:
     bool m_isDragging = false;
     bool m_axisLockActive = false;
     bool m_axisLockHorizontal = true;
+    bool m_rigidGroupMove = false;
+    QList<class SchematicItem*> m_dragSelection;
+    QGraphicsView::ViewportUpdateMode m_prevViewportUpdateMode = QGraphicsView::FullViewportUpdate;
+    bool m_dragViewOptimized = false;
+    bool m_prevAntialiasing = true;
+    bool m_prevTextAntialiasing = true;
+    QPointF m_lastAppliedTotalMove;
+    bool m_hasLastAppliedMove = false;
     
     // Rubber band selection
     bool m_rubberBandActive = false;

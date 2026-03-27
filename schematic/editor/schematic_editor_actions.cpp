@@ -493,6 +493,7 @@ void SchematicEditor::onPaste() {
     m_scene->clearSelection();
     for (auto item : pastedItems) item->setSelected(true);
     statusBar()->showMessage(QString("Pasted %1 item(s)").arg(count), 2000);
+    beginMouseFollowPlacement(pastedItems, "Paste");
 }
 
 void SchematicEditor::onDuplicate() {
@@ -539,6 +540,7 @@ void SchematicEditor::onDuplicate() {
     m_scene->clearSelection();
     for (auto item : duplicatedItems) item->setSelected(true);
     statusBar()->showMessage(QString("Duplicated %1 item(s)").arg(count), 2000);
+    beginMouseFollowPlacement(duplicatedItems, "Duplicate");
 }
 
 void SchematicEditor::onSelectAll() {

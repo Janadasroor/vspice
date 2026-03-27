@@ -760,27 +760,15 @@ void SchematicEditor::createToolBar() {
     // Zoom & View
     QAction* zoomInAct = mainToolbar->addAction(getThemeIcon(":/icons/view_zoom_in.svg"), "Zoom In");
     zoomInAct->setShortcut(QKeySequence::ZoomIn);
-    connect(zoomInAct, &QAction::triggered, this, [this]() {
-        m_view->setCurrentTool("Zoom Area");
-        if (auto* z = qobject_cast<SchematicZoomAreaTool*>(m_view->currentTool())) {
-            z->setDefaultMode(SchematicZoomAreaTool::ZoomMode::ZoomIn);
-            m_view->setCursor(z->cursor());
-            m_view->viewport()->setCursor(z->cursor());
-        }
-        statusBar()->showMessage("Zoom In tool active", 2000);
-    });
+    connect(zoomInAct, &QAction::triggered, this, &SchematicEditor::onZoomIn);
+
+    QAction* zoomFitAct = mainToolbar->addAction(getThemeIcon(":/icons/view_fit.svg"), "Zoom to Fit");
+    zoomFitAct->setShortcut(QKeySequence("F"));
+    connect(zoomFitAct, &QAction::triggered, this, &SchematicEditor::onZoomFit);
     
     QAction* zoomOutAct = mainToolbar->addAction(getThemeIcon(":/icons/view_zoom_out.svg"), "Zoom Out");
     zoomOutAct->setShortcut(QKeySequence::ZoomOut);
-    connect(zoomOutAct, &QAction::triggered, this, [this]() {
-        m_view->setCurrentTool("Zoom Area");
-        if (auto* z = qobject_cast<SchematicZoomAreaTool*>(m_view->currentTool())) {
-            z->setDefaultMode(SchematicZoomAreaTool::ZoomMode::ZoomOut);
-            m_view->setCursor(z->cursor());
-            m_view->viewport()->setCursor(z->cursor());
-        }
-        statusBar()->showMessage("Zoom Out tool active", 2000);
-    });
+    connect(zoomOutAct, &QAction::triggered, this, &SchematicEditor::onZoomOut);
 
     mainToolbar->addSeparator();
 
@@ -792,6 +780,27 @@ void SchematicEditor::createToolBar() {
     mainToolbar->addWidget(m_breadcrumbWidget);
     updateBreadcrumbs();
     
+    mainToolbar->addSeparator();
+    
+    QLabel* filterLabel = new QLabel(" Filter: ");
+    filterLabel->setStyleSheet("font-size: 11px; color: #6b7280;");
+    mainToolbar->addWidget(filterLabel);
+
+    QComboBox* filterCombo = new QComboBox();
+    filterCombo->addItems({"All", "Components Only", "Wires Only"});
+    filterCombo->setToolTip("Selection Filter");
+    filterCombo->setStyleSheet(
+        "QComboBox { background: #ffffff; border: 1px solid #d1d5db; border-radius: 4px; padding: 2px 4px; font-size: 11px; min-width: 100px; }"
+        "QComboBox::drop-down { border: none; }"
+        "QComboBox::down-arrow { image: url(:/icons/arrow_down.svg); width: 10px; }"
+    );
+    connect(filterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        m_view->setSelectionFilter(static_cast<SchematicView::SelectionFilter>(index));
+        statusBar()->showMessage(QString("Selection filter: %1").arg(
+            index == 0 ? "All" : (index == 1 ? "Components" : "Wires")), 2000);
+    });
+    mainToolbar->addWidget(filterCombo);
+
     mainToolbar->addSeparator();
 
     // Manipulation (Instant)
@@ -1038,6 +1047,7 @@ void SchematicEditor::createToolBar() {
     };
 
     // Wiring Tools
+    addSchTool("Hand", "Pan (Hand Tool) [H]", "tool_select", "H"); // Using tool_select icon until hand icon is added
     addSchTool("Select", "Select", "tool_select", "Esc");
     addSchTool("Probe", "Probe Signal", "tool_probe", "K");
     addSchTool("Voltage Probe", "Voltage Probe", "tool_voltage_probe", "Shift+K");
@@ -1626,6 +1636,10 @@ void SchematicEditor::createStatusBar() {
     m_coordLabel = new QLabel("X: 0.00  Y: 0.00 mm");
     m_coordLabel->setMinimumWidth(200);
     statusBar()->addWidget(m_coordLabel);
+
+    m_netLabel = new QLabel("Net: (none)");
+    m_netLabel->setMinimumWidth(150);
+    statusBar()->addWidget(m_netLabel);
 
     // Unit Switcher
     auto* unitCombo = new QComboBox();

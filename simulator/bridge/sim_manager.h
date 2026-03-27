@@ -61,6 +61,7 @@ private:
 
     SimControl* m_control = nullptr;
     bool m_paused = false;
+    bool m_resultsPending = false;
     SimAnalysisConfig m_lastConfig;
 
     QGraphicsScene* m_rtScene = nullptr;

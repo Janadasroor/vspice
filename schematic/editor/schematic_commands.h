@@ -73,6 +73,13 @@ private:
     QList<SchematicItem*> m_items;
     QList<QPointF> m_oldPositions;
     QList<QPointF> m_newPositions;
+
+    struct WireRubberBand {
+        class WireItem* wire;
+        int pointIndex;
+        QPointF originalPoint;
+    };
+    QList<WireRubberBand> m_rubberBands;
 };
 
 /**

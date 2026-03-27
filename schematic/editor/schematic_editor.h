@@ -169,6 +169,7 @@ private slots:
 protected:
     void closeEvent(QCloseEvent* event) override;
     bool event(QEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     bool m_updatingProperties;
@@ -207,6 +208,8 @@ private:
     bool editDirectiveWithSimulationSetup(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem);
     bool editDirectiveWithMeanDialog(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem);
     bool editDirectiveWithGenericDialog(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem);
+    void beginMouseFollowPlacement(const QList<SchematicItem*>& items, const QString& actionLabel);
+    void endMouseFollowPlacement(bool cancel);
 
     // UI Components
     QTabWidget *m_workspaceTabs;
@@ -237,6 +240,10 @@ private:
 
     class SimulationPanel* m_simulationPanel = nullptr;
     SimulationSetupDialog::Config m_simConfig;
+    bool m_mouseFollowPlacementActive = false;
+    QList<SchematicItem*> m_mouseFollowItems;
+    QList<QPointF> m_mouseFollowOffsets;
+    QString m_mouseFollowActionLabel;
     QMap<QString, class LogicAnalyzerWindow*> m_laWindows;
 
     QDockWidget *m_geminiDock;
@@ -275,6 +282,7 @@ private:
     QLabel *m_coordLabel;
     QLabel *m_gridLabel;
     QLabel *m_layerLabel;
+    QLabel *m_netLabel;
 
     // File state
     QString m_currentFilePath;

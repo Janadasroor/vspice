@@ -12,9 +12,14 @@
 #include <functional>
 #include <QUrl>
 #include <QLabel>
+#include <QList>
 
 class QTextEdit;
 class QTimer;
+class QDialog;
+class QListWidget;
+class QPlainTextEdit;
+class QToolButton;
 
 /**
  * @brief Reusable AI Assistant panel for both dock widgets and dialogs.
@@ -37,6 +42,9 @@ public:
     void askPrompt(const QString& prompt, bool includeContext = true);
 
     void setContextProvider(std::function<QString()> provider) { m_contextProvider = provider; }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 public slots:
     void clearHistory();
@@ -64,15 +72,22 @@ private slots:
     void onRefreshModelsClicked();
     void onModelFetchFinished(int exitCode, QProcess::ExitStatus exitStatus);
     void onDismissErrorClicked();
+    void onViewErrorDetailsClicked();
 
 private:
+    struct ErrorRecord {
+        QString timestamp;
+        QString title;
+        QString details;
+    };
+
     QGraphicsScene* m_scene;
     class NetManager* m_netManager = nullptr;
     class QUndoStack* m_undoStack = nullptr;
     QTextBrowser* m_chatArea;
     class SyntaxHighlighter* m_highlighter = nullptr;
     QTextEdit* m_thinkingDisplay;
-    QLineEdit* m_inputField;
+    QTextEdit* m_inputField;
     QPushButton* m_sendButton;
     QPushButton* m_clearButton;
     QPushButton* m_saveKeyButton = nullptr;
@@ -95,6 +110,13 @@ private:
     QWidget* m_errorBanner = nullptr;
     QLabel* m_errorLabel = nullptr;
     QPushButton* m_errorDismissButton = nullptr;
+    QPushButton* m_errorDetailsButton = nullptr;
+    QList<ErrorRecord> m_errorHistory;
+    QDialog* m_errorDialog = nullptr;
+    QListWidget* m_errorHistoryList = nullptr;
+    QTextEdit* m_errorSummaryView = nullptr;
+    QPlainTextEdit* m_errorRawView = nullptr;
+    QToolButton* m_errorRawToggle = nullptr;
 
     // Private Process for this panel instance
     QProcess* m_process = nullptr;
@@ -105,6 +127,8 @@ private:
     QString m_errorBuffer;
     QString m_leftover;
     QString m_lastGeneratedCode;
+    QString m_lastErrorTitle;
+    QString m_lastErrorDetails;
     int m_responseStartPos = 0;
     bool m_isWorking = false;
     QString m_mode = "schematic";
@@ -117,8 +141,15 @@ private:
     std::function<QString()> m_contextProvider;
 
     void refreshModelList();
-    void showErrorBanner(const QString& errorText);
+    void showErrorBanner(const QString& summaryText, const QString& detailsText = QString());
     void hideErrorBanner();
+    void showErrorDialog(const QString& title, const QString& detailsText);
+    void reportError(const QString& title, const QString& detailsText, bool openDialog);
+    void appendErrorHistory(const QString& title, const QString& detailsText);
+    void ensureErrorDialog();
+    void populateErrorDialogHistory();
+    void selectErrorHistoryRow(int row);
+    void updateSendEnabled();
 };
 
 #endif // GEMINI_PANEL_H

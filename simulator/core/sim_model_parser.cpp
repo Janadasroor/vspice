@@ -300,16 +300,42 @@ bool SimModelParser::parseLibrary(
 
     std::vector<LogicalLine> logicalLines;
     {
+        const size_t kMaxLogicalLines = 200000;
+        const size_t kMaxLineLength = 65536;
+
         std::istringstream stream(content);
         std::string raw;
         int lineNo = 0;
         while (std::getline(stream, raw)) {
             ++lineNo;
+            if (raw.size() > kMaxLineLength) {
+                if (diagnostics) {
+                    SimParseDiagnostic d;
+                    d.severity = SimParseDiagnosticSeverity::Warning;
+                    d.line = lineNo;
+                    d.message = "Line too long (truncated).";
+                    diagnostics->push_back(d);
+                }
+                raw.resize(kMaxLineLength);
+            }
+
             const std::string t = trim(raw);
             if (!logicalLines.empty() && !t.empty() && t[0] == '+') {
-                logicalLines.back().text += " " + trim(t.substr(1));
+                if (logicalLines.back().text.size() + t.size() < kMaxLineLength * 2) {
+                     logicalLines.back().text += " " + trim(t.substr(1));
+                }
             } else {
                 logicalLines.push_back({lineNo, raw});
+                if (logicalLines.size() > kMaxLogicalLines) {
+                     if (diagnostics) {
+                         SimParseDiagnostic d;
+                         d.severity = SimParseDiagnosticSeverity::Warning;
+                         d.line = lineNo;
+                         d.message = "Library exceeds maximum logical line limit. Truncating.";
+                         diagnostics->push_back(d);
+                     }
+                     break;
+                }
             }
         }
     }

@@ -345,9 +345,17 @@ void SchematicView::wheelEvent(QWheelEvent *event) {
 void SchematicView::mousePressEvent(QMouseEvent *event) {
     setFocus();
     if (m_currentTool) m_currentTool->ensureView(this);
+
+    if (m_spacePressed && event->button() == Qt::LeftButton) {
+        QGraphicsView::mousePressEvent(event);
+        event->accept();
+        return;
+    }
+
+    // Manual panning for Middle/Right button still uses m_isPanning
     if (event->button() == Qt::MiddleButton) {
         m_isPanning = true;
-        m_lastPanPoint = event->pos();
+        m_lastPanPoint = event->globalPosition().toPoint();
         m_panStartPos = event->pos(); // Track start to differentiate from menu click
         setCursor(Qt::ClosedHandCursor);
         event->accept();
@@ -379,6 +387,12 @@ void SchematicView::mousePressEvent(QMouseEvent *event) {
             curr = curr->parentItem();
         }
 
+        // Apply selection filter
+        if (sItem) {
+            if (m_selectionFilter == SelectComponents && sItem->itemType() == SchematicItem::WireType) sItem = nullptr;
+            else if (m_selectionFilter == SelectWires && sItem->itemType() != SchematicItem::WireType) sItem = nullptr;
+        }
+
         // 3. Interaction logic
         if (sItem) {
             // Right-click on item: Select it and prepare for context menu.
@@ -397,7 +411,7 @@ void SchematicView::mousePressEvent(QMouseEvent *event) {
 
         // Start panning state
         m_isPanning = true;
-        m_lastPanPoint = event->pos();
+        m_lastPanPoint = event->globalPosition().toPoint();
         m_panStartPos = event->pos();
         setCursor(Qt::ClosedHandCursor);
         event->accept();
@@ -598,17 +612,25 @@ void SchematicView::mouseMoveEvent(QMouseEvent *event) {
         viewport()->update();
     }
 
+    if (m_spacePressed) {
+        QGraphicsView::mouseMoveEvent(event);
+        event->accept();
+        return;
+    }
+
     if (m_isPanning) {
         // Safety: ensure panning buttons are still held
         if (!(event->buttons() & (Qt::RightButton | Qt::MiddleButton))) {
             m_isPanning = false;
-            if (m_currentTool) setCursor(m_currentTool->cursor());
-            else setCursor(Qt::ArrowCursor);
+            if (m_currentTool) viewport()->setCursor(m_currentTool->cursor());
+            else viewport()->setCursor(Qt::ArrowCursor);
         } else {
-            QPoint delta = event->pos() - m_lastPanPoint;
-            m_lastPanPoint = event->pos();
-            horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
-            verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+            QPoint delta = event->globalPosition().toPoint() - m_lastPanPoint;
+            if (delta.manhattanLength() > 1) { // Filter out tiny jitters
+                m_lastPanPoint = event->globalPosition().toPoint();
+                horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
+                verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+            }
             event->accept();
             return;
         }
@@ -753,15 +775,17 @@ void SchematicView::mouseReleaseEvent(QMouseEvent *event) {
         m_isPanning = false;
         
         // Restore tool cursor
-        if (m_currentTool) {
-            setCursor(m_currentTool->cursor());
+        if (m_spacePressed) {
+            viewport()->setCursor(Qt::OpenHandCursor);
+        } else if (m_currentTool) {
+            viewport()->setCursor(m_currentTool->cursor());
         } else {
-            setCursor(Qt::ArrowCursor);
+            viewport()->setCursor(Qt::ArrowCursor);
         }
 
         // If right click moved more than 5 pixels, it's a pan, don't show menu
         if (event->button() == Qt::RightButton) {
-            if ((event->pos() - m_panStartPos).manhattanLength() > 5) {
+            if ((event->pos() - m_panStartPos).manhattanLength() > 10) {
                 event->accept();
                 return;
             }
@@ -849,6 +873,20 @@ void SchematicView::mouseDoubleClickEvent(QMouseEvent *event) {
 }
 
 void SchematicView::keyPressEvent(QKeyEvent *event) {
+    if (event->key() == Qt::Key_H && !event->isAutoRepeat()) {
+        setHandToolActive(!m_handToolActive);
+        event->accept();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        m_spacePressed = true;
+        setDragMode(QGraphicsView::ScrollHandDrag);
+        viewport()->setCursor(Qt::OpenHandCursor);
+        event->accept();
+        return;
+    }
+
     if (m_currentTool) m_currentTool->ensureView(this);
     // Smart Context-Aware Delete: Hover takes precedence
     if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
@@ -950,7 +988,26 @@ void SchematicView::keyPressEvent(QKeyEvent *event) {
     }
 
     // Default behavior (Propagate to parent for shortcuts)
+    if (event->key() == Qt::Key_Escape && m_currentTool && m_currentTool->name() != "Select") {
+        setCurrentTool("Select");
+        event->accept();
+        return;
+    }
+
     QGraphicsView::keyPressEvent(event);
+}
+
+void SchematicView::keyReleaseEvent(QKeyEvent *event) {
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        m_spacePressed = false;
+        m_isPanning = false;
+        setDragMode(QGraphicsView::NoDrag);
+        if (m_currentTool) viewport()->setCursor(m_currentTool->cursor());
+        else viewport()->unsetCursor();
+        event->accept();
+        return;
+    }
+    QGraphicsView::keyReleaseEvent(event);
 }
 
 QString SchematicView::getNextReference(const QString& prefix) {
@@ -1559,4 +1616,20 @@ void SchematicView::clearProbeStartMarker() {
     scene()->removeItem(m_probeStartMarker);
     delete m_probeStartMarker;
     m_probeStartMarker = nullptr;
+}
+
+void SchematicView::setHandToolActive(bool active) {
+    if (m_handToolActive == active) return;
+    m_handToolActive = active;
+    
+    if (m_handToolActive) {
+        setDragMode(QGraphicsView::ScrollHandDrag);
+        viewport()->setCursor(Qt::OpenHandCursor);
+    } else {
+        setDragMode(QGraphicsView::NoDrag);
+        if (m_currentTool) viewport()->setCursor(m_currentTool->cursor());
+        else viewport()->unsetCursor();
+    }
+    
+    emit toolChanged(m_handToolActive ? "Hand" : (m_currentTool ? m_currentTool->name() : "Select"));
 }

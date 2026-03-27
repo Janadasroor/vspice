@@ -97,9 +97,13 @@ void SimNetlist::flatten() {
     
     // Recursive expansion function
     // Recursive expansion function
-    std::function<void(const std::vector<SimComponentInstance>&, const std::string&, const std::map<int, int>&, std::map<std::string, double>, const SimSubcircuit*)> expand;
+    std::function<void(const std::vector<SimComponentInstance>&, const std::string&, const std::map<int, int>&, std::map<std::string, double>, const SimSubcircuit*, int)> expand;
     
-    expand = [&](const std::vector<SimComponentInstance>& comps, const std::string& prefix, const std::map<int, int>& nodeMapping, std::map<std::string, double> scopeParams, const SimSubcircuit* currentSubDef) {
+    expand = [&](const std::vector<SimComponentInstance>& comps, const std::string& prefix, const std::map<int, int>& nodeMapping, std::map<std::string, double> scopeParams, const SimSubcircuit* currentSubDef, int depth) {
+        if (depth > 50) {
+            addDiagnostic("Subcircuit expansion depth limit reached at '" + prefix + "'. Possible circular reference.");
+            return;
+        }
         for (const auto& inst : comps) {
             if (!inst.subcircuitName.empty()) {
                 const SimSubcircuit* sub = findSubcircuit(inst.subcircuitName);
@@ -133,7 +137,7 @@ void SimNetlist::flatten() {
                     subNodeMapping[internalNode] = addNode(newName);
                 }
 
-                expand(sub->components, prefix + inst.name + ":", subNodeMapping, subParams, sub);
+                expand(sub->components, prefix + inst.name + ":", subNodeMapping, subParams, sub, depth + 1);
             } else {
                 SimComponentInstance flatInst = inst;
                 flatInst.name = prefix + inst.name;
@@ -166,7 +170,7 @@ void SimNetlist::flatten() {
     std::map<int, int> identityMap;
     for (size_t i = 0; i < m_nodes.size(); ++i) identityMap[i] = (int)i;
 
-    expand(m_components, "", identityMap, m_parameters, nullptr);
+    expand(m_components, "", identityMap, m_parameters, nullptr, 0);
     m_components = flatComponents;
 }
 

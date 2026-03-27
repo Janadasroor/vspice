@@ -30,6 +30,7 @@ public:
     const SimModel* findModel(const QString& name) const;
     const SimSubcircuit* findSubcircuit(const QString& name) const;
     QString findLibraryPath(const QString& name) const;
+    void loadLibraryFile(const QString& path);
 
 signals:
     void libraryReloaded();
@@ -40,7 +41,6 @@ private:
     ~ModelLibraryManager();
     
     void scanDirectory(const QString& path);
-    void loadLibraryFile(const QString& path);
 
     mutable QReadWriteLock m_lock;
     QVector<SpiceModelInfo> m_modelIndex;

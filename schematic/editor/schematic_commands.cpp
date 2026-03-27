@@ -203,6 +203,35 @@ MoveItemCommand::MoveItemCommand(QGraphicsScene* scene, QList<SchematicItem*> it
     , m_items(items)
     , m_oldPositions(oldPositions)
     , m_newPositions(newPositions) {
+    
+    if (!m_scene) return;
+    
+    // Build rubber banding list: find wires connected to moved items
+    QList<WireItem*> allWires;
+    for (QGraphicsItem* it : m_scene->items()) {
+        if (WireItem* w = dynamic_cast<WireItem*>(it)) allWires.append(w);
+    }
+    
+    for (int i = 0; i < m_items.size(); ++i) {
+        SchematicItem* item = m_items[i];
+        if (!item || isConnectivitySensitiveSchematicItem(item)) continue;
+        
+        QList<QPointF> pinPoints = item->connectionPoints();
+        for (const QPointF& pinPt : pinPoints) {
+            for (WireItem* wire : allWires) {
+                if (m_items.contains(wire)) continue;
+                
+                QList<QPointF> wPts = wire->points();
+                if (wPts.size() < 2) continue;
+                
+                if (QLineF(pinPt, wPts.first()).length() < 1.0) {
+                    m_rubberBands.append({wire, 0, wPts.first()});
+                } else if (QLineF(pinPt, wPts.last()).length() < 1.0) {
+                    m_rubberBands.append({wire, (int)wPts.size() - 1, wPts.last()});
+                }
+            }
+        }
+    }
 }
 
 void MoveItemCommand::undo() {
@@ -211,17 +240,20 @@ void MoveItemCommand::undo() {
             m_items[i]->setPos(m_oldPositions[i]);
         }
     }
-    if (m_scene) {
-        bool hasWire = false;
-        for (SchematicItem* item : m_items) {
-            if (isConnectivitySensitiveSchematicItem(item)) {
-                hasWire = true;
-                break;
-            }
+
+    // Restore wires
+    for (const auto& rb : m_rubberBands) {
+        QList<QPointF> pts = rb.wire->points();
+        if (rb.pointIndex < pts.size()) {
+            pts[rb.pointIndex] = rb.originalPoint;
+            rb.wire->setPoints(pts);
         }
-        if (hasWire) SchematicConnectivity::updateVisualConnections(m_scene);
     }
-    if (m_scene) m_scene->update();
+
+    if (m_scene) {
+        SchematicConnectivity::updateVisualConnections(m_scene);
+        m_scene->update();
+    }
 }
 
 void MoveItemCommand::redo() {
@@ -230,17 +262,23 @@ void MoveItemCommand::redo() {
             m_items[i]->setPos(m_newPositions[i]);
         }
     }
-    if (m_scene) {
-        bool hasWire = false;
-        for (SchematicItem* item : m_items) {
-            if (isConnectivitySensitiveSchematicItem(item)) {
-                hasWire = true;
-                break;
+
+    // Calculate delta and move wire endpoints
+    if (!m_items.isEmpty() && !m_oldPositions.isEmpty() && !m_newPositions.isEmpty()) {
+        QPointF delta = m_newPositions[0] - m_oldPositions[0];
+        for (const auto& rb : m_rubberBands) {
+            QList<QPointF> pts = rb.wire->points();
+            if (rb.pointIndex < pts.size()) {
+                pts[rb.pointIndex] = rb.originalPoint + delta;
+                rb.wire->setPoints(pts);
             }
         }
-        if (hasWire) SchematicConnectivity::updateVisualConnections(m_scene);
     }
-    if (m_scene) m_scene->update();
+
+    if (m_scene) {
+        SchematicConnectivity::updateVisualConnections(m_scene);
+        m_scene->update();
+    }
 }
 
 bool MoveItemCommand::mergeWith(const QUndoCommand* other) {

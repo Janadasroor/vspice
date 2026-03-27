@@ -24,6 +24,50 @@
 using Flux::Model::SymbolDefinition;
 
 namespace {
+bool naturalPinLessThan(const QString& s1, const QString& s2) {
+    bool ok1, ok2;
+    int n1 = s1.toInt(&ok1);
+    int n2 = s2.toInt(&ok2);
+    if (ok1 && ok2) return n1 < n2;
+    if (ok1) return true;
+    if (ok2) return false;
+    return s1 < s2;
+}
+
+QString fuzzyMatchPin(const QMap<QString, QString>& pins, const QString& subPinName) {
+    const QString sub = subPinName.trimmed().toUpper();
+    // Try exact match first
+    if (pins.contains(sub)) return pins.value(sub);
+    
+    // Try with underscores removed
+    QString simplified = sub;
+    simplified.remove('_');
+    if (pins.contains(simplified)) return pins.value(simplified);
+
+    // Common Op-Amp patterns
+    if (sub.contains("IN") && sub.contains("P")) {
+        for (const QString& k : {"+", "IN+", "IN_P", "IP", "VIN+"}) 
+            if (pins.contains(k)) return pins.value(k);
+    }
+    if (sub.contains("IN") && (sub.contains("N") || sub.contains("M"))) {
+        for (const QString& k : {"-", "IN-", "IN_N", "IN_M", "IM", "VIN-"}) 
+            if (pins.contains(k)) return pins.value(k);
+    }
+    if (sub.contains("OUT")) {
+        for (const QString& k : {"OUT", "O", "VOUT"}) 
+            if (pins.contains(k)) return pins.value(k);
+    }
+    if (sub.contains("VCC") || sub.contains("VDD") || sub.contains("VPP")) {
+        for (const QString& k : {"V+", "VCC", "VDD", "VPP", "PVP"}) 
+            if (pins.contains(k)) return pins.value(k);
+    }
+    if (sub.contains("VEE") || sub.contains("VSS") || sub.contains("VNN") || sub.contains("GND")) {
+        for (const QString& k : {"V-", "VEE", "VSS", "VNN", "GND", "0"}) 
+            if (pins.contains(k)) return pins.value(k);
+    }
+    
+    return QString();
+}
 
 QString spicetypeToString(SimComponentType type) {
     switch (type) {
@@ -150,6 +194,14 @@ QString inferPowerVoltage(const QString& netName, const QString& valueText) {
     }
 
     const QString upperNet = netName.toUpper();
+    const QString upperVal = valueText.toUpper();
+    
+    // Explicit negative indicators
+    if (upperNet.contains("VEE") || upperNet.contains("VSS") || upperNet.contains("V-") ||
+        upperVal.contains("VEE") || upperVal.contains("VSS") || upperVal.contains("V-")) {
+        return "-5"; // Fallback to a negative value to trigger VEE mapping
+    }
+
     if (upperNet.contains("12V")) return "12";
     if (upperNet.contains("9V")) return "9";
     if (upperNet.contains("5V")) return "5";
@@ -463,12 +515,11 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
     QList<NetlistNet> nets = NetlistGenerator::buildConnectivity(scene, projectDir, nullptr);
 
     // Build mapping: ComponentRef -> map(PinName -> NetName)
+    // Gather pins from ALL units of the same component reference across the entire scene/hierarchy.
     QMap<QString, QMap<QString, QString>> componentPins;
     for (const auto& net : nets) {
         QString netName = net.name;
-        // SPICE ground is always 0
         if (netName.toUpper() == "GND" || netName == "0") netName = "0";
-        
         for (const auto& pin : net.pins) {
             componentPins[pin.componentRef][pin.pinName] = netName;
         }
@@ -528,7 +579,17 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         } else if (ModelLibraryManager::instance().findSubcircuit(modelName) || 
                    comp.reference.startsWith("X", Qt::CaseInsensitive) || 
                    typeLower.contains("amplifier") || typeLower.contains("opamp") || typeLower.contains("ic")) {
-                
+            // If it's a subcircuit, we MUST ensure we have its pin names/order from the model library
+            const SimSubcircuit* sub = ModelLibraryManager::instance().findSubcircuit(modelName);
+            if (!sub) {
+                // Force a quick indexing of the file if it's external, just in case
+                QString subLib = ModelLibraryManager::instance().findLibraryPath(modelName);
+                if (!subLib.isEmpty()) {
+                    ModelLibraryManager::instance().loadLibraryFile(subLib);
+                    sub = ModelLibraryManager::instance().findSubcircuit(modelName);
+                }
+            }
+
             QString subLib = ModelLibraryManager::instance().findLibraryPath(modelName);
             if (!subLib.isEmpty()) {
                 if (subLib.endsWith(".lib", Qt::CaseInsensitive)) {
@@ -536,6 +597,8 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                 } else {
                     includePaths.insert(subLib);
                 }
+                // Ensure ModelLibraryManager has indexed this file so we can find subcircuit pin names for mapping
+                ModelLibraryManager::instance().loadLibraryFile(subLib);
                 switchModelsAdded.insert(modelName.toLower());
             }
         } else if (!switchModelsAdded.contains(modelName.toLower()) && comp.reference.startsWith("D", Qt::CaseInsensitive)) {
@@ -710,7 +773,48 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         netlist += "\n";
     }
 
-    // 3. Export components
+    // 3. Global Power Net Mapping for hidden pin auto-connection
+    QMap<QString, QString> powerNetMapping; // "VCC" -> "Net5", "VEE" -> "Net6"
+    QSet<QString> emittedPowerSymbols; // Track power symbols to avoid processing duplicates
+    for (const auto& comp : pkg.components) {
+        if (comp.type == SchematicItem::PowerType) {
+            QString ref = comp.reference;
+            QMap<QString, QString> pins = componentPins.value(ref);
+            QString netName = pickPowerNetName(pins, comp.value);
+            
+            // For power symbols, we only skip if it's the SAME reference AND SAME net.
+            QString emitKey = ref + ":" + netName;
+            if (emittedPowerSymbols.contains(emitKey)) continue;
+            emittedPowerSymbols.insert(emitKey);
+            
+            if (netName.isEmpty()) continue;
+            
+            QString v = inferPowerVoltage(netName, comp.value);
+            double val = 0.0;
+            SimValueParser::parseSpiceNumber(v, val);
+            
+            const QString uNet = netName.trimmed().toUpper();
+            const QString uVal = comp.value.trimmed().toUpper();
+
+            if (val > 0) {
+                if (!powerNetMapping.contains("VCC") || uNet.contains("VCC"))
+                    powerNetMapping["VCC"] = netName;
+            } else if (val < 0) {
+                if (!powerNetMapping.contains("VEE") || uNet.contains("VEE"))
+                    powerNetMapping["VEE"] = netName;
+            }
+            
+            // Explicit name matching
+            if (uNet == "VCC" || uNet == "VDD" || uNet == "V+" || uVal == "VCC" || uVal == "V+") 
+                powerNetMapping["VCC"] = netName;
+            else if (uNet == "VEE" || uNet == "VSS" || uNet == "V-" || uVal == "VEE" || uVal == "V-") 
+                powerNetMapping["VEE"] = netName;
+            else if (uNet == "GND" || uNet == "0" || uVal == "GND" || uVal == "0") 
+                powerNetMapping["GND"] = "0";
+        }
+    }
+
+    // 4. Export components
     QMap<QString, QString> powerNetVoltages;
     QStringList savedCurrentVectors;
     QSet<QString> emittedRefs;
@@ -722,29 +826,31 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
 
         QString ref = comp.reference;
         const QString refKey = ref.trimmed().toUpper();
+        
+        const int type = comp.type;
+        QString value = comp.value;
+        const QString typeName = comp.typeName;
+
+        // Power symbols often share the same '#' reference but represent different nets.
+        // We handle them separately before the general duplicate check.
+        if (type == SchematicItem::PowerType) {
+            const QMap<QString, QString> pins = componentPins.value(ref);
+            QString netName = pickPowerNetName(pins, value);
+            if (!netName.isEmpty() && netName.toUpper() != "GND" && netName != "0") {
+                const QString v = inferPowerVoltage(netName, value);
+                powerNetVoltages[netName] = v;
+            }
+            continue;
+        }
+
         if (emittedRefs.contains(refKey)) {
             netlist += "* Skipping duplicate packaged unit " + ref + "\n";
             continue;
         }
         emittedRefs.insert(refKey);
 
-        int type = comp.type;
         QMap<QString, QString> pins = componentPins.value(ref);
         
-        // Handle Power Items separately
-        if (type == SchematicItem::PowerType) {
-            const QMap<QString, QString> pins = componentPins.value(ref);
-            QString netName = pickPowerNetName(pins, comp.value);
-            if (netName.isEmpty()) {
-                qWarning() << "SPICE: skipping power symbol with empty net name:" << ref;
-                continue;
-            }
-            if (netName.toUpper() != "GND" && netName != "0") {
-                const QString v = inferPowerVoltage(netName, comp.value);
-                powerNetVoltages[netName] = v;
-            }
-            continue;
-        }
 
         QString line;
 
@@ -813,16 +919,37 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         }
 
         // --- SPICE Mapper Logic ---
-        QString value = comp.value;
+        value = comp.value;
         if (!comp.spiceModel.isEmpty()) value = comp.spiceModel;
         value = inlinePwlFileIfNeeded(value, projectDir);
         value = formatPwlValueForNetlist(value);
         QStringList nodes;
         const SimSubcircuit* activeSub = nullptr;
-        
+
         // Find Symbol definition to check for custom mapping
         SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(comp.typeName);
         if (sym) {
+            // --- AUTO-CONNECT MISSING PINS (Hidden or unplaced Units) ---
+            // Ensure pinsByNumber is populated with all pins we found in the componentPins map
+            QMap<QString, QString> pins = componentPins.value(ref);
+            
+            // Check symbol definition for pins not present on the schematic
+            const auto& symPins = sym->primitives();
+            for (const auto& prim : symPins) {
+                if (prim.type == Flux::Model::SymbolPrimitive::Pin) {
+                    const QString pNum = QString::number(prim.data.value("number").toInt());
+                    if (!pins.contains(pNum)) {
+                        // Candidate for auto-connection
+                        QString pName = prim.data.value("name").toString().toUpper();
+                        if (pName == "VCC" || pName == "V+" || pName == "VDD") pins[pNum] = powerNetMapping.value("VCC", "VCC");
+                        else if (pName == "VEE" || pName == "V-" || pName == "VSS") pins[pNum] = powerNetMapping.value("VEE", "VEE");
+                        else if (pName == "GND" || pName == "0") pins[pNum] = powerNetMapping.value("GND", "0");
+                        else pins[pNum] = "0"; // Default fallback
+                    }
+                }
+            }
+            
+            // Ensure we use the updated mapping
             if (!sym->spiceModelName().isEmpty() && comp.spiceModel.isEmpty()) value = sym->spiceModelName();
 
             if (!sym->modelName().isEmpty() && comp.spiceModel.isEmpty()) {
@@ -901,6 +1028,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                                 net = pins.value(QString::number(symbolPinNo), QString());
                             }
                             // Fallbacks for symbol sets that key by pin names/tokens.
+                            if (net.isEmpty()) net = fuzzyMatchPin(pins, subPin);
                             if (net.isEmpty()) net = pins.value(subPin, QString());
                             if (net.isEmpty()) net = "0";
 
@@ -947,9 +1075,9 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         }
 
         if (nodes.isEmpty()) {
-            // Default: Fallback to alphabetical sorting of pins
+            // Default: Fallback to natural sorting of pins
             QStringList sortedKeys = pins.keys();
-            std::sort(sortedKeys.begin(), sortedKeys.end());
+            std::sort(sortedKeys.begin(), sortedKeys.end(), naturalPinLessThan);
             
             if (sortedKeys.isEmpty()) {
                 netlist += "* Skipping " + ref + " (no connections)\n";
@@ -1529,14 +1657,16 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
     }
 
     // 4. Generate Voltage Sources for Power Rails
-    netlist += "\n* Power Supply Rails\n";
-    for (auto it = powerNetVoltages.constBegin(); it != powerNetVoltages.constEnd(); ++it) {
-        QString net = it.key();
-        QString voltage = it.value();
-        if (net.trimmed().isEmpty()) continue;
-        
-        QString spiceNet = QString(net).replace(" ", "_");
-        netlist += QString("V_%1 %1 0 DC %2\n").arg(spiceNet, voltage);
+    if (!powerNetVoltages.isEmpty()) {
+        netlist += "\n* Power Supply Rails\n";
+        for (auto it = powerNetVoltages.constBegin(); it != powerNetVoltages.constEnd(); ++it) {
+            QString net = it.key();
+            QString voltage = it.value();
+            if (net.trimmed().isEmpty()) continue;
+            
+            QString spiceNet = QString(net).replace(" ", "_");
+            netlist += QString("V_%1 %2 0 DC %3\n").arg(spiceNet).arg(spiceNet).arg(voltage);
+        }
     }
 
     // 5. Simulation command

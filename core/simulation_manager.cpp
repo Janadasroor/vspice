@@ -230,6 +230,10 @@ bool SimulationManager::loadNetlistInternal(const QString& netlist, bool keepSto
 
 void SimulationManager::stopSimulation() {
 #ifdef HAVE_NGSPICE
+    {
+        std::lock_guard<std::mutex> lock(m_controlMutex);
+        m_streamingControl = nullptr;
+    }
     ngSpice_Command((char*)"bg_halt");
     QMetaObject::invokeMethod(m_bufferTimer, "stop", Qt::QueuedConnection);
     QMetaObject::invokeMethod(this, "processBufferedData", Qt::QueuedConnection);
@@ -254,8 +258,8 @@ void SimulationManager::processBufferedData() {
         if (!m_simBuffer.empty()) {
             m_simBuffer.swap(batch);
         }
+        m_streamingControl = nullptr; // Clear control after swapping final buffer
     }
-    m_streamingControl = nullptr; // Clear control after swapping final buffer
     {
         std::lock_guard<std::mutex> lock(m_logMutex);
         if (!m_logBuffer.empty()) {
@@ -340,7 +344,13 @@ int SimulationManager::cbSendData(pvecvaluesall vecArray, int numStructs, int id
     if (!self || !vecArray) return 0;
 
     // Check for user abort
-    if (self->m_streamingControl && self->m_streamingControl->stopRequested) {
+    SimControl* ctrl = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(self->m_bufferMutex);
+        ctrl = self->m_streamingControl;
+    }
+
+    if (ctrl && ctrl->stopRequested) {
         ngSpice_Command((char*)"bg_halt");
         return 0;
     }
@@ -400,8 +410,11 @@ int SimulationManager::cbSendData(pvecvaluesall vecArray, int numStructs, int id
     }
 
     // Forward to internal callback if registered (e.g. script monitoring)
-    if (self->m_streamingControl && self->m_streamingControl->streamingCallback) {
-        self->m_streamingControl->streamingCallback(time, values);
+    {
+        std::lock_guard<std::mutex> lock(self->m_controlMutex);
+        if (self->m_streamingControl && self->m_streamingControl->streamingCallback) {
+            self->m_streamingControl->streamingCallback(time, values);
+        }
     }
 
     // Buffer for UI/Oscilloscope

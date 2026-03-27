@@ -67,6 +67,7 @@ private:
 
     std::vector<QString> m_logBuffer;
     std::mutex m_logMutex;
+    std::mutex m_controlMutex;
 
     
     // Vector mapping for real-time streaming

@@ -259,10 +259,32 @@ void SchematicEditor::closeEvent(QCloseEvent* event) {
 }
 
 bool SchematicEditor::event(QEvent* event) {
+    if (m_mouseFollowPlacementActive && event->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(event);
+        if (ke && ke->key() == Qt::Key_Escape) {
+            endMouseFollowPlacement(true);
+            statusBar()->showMessage("Placement canceled", 1200);
+            return true;
+        }
+    }
     if (event->type() == QEvent::WindowActivate || event->type() == QEvent::ApplicationActivate) {
         SourceControlManager::instance().scheduleRefresh();
     }
     return QMainWindow::event(event);
+}
+
+bool SchematicEditor::eventFilter(QObject* watched, QEvent* event) {
+    if (m_mouseFollowPlacementActive && m_view && watched == m_view->viewport()) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if (me && me->button() == Qt::LeftButton) {
+                endMouseFollowPlacement(false);
+                statusBar()->showMessage("Placement confirmed", 1200);
+                return true;
+            }
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 // ─── Canvas Setup ────────────────────────────────────────────────────────────
@@ -321,6 +343,12 @@ void SchematicEditor::addSchematicTab(const QString& name) {
         }
     });
     connect(view, &SchematicView::runLiveERC, this, &SchematicEditor::runLiveERC);
+    connect(view, &SchematicView::toolChanged, this, [this](const QString& toolName) {
+        if (m_toolActions.contains(toolName)) {
+            m_toolActions[toolName]->setChecked(true);
+        }
+    });
+
     connect(view, &SchematicView::netProbed, this, [this](const QString& netName) {
         if (m_simulationPanel) {
             if (m_simulationPanel->hasProbe(netName)) {
@@ -524,15 +552,30 @@ void SchematicEditor::onZoomOut() {
 }
 
 void SchematicEditor::onZoomFit() {
-    if (!m_view) return;
+    if (!m_scene || !m_view) return;
+
+    QRectF itemsRect;
+    bool hasItems = false;
+    for (auto* item : m_scene->items()) {
+        if (item == m_pageFrame) continue;
+        
+        if (auto* si = dynamic_cast<SchematicItem*>(item)) {
+            if (si->isSubItem()) continue;
+            
+            itemsRect = itemsRect.united(item->sceneBoundingRect());
+            hasItems = true;
+        }
+    }
+
     QRectF fitRect;
-    if (m_pageFrame) {
+    if (hasItems) {
+        fitRect = itemsRect.adjusted(-100, -100, 100, 100);
+    } else if (m_pageFrame) {
         fitRect = m_pageFrame->sceneBoundingRect().adjusted(-50, -50, 50, 50);
-    } else if (m_scene && m_scene->itemsBoundingRect().isValid()) {
-        fitRect = m_scene->itemsBoundingRect().adjusted(-50, -50, 50, 50);
     } else {
         return;
     }
+
     QTimer::singleShot(0, m_view, [this, fitRect]() {
         m_view->fitInView(fitRect, Qt::KeepAspectRatio);
         m_view->viewport()->update();
@@ -657,6 +700,88 @@ void SchematicEditor::updateCoordinates(QPointF pos) {
         .arg(pos.x() * factor, 0, 'f', unit == "mm" ? 2 : 1)
         .arg(pos.y() * factor, 0, 'f', unit == "mm" ? 2 : 1)
         .arg(unit));
+
+    if (m_netManager) {
+        QString netName = m_netManager->findNetAtPoint(pos);
+        if (netName.isEmpty()) {
+            m_netLabel->setText("Net: (none)");
+        } else {
+            m_netLabel->setText("Net: " + netName);
+        }
+    }
+
+    if (m_mouseFollowPlacementActive && m_view && m_scene && !m_mouseFollowItems.isEmpty()) {
+        const QPointF target = m_view->snapToGridOrPin(pos).point;
+        for (int i = 0; i < m_mouseFollowItems.size(); ++i) {
+            SchematicItem* item = m_mouseFollowItems[i];
+            if (!item || item->scene() != m_scene) continue;
+            item->setPos(target + m_mouseFollowOffsets.value(i));
+        }
+    }
+}
+
+void SchematicEditor::beginMouseFollowPlacement(const QList<SchematicItem*>& items, const QString& actionLabel) {
+    if (!m_view || !m_scene || items.isEmpty()) return;
+
+    endMouseFollowPlacement(false);
+
+    QRectF bounds;
+    bool hasBounds = false;
+    for (SchematicItem* item : items) {
+        if (!item || item->scene() != m_scene) continue;
+        bounds = hasBounds ? bounds.united(item->sceneBoundingRect()) : item->sceneBoundingRect();
+        hasBounds = true;
+    }
+    if (!hasBounds) return;
+
+    const QPointF anchor = bounds.center();
+    m_mouseFollowItems.clear();
+    m_mouseFollowOffsets.clear();
+    for (SchematicItem* item : items) {
+        if (!item || item->scene() != m_scene) continue;
+        m_mouseFollowItems.append(item);
+        m_mouseFollowOffsets.append(item->pos() - anchor);
+    }
+    if (m_mouseFollowItems.isEmpty()) return;
+
+    m_mouseFollowActionLabel = actionLabel;
+    m_mouseFollowPlacementActive = true;
+    m_view->viewport()->installEventFilter(this);
+
+    const QPointF cursorScene = m_view->mapToScene(m_view->mapFromGlobal(QCursor::pos()));
+    const QPointF target = m_view->snapToGridOrPin(cursorScene).point;
+    for (int i = 0; i < m_mouseFollowItems.size(); ++i) {
+        if (SchematicItem* item = m_mouseFollowItems[i]) {
+            item->setPos(target + m_mouseFollowOffsets[i]);
+        }
+    }
+
+    statusBar()->showMessage(QString("%1: move mouse to preview, left click to place, Esc to finish")
+                             .arg(actionLabel), 5000);
+}
+
+void SchematicEditor::endMouseFollowPlacement(bool cancel) {
+    if (!m_mouseFollowPlacementActive) return;
+    QList<SchematicItem*> activeItems = m_mouseFollowItems;
+    if (m_view) {
+        m_view->viewport()->removeEventFilter(this);
+    }
+    m_mouseFollowPlacementActive = false;
+    m_mouseFollowItems.clear();
+    m_mouseFollowOffsets.clear();
+    m_mouseFollowActionLabel.clear();
+
+    if (cancel && m_scene && m_undoStack && !activeItems.isEmpty()) {
+        QList<SchematicItem*> toRemove;
+        for (SchematicItem* item : activeItems) {
+            if (item && item->scene() == m_scene) {
+                toRemove.append(item);
+            }
+        }
+        if (!toRemove.isEmpty()) {
+            m_undoStack->push(new RemoveItemCommand(m_scene, toRemove));
+        }
+    }
 }
 
 // ─── Tool Selection ─────────────────────────────────────────────────────────
@@ -667,6 +792,14 @@ void SchematicEditor::onToolSelected() {
 
     QString toolName = action->data().toString();
     if (toolName.isEmpty()) return;
+
+    if (toolName == "Hand") {
+        m_view->setHandToolActive(true);
+        statusBar()->showMessage("Hand tool active: Click and drag to pan (H to toggle)", 3000);
+        return;
+    } else {
+        m_view->setHandToolActive(false);
+    }
 
     m_view->setCurrentTool(toolName);
 
