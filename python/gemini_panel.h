@@ -96,6 +96,9 @@ private:
     QPushButton* m_historyMenuButton = nullptr;
     QPushButton* m_stopButton;
     QPushButton* m_thinkingToggleButton;
+    QWidget* m_toolCallBanner = nullptr;
+    QLabel* m_toolCallTitle = nullptr;
+    QLabel* m_toolCallSubtitle = nullptr;
     QCheckBox* m_includeContextCheck;
     QCheckBox* m_includeScreenshotCheck;
     class QComboBox* m_modelCombo = nullptr;
@@ -135,6 +138,8 @@ private:
     QString m_mode = "schematic";
     QString m_projectFilePath;
     QString m_currentChatTitle;
+    QString m_lastSubmittedPrompt;
+    qint64 m_lastSubmitEpochMs = 0;
     
     QPushButton* m_statusButton;
     
@@ -150,6 +155,8 @@ private:
     void ensureErrorDialog();
     void populateErrorDialogHistory();
     void selectErrorHistoryRow(int row);
+    void showToolCallBanner(const QString& actionText = QString());
+    void hideToolCallBanner();
     void updateSendEnabled();
     void clearSuggestionButtons();
     void addSuggestionButton(const QString& label, const QString& command);

@@ -138,7 +138,8 @@ class ToolRegistry:
             step_size=step_size,
         )
         if not results:
-            raise RuntimeError("Simulation failed to run.")
+            err = getattr(self.adapter, "last_error", None) or "Simulation failed to run."
+            raise RuntimeError(err)
         return results
 
     @staticmethod
@@ -250,7 +251,8 @@ class ToolRegistry:
                 step_size=step_size,
             )
             if not results:
-                return {"error": "Simulation failed to run."}
+                err = getattr(self.adapter, "last_error", None) or "Simulation failed to run."
+                return {"error": err}
 
             x, y = self.adapter.get_signal(signal_name)
             if x is None:
@@ -332,7 +334,8 @@ class ToolRegistry:
                 waveforms = res.get("waveforms", [])
                 points = len(waveforms[0].get("x", [])) if waveforms else 0
                 return {"status": "success", "analysis": analysis_type, "points": points}
-            return {"status": "failed"}
+            err = getattr(self.adapter, "last_error", None)
+            return {"status": "failed", "error": err} if err else {"status": "failed"}
         except Exception as e:
             return {"error": str(e)}
 

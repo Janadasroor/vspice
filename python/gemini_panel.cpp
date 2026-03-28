@@ -57,6 +57,27 @@ QString nowTimeChip() {
     return QDateTime::currentDateTime().toString("HH:mm");
 }
 
+QString actionToSubtitle(QString actionText) {
+    QString s = actionText.trimmed();
+    if (s.isEmpty()) return QString("Executing assistant tools.");
+    s.replace('_', ' ');
+    return s;
+}
+
+bool isBenignBackendWarningLine(const QString& line) {
+    const QString t = line.trimmed();
+    if (t.isEmpty()) return true;
+    return t.contains("non-text parts in the response", Qt::CaseInsensitive)
+        || t.contains("function_call", Qt::CaseInsensitive)
+        || t.contains("candidates.content.parts", Qt::CaseInsensitive);
+}
+
+QString sanitizeAgentTextChunk(QString text) {
+    text.remove(QRegularExpression(R"(</?(THOUGHT|ACTION|SUGGESTION|HIGHLIGHT)>)", QRegularExpression::CaseInsensitiveOption));
+    text.remove(QRegularExpression(R"((^|\s)(THOUGHT|ACTION|SUGGESTION|HIGHLIGHT)>)", QRegularExpression::CaseInsensitiveOption));
+    return text;
+}
+
 QString markdownDocStyleSheet() {
     bool isLight = ThemeManager::theme() && ThemeManager::theme()->type() == PCBTheme::Light;
     if (isLight) {
@@ -517,6 +538,27 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     m_includeScreenshotCheck = new QCheckBox(this);
     m_includeScreenshotCheck->hide();
 
+    m_toolCallBanner = new QWidget(this);
+    m_toolCallBanner->setStyleSheet(
+        "QWidget {"
+        " background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0f223d, stop:1 #1a2f50);"
+        " border: 1px solid #335f93;"
+        " border-radius: 8px;"
+        "}"
+    );
+    QVBoxLayout* toolBannerLayout = new QVBoxLayout(m_toolCallBanner);
+    toolBannerLayout->setContentsMargins(10, 8, 10, 8);
+    toolBannerLayout->setSpacing(2);
+    m_toolCallTitle = new QLabel("Running tools...", m_toolCallBanner);
+    m_toolCallTitle->setStyleSheet("color: #dbeafe; font-size: 12px; font-weight: 700; border: none; background: transparent;");
+    m_toolCallSubtitle = new QLabel("Executing assistant tools.", m_toolCallBanner);
+    m_toolCallSubtitle->setWordWrap(true);
+    m_toolCallSubtitle->setStyleSheet("color: #93c5fd; font-size: 11px; border: none; background: transparent;");
+    toolBannerLayout->addWidget(m_toolCallTitle);
+    toolBannerLayout->addWidget(m_toolCallSubtitle);
+    m_toolCallBanner->hide();
+    composerLayout->addWidget(m_toolCallBanner);
+
     m_inputField = new QTextEdit(this);
     m_inputField->setPlaceholderText("Message Viora AI...  (Enter = send, Shift+Enter = new line)");
     m_inputField->setFixedHeight(40);
@@ -771,7 +813,14 @@ void GeminiPanel::updateSendEnabled() {
 
 void GeminiPanel::onSendClicked() {
     const QString t = m_inputField->toPlainText().trimmed();
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (!t.isEmpty() && t == m_lastSubmittedPrompt && (nowMs - m_lastSubmitEpochMs) < 1200) {
+        updateSendEnabled();
+        return;
+    }
     if (!t.isEmpty()) {
+        m_lastSubmittedPrompt = t;
+        m_lastSubmitEpochMs = nowMs;
         m_inputField->clear();
         askPrompt(t, m_includeContextCheck->isChecked());
     }
@@ -803,6 +852,7 @@ void GeminiPanel::clearHistory() {
     if (m_errorRawView) m_errorRawView->clear();
     m_thinkingPulseTimer->stop();
     if (m_statusButton) m_statusButton->hide();
+    hideToolCallBanner();
     if (m_thinkingDisplay) m_thinkingDisplay->clear();
     if (m_inputField) m_inputField->setEnabled(true);
     if (m_stopButton) m_stopButton->hide();
@@ -878,6 +928,7 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext) {
 
     m_isWorking = true; m_sendButton->hide(); m_stopButton->show(); m_inputField->setEnabled(false);
     m_responseBuffer.clear(); m_thinkingBuffer.clear(); m_errorBuffer.clear(); m_thinkingDisplay->clear();
+    hideToolCallBanner();
     hideErrorBanner();
     m_statusButton->setText("THINKING"); m_statusButton->show(); m_thinkingPulseTimer->start();
 
@@ -900,9 +951,19 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext) {
         if (proc != m_process) return;
         QByteArray d = proc->readAllStandardError();
         if (!d.isEmpty()) {
-            QString err = QString::fromUtf8(d);
-            m_errorBuffer += err;
-            showErrorBanner(compactErrorSummary(m_errorBuffer), m_errorBuffer);
+            const QString err = QString::fromUtf8(d);
+            const QStringList lines = err.split('\n');
+            QStringList filtered;
+            filtered.reserve(lines.size());
+            for (const QString& line : lines) {
+                if (!isBenignBackendWarningLine(line)) filtered.append(line);
+            }
+            const QString cleaned = filtered.join('\n').trimmed();
+            if (!cleaned.isEmpty()) {
+                if (!m_errorBuffer.isEmpty()) m_errorBuffer += '\n';
+                m_errorBuffer += cleaned;
+                showErrorBanner(compactErrorSummary(m_errorBuffer), m_errorBuffer);
+            }
         }
     });
     connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &GeminiPanel::onProcessFinished);
@@ -931,9 +992,26 @@ void GeminiPanel::onProcessReadyRead() {
         int fT = -1; QList<int> starts = {tS, aS, sS, hS}; for (int s : starts) { if (s != -1 && (fT == -1 || s < fT)) fT = s; }
         if (fT == -1) {
             int lA = text.lastIndexOf('<'); if (lA != -1 && lA > text.length() - 15) { m_leftover = text.mid(lA); text = text.left(lA); }
-            if (!text.isEmpty()) { m_responseBuffer += text; m_chatArea->moveCursor(QTextCursor::End); m_chatArea->insertPlainText(text); text.clear(); }
+            if (!text.isEmpty()) {
+                const QString clean = sanitizeAgentTextChunk(text);
+                if (!clean.isEmpty()) {
+                    m_responseBuffer += clean;
+                    m_chatArea->moveCursor(QTextCursor::End);
+                    m_chatArea->insertPlainText(clean);
+                }
+                text.clear();
+            }
         } else {
-            if (fT > 0) { QString pT = text.left(fT); m_responseBuffer += pT; m_chatArea->moveCursor(QTextCursor::End); m_chatArea->insertPlainText(pT); text = text.mid(fT); continue; }
+            if (fT > 0) {
+                QString pT = sanitizeAgentTextChunk(text.left(fT));
+                if (!pT.isEmpty()) {
+                    m_responseBuffer += pT;
+                    m_chatArea->moveCursor(QTextCursor::End);
+                    m_chatArea->insertPlainText(pT);
+                }
+                text = text.mid(fT);
+                continue;
+            }
             if (text.startsWith("<THOUGHT>")) {
                 int end = text.indexOf("</THOUGHT>");
                 if (end != -1) { QString th = text.mid(9, end - 9); m_thinkingBuffer += th; m_thinkingDisplay->append(th); text = text.mid(end + 10); }
@@ -942,6 +1020,7 @@ void GeminiPanel::onProcessReadyRead() {
                 int end = text.indexOf("</ACTION>");
                 if (end != -1) { 
                     QString a = text.mid(8, end - 8); m_statusButton->setText(a.toUpper());
+                    showToolCallBanner(a);
                     m_chatArea->moveCursor(QTextCursor::End); m_chatArea->insertHtml(QString("<div style='color: #58a6ff; font-size: 11px; margin: 5px 0;'>[ACTION] <i>%1</i></div>").arg(a.toHtmlEscaped()));
                     text = text.mid(end + 9);
                 } else { m_leftover = text; text.clear(); }
@@ -1020,6 +1099,7 @@ void GeminiPanel::onProcessFinished(int ec) {
     } else {
         m_statusButton->hide();
     }
+    hideToolCallBanner();
     
     if (!m_thinkingBuffer.isEmpty()) { m_chatArea->append(QString("<div style='background: #161b22; border-left: 4px solid #58a6ff; padding: 12px; margin: 16px 0 18px 0;'><div style='color: #8b949e; font-size: 10px; font-weight: bold; margin-bottom: 8px;'>THINKING PROCESS</div><div style='color: #c9d1d9; font-size: 13px; line-height: 1.6;'>%1</div></div>").arg(m_thinkingBuffer.toHtmlEscaped().replace("\n", "<br>"))); }
     if (!m_responseBuffer.isEmpty()) {
@@ -1043,7 +1123,26 @@ void GeminiPanel::onProcessFinished(int ec) {
 }
 
 void GeminiPanel::onCopyClicked() { if (!m_lastGeneratedCode.isEmpty()) { QApplication::clipboard()->setText(m_lastGeneratedCode); m_copyButton->setText("COPIED"); QTimer::singleShot(2000, this, [this](){ if (m_copyButton) m_copyButton->setText("COPY CODE"); }); } }
-void GeminiPanel::onStopClicked() { if (m_process && m_process->state() != QProcess::NotRunning) { m_process->kill(); m_chatArea->append("<div style='color: #f85149; font-weight: bold; margin: 10px 0;'>[SYSTEM] PROCESS TERMINATED</div>"); m_statusButton->setText("ABORTED"); m_thinkingPulseTimer->stop(); } }
+void GeminiPanel::showToolCallBanner(const QString& actionText) {
+    if (!m_toolCallBanner || !m_toolCallSubtitle) return;
+    m_toolCallSubtitle->setText(actionToSubtitle(actionText));
+    m_toolCallBanner->show();
+}
+
+void GeminiPanel::hideToolCallBanner() {
+    if (!m_toolCallBanner) return;
+    m_toolCallBanner->hide();
+}
+
+void GeminiPanel::onStopClicked() {
+    if (m_process && m_process->state() != QProcess::NotRunning) {
+        m_process->kill();
+        m_chatArea->append("<div style='color: #f85149; font-weight: bold; margin: 10px 0;'>[SYSTEM] PROCESS TERMINATED</div>");
+        m_statusButton->setText("ABORTED");
+        m_thinkingPulseTimer->stop();
+    }
+    hideToolCallBanner();
+}
 void GeminiPanel::onAnchorClicked(const QUrl& url) { 
     QString link = url.toString(); 
     if (link.startsWith("suggestion:")) { 

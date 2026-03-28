@@ -19,6 +19,11 @@ warnings.filterwarnings(
     category=UserWarning,
     module=r"google\.adk\.auth\.credential_service\.in_memory_credential_service",
 )
+warnings.filterwarnings(
+    "ignore",
+    message=r"(?i).*non-text parts in the response.*function_call.*",
+    category=UserWarning,
+)
 
 # Add ai_pipeline to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))

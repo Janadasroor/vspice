@@ -2,20 +2,46 @@ import subprocess
 import json
 import os
 import sys
+import shutil
 
 class SimulationAdapter:
     def __init__(self, flux_cmd_path=None):
-        # Resolve path relative to project root with sensible fallbacks.
+        repo_root = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
+        )
+        def repo_path(*parts):
+            return os.path.join(repo_root, *parts)
+
+        # Resolve CLI path relative to project root with sensible fallbacks.
         candidates = []
         if flux_cmd_path:
             candidates.append(os.path.abspath(flux_cmd_path))
         candidates.extend([
-            os.path.abspath("build/dev-debug/flux-cmd"),
-            os.path.abspath("build/flux-cmd"),
+            repo_path("build", "vio-cmd"),
+            repo_path("build-debug", "vio-cmd"),
+            repo_path("build-asan", "vio-cmd"),
+            repo_path("build", "dev-debug", "vio-cmd"),
+            repo_path("build", "flux-cmd"),
+            repo_path("build-debug", "flux-cmd"),
+            repo_path("build-asan", "flux-cmd"),
+            repo_path("build", "dev-debug", "flux-cmd"),
+            "vio-cmd",
             "flux-cmd",
         ])
-        self.flux_cmd_path = next((p for p in candidates if p == "flux-cmd" or os.path.exists(p)), candidates[0])
+        self.flux_cmd_path = self._resolve_cli_path(candidates)
         self.last_results = None
+        self.last_error = None
+
+    @staticmethod
+    def _resolve_cli_path(candidates):
+        for p in candidates:
+            if os.path.isabs(p) and os.path.isfile(p) and os.access(p, os.X_OK):
+                return p
+            if not os.path.isabs(p):
+                resolved = shutil.which(p)
+                if resolved:
+                    return resolved
+        return candidates[0] if candidates else "vio-cmd"
 
     def list_nodes(self, schematic_path):
         """Returns a list of all nodes/signals available in the schematic."""
@@ -27,8 +53,20 @@ class SimulationAdapter:
         return sorted(list(set(nodes + signals)))
 
     def run_simulation(self, schematic_path, analysis_type="op", stop_time="10m", step_size="100u"):
+        self.last_error = None
         if not os.path.exists(schematic_path):
-            raise FileNotFoundError(f"Schematic file not found: {schematic_path}")
+            self.last_error = f"Schematic file not found: {schematic_path}"
+            return None
+
+        if not (
+            (os.path.isabs(self.flux_cmd_path) and os.path.isfile(self.flux_cmd_path) and os.access(self.flux_cmd_path, os.X_OK))
+            or shutil.which(self.flux_cmd_path)
+        ):
+            self.last_error = (
+                f"Simulation CLI not found: '{self.flux_cmd_path}'. Build `vio-cmd` "
+                "or add it to PATH."
+            )
+            return None
 
         cmd = [
             self.flux_cmd_path,
@@ -48,7 +86,7 @@ class SimulationAdapter:
                 cmd = [c for c in cmd if c != "--json"]
                 result = subprocess.run(cmd, capture_output=True, text=True)
             if not result.stdout.strip():
-                print(f"Simulation produced no output. Error: {result.stderr}", file=sys.stderr)
+                self.last_error = f"Simulation produced no output. Error: {(result.stderr or '').strip()}"
                 return None
             
             # Find the JSON part in case there's extra logging.
@@ -84,9 +122,10 @@ class SimulationAdapter:
                 json_data = output[json_start:json_end + 1]
                 self.last_results = json.loads(json_data)
                 return self.last_results
+            self.last_error = "Simulation output did not contain valid JSON."
             return None
         except Exception as e:
-            print(f"Simulation failed: {str(e)}", file=sys.stderr)
+            self.last_error = f"Simulation failed: {str(e)}"
             return None
 
     def get_signal(self, signal_name):
