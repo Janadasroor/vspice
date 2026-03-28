@@ -161,6 +161,13 @@ private:
     void appendModelMarkdownCard(const QString& markdownText);
     void appendSystemNote(const QString& html);
     void scrollChatToBottom();
+    void beginAssistantRunUi();
+    void finishAssistantRunUi(int exitCode);
+    void handleActionTag(const QString& actionText);
+    void handleSuggestionTag(const QString& suggestionText);
+    void appendSnippetActionButton(const QString& snippetJson);
+    void appendNetlistActionButton(const QString& netlistText);
+    void processAgentStdoutChunk(const QString& chunkText);
     void updateSendEnabled();
     void clearSuggestionButtons();
     void addSuggestionButton(const QString& label, const QString& command);

@@ -685,6 +685,187 @@ void GeminiPanel::scrollChatToBottom() {
     m_chatArea->verticalScrollBar()->setValue(m_chatArea->verticalScrollBar()->maximum());
 }
 
+void GeminiPanel::beginAssistantRunUi() {
+    m_isWorking = true;
+    if (m_sendButton) m_sendButton->hide();
+    if (m_stopButton) m_stopButton->show();
+    if (m_inputField) m_inputField->setEnabled(false);
+    m_responseBuffer.clear();
+    m_thinkingBuffer.clear();
+    m_errorBuffer.clear();
+    if (m_thinkingDisplay) m_thinkingDisplay->clear();
+    hideToolCallBanner();
+    hideErrorBanner();
+    if (m_statusButton) {
+        m_statusButton->setText("THINKING");
+        m_statusButton->show();
+    }
+    if (m_thinkingPulseTimer) m_thinkingPulseTimer->start();
+}
+
+void GeminiPanel::finishAssistantRunUi(int exitCode) {
+    if (m_thinkingPulseTimer) m_thinkingPulseTimer->stop();
+
+    if (!m_errorBuffer.trimmed().isEmpty()) {
+        reportError("Viora AI Backend Error", m_errorBuffer, exitCode != 0);
+    }
+
+    if (exitCode != 0) {
+        appendSystemNote(QString("<div style='color: #f85149; font-weight: bold; margin: 15px 0;'>[ERROR] SIGNAL INTERRUPTED (Exit Code: %1)</div>").arg(exitCode));
+        if (m_statusButton) m_statusButton->setText("ERROR");
+    } else if (m_statusButton) {
+        m_statusButton->hide();
+    }
+    hideToolCallBanner();
+
+    m_isWorking = false;
+    if (m_inputField) m_inputField->setEnabled(true);
+    if (m_stopButton) m_stopButton->hide();
+    if (m_sendButton) m_sendButton->show();
+    updateSendEnabled();
+}
+
+void GeminiPanel::handleActionTag(const QString& actionText) {
+    const QString action = actionText.trimmed();
+    if (action.isEmpty()) return;
+    if (m_statusButton) m_statusButton->setText(action.toUpper());
+    showToolCallBanner(action);
+    appendSystemNote(QString("<div style='color: #58a6ff; font-size: 11px; margin: 5px 0;'>[ACTION] <i>%1</i></div>").arg(action.toHtmlEscaped()));
+}
+
+void GeminiPanel::handleSuggestionTag(const QString& suggestionText) {
+    const QString sug = suggestionText.trimmed();
+    if (sug.isEmpty()) return;
+    const int splitPos = sug.indexOf('|');
+    const QString lbl = (splitPos >= 0 ? sug.left(splitPos) : sug).trimmed();
+    const QString cmd = (splitPos >= 0 ? sug.mid(splitPos + 1) : lbl).trimmed();
+    addSuggestionButton(lbl, cmd);
+}
+
+void GeminiPanel::appendSnippetActionButton(const QString& snippetJson) {
+    const QString snip = snippetJson.trimmed();
+    if (snip.isEmpty()) return;
+    QString label = "APPLY AI SNIPPET";
+    QString color = "#238636";
+    if (m_responseBuffer.contains("fix", Qt::CaseInsensitive) || m_responseBuffer.contains("error", Qt::CaseInsensitive)) {
+        label = "APPLY AI FIX";
+        color = "#f85149";
+    } else if (m_responseBuffer.contains("part", Qt::CaseInsensitive) ||
+               m_responseBuffer.contains("spec", Qt::CaseInsensitive) ||
+               m_responseBuffer.contains("lookup", Qt::CaseInsensitive)) {
+        label = "APPLY COMPONENT SPECS";
+        color = "#21262d";
+    }
+    appendSystemNote(QString("<div style='margin: 15px 0;'><a href='snippet:%1' style='background: %2; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 10px 24px; text-decoration: none; font-size: 13px; font-weight: bold;'>%3</a></div>")
+        .arg(snip.toHtmlEscaped()).arg(color).arg(label));
+}
+
+void GeminiPanel::appendNetlistActionButton(const QString& netlistText) {
+    const QString netlist = netlistText.trimmed();
+    if (netlist.isEmpty()) return;
+    const QString label = "GENERATE SCHEMATIC";
+    const QString color = "#8250df";
+    appendSystemNote(QString("<div style='margin: 15px 0;'><a href='netlist:%1' style='background: %2; color: #ffffff; border: 1px solid #30363d; border-radius: 6px; padding: 10px 24px; text-decoration: none; font-size: 13px; font-weight: bold;'>%3</a></div>")
+        .arg(QString(netlist.toUtf8().toBase64())).arg(color).arg(label));
+}
+
+void GeminiPanel::processAgentStdoutChunk(const QString& chunkText) {
+    QString text = m_leftover + chunkText;
+    m_leftover.clear();
+
+    while (!text.isEmpty()) {
+        const int tS = text.indexOf("<THOUGHT>");
+        const int aS = text.indexOf("<ACTION>");
+        const int sS = text.indexOf("<SUGGESTION>");
+        const int hS = text.indexOf("<HIGHLIGHT>");
+        const int snS = text.indexOf("<SNIPPET>");
+        const int nS = text.indexOf("<NETLIST>");
+
+        int fT = -1;
+        const QList<int> starts = {tS, aS, sS, hS, snS, nS};
+        for (int s : starts) {
+            if (s != -1 && (fT == -1 || s < fT)) fT = s;
+        }
+
+        if (fT == -1) {
+            const int lA = text.lastIndexOf('<');
+            if (lA != -1 && lA > text.length() - 15) {
+                m_leftover = text.mid(lA);
+                text = text.left(lA);
+            }
+            if (!text.isEmpty()) {
+                const QString clean = sanitizeAgentTextChunk(text);
+                if (!clean.isEmpty()) m_responseBuffer += clean;
+                text.clear();
+            }
+            continue;
+        }
+
+        if (fT > 0) {
+            const QString pT = sanitizeAgentTextChunk(text.left(fT));
+            if (!pT.isEmpty()) m_responseBuffer += pT;
+            text = text.mid(fT);
+            continue;
+        }
+
+        if (text.startsWith("<THOUGHT>")) {
+            const int end = text.indexOf("</THOUGHT>");
+            if (end != -1) {
+                const QString th = text.mid(9, end - 9);
+                m_thinkingBuffer += th;
+                m_thinkingDisplay->append(th);
+                text = text.mid(end + 10);
+            } else {
+                const QString p = text.mid(9);
+                m_thinkingBuffer += p;
+                m_thinkingDisplay->insertPlainText(p);
+                m_leftover = text;
+                text.clear();
+            }
+        } else if (text.startsWith("<ACTION>")) {
+            const int end = text.indexOf("</ACTION>");
+            if (end != -1) {
+                handleActionTag(text.mid(8, end - 8));
+                text = text.mid(end + 9);
+            } else {
+                m_leftover = text;
+                text.clear();
+            }
+        } else if (text.startsWith("<SUGGESTION>")) {
+            const int end = text.indexOf("</SUGGESTION>");
+            if (end != -1) {
+                handleSuggestionTag(text.mid(12, end - 12));
+                text = text.mid(end + 13);
+            } else {
+                m_leftover = text;
+                text.clear();
+            }
+        } else if (text.startsWith("<SNIPPET>")) {
+            const int end = text.indexOf("</SNIPPET>");
+            if (end != -1) {
+                appendSnippetActionButton(text.mid(9, end - 9));
+                text = text.mid(end + 10);
+            } else {
+                m_leftover = text;
+                text.clear();
+            }
+        } else if (text.startsWith("<NETLIST>")) {
+            const int end = text.indexOf("</NETLIST>");
+            if (end != -1) {
+                appendNetlistActionButton(text.mid(9, end - 9));
+                text = text.mid(end + 10);
+            } else {
+                m_leftover = text;
+                text.clear();
+            }
+        } else {
+            // Unknown/partial tag prefix
+            m_leftover = text;
+            text.clear();
+        }
+    }
+}
+
 void GeminiPanel::setProjectFilePath(const QString& path) {
     if (m_projectFilePath == path) return;
     m_projectFilePath = path;
@@ -947,11 +1128,7 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext) {
     const QString selectedModel = m_modelCombo ? m_modelCombo->currentData().toString() : QString();
     if (!selectedModel.isEmpty()) args << "--model" << selectedModel;
 
-    m_isWorking = true; m_sendButton->hide(); m_stopButton->show(); m_inputField->setEnabled(false);
-    m_responseBuffer.clear(); m_thinkingBuffer.clear(); m_errorBuffer.clear(); m_thinkingDisplay->clear();
-    hideToolCallBanner();
-    hideErrorBanner();
-    m_statusButton->setText("THINKING"); m_statusButton->show(); m_thinkingPulseTimer->start();
+    beginAssistantRunUi();
 
     if (m_process) {
         m_process->disconnect(this);
@@ -1006,88 +1183,10 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext) {
 void GeminiPanel::onProcessReadyRead() {
     QProcess* proc = qobject_cast<QProcess*>(sender());
     if (!proc || proc != m_process || !m_chatArea) return;
-    QByteArray d = proc->readAllStandardOutput(); if (d.isEmpty()) return;
-    QString text = m_leftover + QString::fromUtf8(d); m_leftover.clear();
-    while (!text.isEmpty()) {
-        int tS = text.indexOf("<THOUGHT>"), aS = text.indexOf("<ACTION>"), sS = text.indexOf("<SUGGESTION>"), hS = text.indexOf("<HIGHLIGHT>");
-        int fT = -1; QList<int> starts = {tS, aS, sS, hS}; for (int s : starts) { if (s != -1 && (fT == -1 || s < fT)) fT = s; }
-        if (fT == -1) {
-            int lA = text.lastIndexOf('<'); if (lA != -1 && lA > text.length() - 15) { m_leftover = text.mid(lA); text = text.left(lA); }
-            if (!text.isEmpty()) {
-                const QString clean = sanitizeAgentTextChunk(text);
-                if (!clean.isEmpty()) {
-                    m_responseBuffer += clean;
-                }
-                text.clear();
-            }
-        } else {
-            if (fT > 0) {
-                QString pT = sanitizeAgentTextChunk(text.left(fT));
-                if (!pT.isEmpty()) {
-                    m_responseBuffer += pT;
-                }
-                text = text.mid(fT);
-                continue;
-            }
-            if (text.startsWith("<THOUGHT>")) {
-                int end = text.indexOf("</THOUGHT>");
-                if (end != -1) { QString th = text.mid(9, end - 9); m_thinkingBuffer += th; m_thinkingDisplay->append(th); text = text.mid(end + 10); }
-                else { QString p = text.mid(9); m_thinkingBuffer += p; m_thinkingDisplay->insertPlainText(p); m_leftover = text; text.clear(); }
-            } else if (text.startsWith("<ACTION>")) {
-                int end = text.indexOf("</ACTION>");
-                if (end != -1) { 
-                    QString a = text.mid(8, end - 8); m_statusButton->setText(a.toUpper());
-                    showToolCallBanner(a);
-                    m_chatArea->moveCursor(QTextCursor::End); m_chatArea->insertHtml(QString("<div style='color: #58a6ff; font-size: 11px; margin: 5px 0;'>[ACTION] <i>%1</i></div>").arg(a.toHtmlEscaped()));
-                    text = text.mid(end + 9);
-                } else { m_leftover = text; text.clear(); }
-            } else if (text.startsWith("<SUGGESTION>")) {
-                int end = text.indexOf("</SUGGESTION>");
-                if (end != -1) {
-                    const QString sug = text.mid(12, end - 12).trimmed();
-                    const int splitPos = sug.indexOf('|');
-                    const QString lbl = (splitPos >= 0 ? sug.left(splitPos) : sug).trimmed();
-                    const QString cmd = (splitPos >= 0 ? sug.mid(splitPos + 1) : lbl).trimmed();
-                    addSuggestionButton(lbl, cmd);
-                    text = text.mid(end + 7);
-                    } else { m_leftover = text; text.clear(); }
-                    } else if (text.startsWith("<SNIPPET>")) {
-                        int end = text.indexOf("</SNIPPET>");
-                        if (end != -1) {
-                            QString snip = text.mid(9, end - 9).trimmed();
-                            if (!snip.isEmpty()) {
-                                m_chatArea->moveCursor(QTextCursor::End);
-                                // Determine if it's a fix or a feature based on the responseBuffer context
-                                QString label = "APPLY AI SNIPPET";
-                                QString color = "#238636"; // Success
-                                if (m_responseBuffer.contains("fix", Qt::CaseInsensitive) || m_responseBuffer.contains("error", Qt::CaseInsensitive)) {
-                                    label = "APPLY AI FIX";
-                                    color = "#f85149"; // Danger
-                                } else if (m_responseBuffer.contains("part", Qt::CaseInsensitive) || m_responseBuffer.contains("spec", Qt::CaseInsensitive) || m_responseBuffer.contains("lookup", Qt::CaseInsensitive)) {
-                                    label = "APPLY COMPONENT SPECS";
-                                    color = "#21262d"; // Button
-                                }
-                                m_chatArea->insertHtml(QString("<div style='margin: 15px 0;'><a href='snippet:%1' style='background: %2; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 10px 24px; text-decoration: none; font-size: 13px; font-weight: bold;'>%3</a></div>").arg(snip.toHtmlEscaped()).arg(color).arg(label));
-
-                            }
-                            text = text.mid(end + 10);
-                        } else { m_leftover = text; text.clear(); }
-                    } else if (text.startsWith("<NETLIST>")) {
-                        int end = text.indexOf("</NETLIST>");
-                        if (end != -1) {
-                            QString netlist = text.mid(9, end - 9).trimmed();
-                            if (!netlist.isEmpty()) {
-                                m_chatArea->moveCursor(QTextCursor::End);
-                                QString label = "GENERATE SCHEMATIC";
-                                QString color = "#8250df"; // Purple action
-                                m_chatArea->insertHtml(QString("<div style='margin: 15px 0;'><a href='netlist:%1' style='background: %2; color: #ffffff; border: 1px solid #30363d; border-radius: 6px; padding: 10px 24px; text-decoration: none; font-size: 13px; font-weight: bold;'>%3</a></div>").arg(QString(netlist.toUtf8().toBase64())).arg(color).arg(label));
-                            }
-                            text = text.mid(end + 10);
-                        } else { m_leftover = text; text.clear(); }
-                    }
-                    }
-                    }
-    m_chatArea->verticalScrollBar()->setValue(m_chatArea->verticalScrollBar()->maximum());
+    const QByteArray d = proc->readAllStandardOutput();
+    if (d.isEmpty()) return;
+    processAgentStdoutChunk(QString::fromUtf8(d));
+    scrollChatToBottom();
 }
 
 void GeminiPanel::onProcessFinished(int ec) {
@@ -1095,22 +1194,9 @@ void GeminiPanel::onProcessFinished(int ec) {
     if (!proc || proc != m_process) return;
     if (!m_chatArea) return;
     
-    m_thinkingPulseTimer->stop();
-
-    if (!m_errorBuffer.trimmed().isEmpty()) {
-        reportError("Viora AI Backend Error", m_errorBuffer, ec != 0);
-    }
-
-    if (ec != 0) {
-        m_chatArea->moveCursor(QTextCursor::End);
-        m_chatArea->insertHtml(QString("<div style='color: #f85149; font-weight: bold; margin: 15px 0;'>[ERROR] SIGNAL INTERRUPTED (Exit Code: %1)</div>").arg(ec));
-        m_statusButton->setText("ERROR");
-    } else {
-        m_statusButton->hide();
-    }
-    hideToolCallBanner();
+    finishAssistantRunUi(ec);
     
-    if (!m_thinkingBuffer.isEmpty()) { m_chatArea->append(QString("<div style='background: #161b22; border-left: 4px solid #58a6ff; padding: 12px; margin: 16px 0 18px 0;'><div style='color: #8b949e; font-size: 10px; font-weight: bold; margin-bottom: 8px;'>THINKING PROCESS</div><div style='color: #c9d1d9; font-size: 13px; line-height: 1.6;'>%1</div></div>").arg(m_thinkingBuffer.toHtmlEscaped().replace("\n", "<br>"))); }
+    if (!m_thinkingBuffer.isEmpty()) { appendSystemNote(QString("<div style='background: #161b22; border-left: 4px solid #58a6ff; padding: 12px; margin: 16px 0 18px 0;'><div style='color: #8b949e; font-size: 10px; font-weight: bold; margin-bottom: 8px;'>THINKING PROCESS</div><div style='color: #c9d1d9; font-size: 13px; line-height: 1.6;'>%1</div></div>").arg(m_thinkingBuffer.toHtmlEscaped().replace("\n", "<br>"))); }
     if (!m_responseBuffer.isEmpty()) {
         QString cleanResponse = m_responseBuffer;
         cleanResponse.replace(QRegularExpression(R"((?im)(?:^\s*[\u25c8*•\-]?\s*)?Context attached\s*)"), "");
@@ -1123,7 +1209,6 @@ void GeminiPanel::onProcessFinished(int ec) {
         if (m_mode == "symbol") code = ext("json", "```json"); else if (m_mode == "logic") code = ext("python", "```python"); else code = ext("fluxscript", "```fluxscript");
         if (!code.isEmpty()) { m_lastGeneratedCode = code; m_copyButton->setEnabled(true); if (m_mode == "symbol") emit symbolJsonGenerated(code); else if (m_mode == "logic") emit pythonScriptGenerated(code); else emit fluxScriptGenerated(code); }
     }
-    m_isWorking = false; m_inputField->setEnabled(true); m_stopButton->hide(); m_sendButton->show(); updateSendEnabled();
     saveHistory();
     QTimer::singleShot(100, this, [this]() { if (m_inputField) m_inputField->setFocus(); });
 }
@@ -1143,7 +1228,7 @@ void GeminiPanel::hideToolCallBanner() {
 void GeminiPanel::onStopClicked() {
     if (m_process && m_process->state() != QProcess::NotRunning) {
         m_process->kill();
-        m_chatArea->append("<div style='color: #f85149; font-weight: bold; margin: 10px 0;'>[SYSTEM] PROCESS TERMINATED</div>");
+        appendSystemNote("<div style='color: #f85149; font-weight: bold; margin: 10px 0;'>[SYSTEM] PROCESS TERMINATED</div>");
         m_statusButton->setText("ABORTED");
         m_thinkingPulseTimer->stop();
     }
