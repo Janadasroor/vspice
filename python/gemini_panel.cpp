@@ -39,6 +39,7 @@
 #include <QSplitter>
 #include <QToolButton>
 #include <QKeyEvent>
+#include <QSizePolicy>
 
 namespace {
 QString compactErrorSummary(const QString& raw, int maxLen = 180) {
@@ -483,7 +484,7 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
         "}"
     ).arg(bg_main, fg));
     m_highlighter = new SyntaxHighlighter(m_chatArea->document());
-    mainLayout->addWidget(m_chatArea);
+    mainLayout->addWidget(m_chatArea, 1);
 
     // Thinking Tray
     m_thinkingDisplay = new QTextEdit(this);
@@ -498,11 +499,14 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     QWidget* footer = new QWidget(this);
     QString footerBg = (theme && theme->type() == PCBTheme::Light) ? "#f1f5f9" : "#0d1117";
     footer->setStyleSheet(QString("background-color: %1; border-top: 1px solid %2;").arg(footerBg, border));
+    footer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     QVBoxLayout* footerLayout = new QVBoxLayout(footer);
     footerLayout->setContentsMargins(12, 12, 12, 12);
+    footerLayout->setSizeConstraint(QLayout::SetMinimumSize);
 
     QWidget* composer = new QWidget(this);
     composer->setStyleSheet(QString("QWidget { background: %1; border: 1px solid %2; border-radius: 12px; }").arg(bg_main, border));
+    composer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     QVBoxLayout* composerLayout = new QVBoxLayout(composer);
     composerLayout->setContentsMargins(12, 10, 12, 10);
     composerLayout->setSpacing(4);
@@ -515,7 +519,9 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
 
     m_inputField = new QTextEdit(this);
     m_inputField->setPlaceholderText("Message Viora AI...  (Enter = send, Shift+Enter = new line)");
-    m_inputField->setFixedHeight(56);
+    m_inputField->setFixedHeight(40);
+    m_inputField->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_inputField->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_inputField->setAcceptRichText(false);
     m_inputField->setStyleSheet(QString(
         "QTextEdit { background: transparent; color: %1; border: none; padding: 2px 0; font-size: 13px; }"
@@ -593,7 +599,7 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     composerLayout->addLayout(toolsRow);
 
     footerLayout->addWidget(composer);
-    mainLayout->addWidget(footer);
+    mainLayout->addWidget(footer, 0);
 
     m_thinkingPulseTimer = new QTimer(this);
     m_thinkingPulseTimer->setInterval(500);
