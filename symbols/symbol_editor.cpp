@@ -1691,6 +1691,7 @@ void SymbolEditor::applySymbolDefinition(const SymbolDefinition& def) {
     updateOverlayLabels();
     updateCodePreview();
     updatePinTable();
+    updateSubcktMappingTable();
     updateGuideAnchors();
     updateResizeHandles();
 }
@@ -1704,6 +1705,20 @@ SymbolDefinition SymbolEditor::symbolDefinition() const {
     def.setModelSource(m_modelSourceCombo->currentData().toString());
     def.setModelPath(m_modelPathEdit->text());
     def.setModelName(m_modelNameEdit->text());
+    if (m_subcktMappingTable) {
+        QMap<int, QString> mapping;
+        for (int row = 0; row < m_subcktMappingTable->rowCount(); ++row) {
+            QTableWidgetItem* pinNumberItem = m_subcktMappingTable->item(row, 0);
+            QTableWidgetItem* subcktPinItem = m_subcktMappingTable->item(row, 2);
+            if (!pinNumberItem || !subcktPinItem) continue;
+            const int pinNumber = pinNumberItem->text().toInt();
+            const QString subcktPin = subcktPinItem->text().trimmed();
+            if (pinNumber > 0 && !subcktPin.isEmpty()) {
+                mapping.insert(pinNumber, subcktPin);
+            }
+        }
+        def.setSpiceNodeMapping(mapping);
+    }
     return def;
 }
 
@@ -3074,7 +3089,16 @@ QWidget* SymbolEditor::createSymbolMetadataWidget() {
     modelPathLabel->setObjectName("metaModelPath");
     modelPathLabel->setWordWrap(true);
     spiceLayout->addRow("Path:", modelPathLabel);
-    
+
+    m_subcktMappingTable = new QTableWidget(0, 3);
+    m_subcktMappingTable->setHorizontalHeaderLabels({"Symbol Pin", "Symbol Name", "Subckt Pin"});
+    m_subcktMappingTable->horizontalHeader()->setStretchLastSection(true);
+    m_subcktMappingTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_subcktMappingTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_subcktMappingTable->verticalHeader()->setVisible(false);
+    m_subcktMappingTable->setMinimumHeight(180);
+    spiceLayout->addRow("Node Mapping:", m_subcktMappingTable);
+     
     form->addRow(spiceGroup);
     
     // Physical Info Section
@@ -4444,6 +4468,48 @@ void SymbolEditor::updatePinTable() {
         }
     }
     m_pinTable->blockSignals(false);
+}
+
+void SymbolEditor::updateSubcktMappingTable() {
+    if (!m_subcktMappingTable) return;
+
+    m_subcktMappingTable->blockSignals(true);
+    m_subcktMappingTable->setRowCount(0);
+
+    const QMap<int, QString> mapping = m_symbol.spiceNodeMapping();
+    QList<const SymbolPrimitive*> pinPrimitives;
+    for (const SymbolPrimitive& prim : m_symbol.primitives()) {
+        if (prim.type == SymbolPrimitive::Pin) {
+            pinPrimitives.append(&prim);
+        }
+    }
+
+    std::sort(pinPrimitives.begin(), pinPrimitives.end(), [](const SymbolPrimitive* a, const SymbolPrimitive* b) {
+        return a->data.value("number").toInt() < b->data.value("number").toInt();
+    });
+
+    for (const SymbolPrimitive* prim : pinPrimitives) {
+        const int row = m_subcktMappingTable->rowCount();
+        m_subcktMappingTable->insertRow(row);
+
+        const int pinNumber = prim->data.value("number").toInt();
+        const QString pinName = prim->data.value("name").toString();
+        const QString subcktPin = mapping.value(pinNumber, pinName);
+
+        auto* pinNumberItem = new QTableWidgetItem(QString::number(pinNumber));
+        pinNumberItem->setFlags(pinNumberItem->flags() & ~Qt::ItemIsEditable);
+
+        auto* pinNameItem = new QTableWidgetItem(pinName);
+        pinNameItem->setFlags(pinNameItem->flags() & ~Qt::ItemIsEditable);
+
+        auto* subcktPinItem = new QTableWidgetItem(subcktPin);
+
+        m_subcktMappingTable->setItem(row, 0, pinNumberItem);
+        m_subcktMappingTable->setItem(row, 1, pinNameItem);
+        m_subcktMappingTable->setItem(row, 2, subcktPinItem);
+    }
+
+    m_subcktMappingTable->blockSignals(false);
 }
 
 void SymbolEditor::onPinTableItemChanged(int row, int col) {

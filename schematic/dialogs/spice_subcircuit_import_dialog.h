@@ -24,6 +24,7 @@ public:
         QStringList pins;
         QString netlistText;
         bool insertIncludeDirective = true;
+        bool openSymbolEditor = true;
     };
 
     explicit SpiceSubcircuitImportDialog(const QString& projectDir,
@@ -54,6 +55,7 @@ private:
     QLabel* m_statusLabel;
     QTableWidget* m_pinTable;
     QCheckBox* m_insertIncludeCheck;
+    QCheckBox* m_openSymbolEditorCheck;
     QDialogButtonBox* m_buttonBox;
     SpiceHighlighter* m_highlighter;
 };

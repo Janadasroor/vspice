@@ -278,6 +278,8 @@ set(SCHEMATIC_SOURCES
     schematic/items/net_label_item.h
     schematic/items/air_wire_item.cpp
     schematic/items/air_wire_item.h
+    schematic/items/schematic_hint_item.cpp
+    schematic/items/schematic_hint_item.h
     
     # Tools
     schematic/tools/schematic_tool.cpp

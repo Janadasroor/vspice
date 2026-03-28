@@ -156,6 +156,7 @@ private:
     void updateWizardTemplatePreview();
     void createPinTable();
     void updatePinTable();
+    void updateSubcktMappingTable();
     QWidget* createSymbolMetadataWidget();
      void populateLibraryTree();
       void updateCodePreview();
@@ -265,6 +266,7 @@ protected:
     QComboBox* m_modelSourceCombo = nullptr;
     QLineEdit* m_modelPathEdit = nullptr;
     QLineEdit* m_modelNameEdit = nullptr;
+    QTableWidget* m_subcktMappingTable = nullptr;
     
     // Properties panel
     class QTabWidget* m_propsTabWidget = nullptr;

@@ -94,6 +94,9 @@
 #include <QTreeWidget>
 #include <QJsonDocument>
 
+using Flux::Model::SymbolDefinition;
+using Flux::Model::SymbolPrimitive;
+
 static QString defaultPowerNetFromType(int powerType) {
     switch (powerType) {
         case 0: return "GND";
@@ -186,6 +189,47 @@ static int renamePowerNetInSchematicFile(const QString& filePath, const QString&
     file.write(doc.toJson(QJsonDocument::Indented));
     file.close();
     return changedCount;
+}
+
+static SymbolDefinition buildImportedSubcktSymbol(const SpiceSubcircuitImportDialog::Result& res) {
+    SymbolDefinition def(res.subcktName);
+    def.setDescription(QString("Auto-generated symbol for .subckt %1").arg(res.subcktName));
+    def.setCategory("Integrated Circuits");
+    def.setReferencePrefix("U");
+    def.setDefaultValue(res.subcktName);
+    def.setModelSource("project");
+    def.setModelPath(res.relativeIncludePath);
+    def.setModelName(res.subcktName);
+    def.setSpiceModelName(res.subcktName);
+
+    QMap<int, QString> mapping;
+    const int pinCount = res.pins.size();
+    const int leftCount = (pinCount + 1) / 2;
+    const qreal bodyWidth = 120.0;
+    const qreal bodyHalfHeight = qMax<qreal>(40.0, pinCount * 12.0);
+    const qreal pinSpacing = 25.0;
+    const qreal pinLength = 20.0;
+
+    def.addPrimitive(SymbolPrimitive::createRect(QRectF(-bodyWidth / 2.0, -bodyHalfHeight, bodyWidth, bodyHalfHeight * 2.0), false));
+    def.addPrimitive(SymbolPrimitive::createText(res.subcktName, QPointF(-30.0, -bodyHalfHeight - 18.0), 10));
+
+    for (int i = 0; i < pinCount; ++i) {
+        const bool leftSide = (i < leftCount);
+        const int sideIndex = leftSide ? i : (i - leftCount);
+        const int countOnSide = leftSide ? leftCount : (pinCount - leftCount);
+        const qreal y = ((countOnSide - 1) * pinSpacing * -0.5) + (sideIndex * pinSpacing);
+        const QPointF pos(leftSide ? (-bodyWidth / 2.0 - pinLength) : (bodyWidth / 2.0 + pinLength), y);
+        const QString orientation = leftSide ? "Right" : "Left";
+        const int symbolPinNumber = i + 1;
+        const QString subcktPinName = res.pins.at(i);
+
+        SymbolPrimitive pin = SymbolPrimitive::createPin(pos, symbolPinNumber, subcktPinName, orientation, pinLength);
+        def.addPrimitive(pin);
+        mapping.insert(symbolPinNumber, subcktPinName);
+    }
+
+    def.setSpiceNodeMapping(mapping);
+    return def;
 }
 
 // ─── Sheet Hierarchy Panel ───────────────────────────────────────────────────
@@ -1808,7 +1852,17 @@ void SchematicEditor::onImportSpiceSubcircuit() {
     if (m_view) {
         dirItem->setPos(m_view->mapToScene(m_view->viewport()->rect().center()));
     }
-    m_undoStack->push(new AddItemCommand(m_scene, dirItem));
+    if (res.insertIncludeDirective) {
+        m_undoStack->push(new AddItemCommand(m_scene, dirItem));
+    } else {
+        delete dirItem;
+    }
+
+    if (res.openSymbolEditor) {
+        const SymbolDefinition def = buildImportedSubcktSymbol(res);
+        openSymbolEditorWindow(def.name(), def);
+    }
+
     m_isModified = true;
 }
 

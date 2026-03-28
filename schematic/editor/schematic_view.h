@@ -87,6 +87,13 @@ public:
     void setGridSize(double size);
     double gridSize() const { return m_gridSize; }
 
+    void setGridVisible(bool visible);
+    bool isGridVisible() const { return m_gridVisible; }
+
+    // AI Hints
+    void addHint(const QString& text, const QPointF& pos, const QString& ref = "");
+    void clearHints();
+
     void setGridStyle(GridStyle style);
     GridStyle gridStyle() const { return m_gridStyle; }
 

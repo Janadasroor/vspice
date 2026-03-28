@@ -49,6 +49,7 @@
 #include "../analysis/schematic_erc.h"
 #include <QGraphicsEllipseItem>
 #include <QToolTip>
+#include "../items/schematic_hint_item.h"
 
 namespace {
 SchematicItem* owningSchematicItem(QGraphicsItem* item) {
@@ -1602,4 +1603,37 @@ void SchematicView::setHandToolActive(bool active) {
     }
     
     emit toolChanged(m_handToolActive ? "Hand" : (m_currentTool ? m_currentTool->name() : "Select"));
+}
+void SchematicView::addHint(const QString& text, const QPointF& pos, const QString& ref) {
+    if (!scene()) return;
+
+    QPointF hintPos = pos;
+    // If a reference is provided, try to find the component and anchor to it
+    if (!ref.isEmpty()) {
+        for (QGraphicsItem* item : scene()->items()) {
+            if (auto* sItem = dynamic_cast<SchematicItem*>(item)) {
+                if (sItem->reference() == ref && !sItem->isSubItem()) {
+                    // Anchor to the top-right of the component's bounding rect
+                    QRectF br = sItem->boundingRect();
+                    hintPos = sItem->scenePos() + QPointF(br.right(), br.top());
+                    break;
+                }
+            }
+        }
+    }
+
+    SchematicHintItem* hint = new SchematicHintItem(text);
+    hint->setPos(hintPos);
+    hint->setZValue(2000); // Always on top
+    scene()->addItem(hint);
+}
+
+void SchematicView::clearHints() {
+    if (!scene()) return;
+    for (QGraphicsItem* item : scene()->items()) {
+        if (dynamic_cast<SchematicHintItem*>(item)) {
+            scene()->removeItem(item);
+            delete item;
+        }
+    }
 }

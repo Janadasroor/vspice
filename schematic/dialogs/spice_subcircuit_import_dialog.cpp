@@ -71,6 +71,7 @@ SpiceSubcircuitImportDialog::SpiceSubcircuitImportDialog(const QString& projectD
     , m_statusLabel(nullptr)
     , m_pinTable(nullptr)
     , m_insertIncludeCheck(nullptr)
+    , m_openSymbolEditorCheck(nullptr)
     , m_buttonBox(nullptr)
     , m_highlighter(nullptr) {
     setupUi();
@@ -137,6 +138,10 @@ void SpiceSubcircuitImportDialog::setupUi() {
     m_insertIncludeCheck = new QCheckBox("Insert an .include directive onto the current schematic", this);
     m_insertIncludeCheck->setChecked(true);
     mainLayout->addWidget(m_insertIncludeCheck);
+
+    m_openSymbolEditorCheck = new QCheckBox("Generate a mapped symbol template and open it in Symbol Editor", this);
+    m_openSymbolEditorCheck->setChecked(true);
+    mainLayout->addWidget(m_openSymbolEditorCheck);
 
     m_statusLabel = new QLabel(this);
     m_statusLabel->setWordWrap(true);
@@ -304,6 +309,7 @@ void SpiceSubcircuitImportDialog::onAccepted() {
     m_result.relativeIncludePath = relativeIncludePath;
     m_result.netlistText = netlistText.trimmed();
     m_result.insertIncludeDirective = m_insertIncludeCheck->isChecked();
+    m_result.openSymbolEditor = m_openSymbolEditorCheck->isChecked();
 
     accept();
 }
