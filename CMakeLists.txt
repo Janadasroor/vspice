@@ -51,6 +51,31 @@ add_subdirectory(simulator)
 if(VIOSPICE_ENABLE_PYTHON)
     add_subdirectory(python)
 endif()
+
+if(BUILD_TESTING)
+    add_executable(test_spice_directive_netlist schematic/tests/test_spice_directive_netlist.cpp)
+    set_target_properties(test_spice_directive_netlist PROPERTIES AUTOMOC ON)
+    target_include_directories(test_spice_directive_netlist PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/schematic
+        ${CMAKE_CURRENT_SOURCE_DIR}/schematic/items
+    )
+    target_link_libraries(test_spice_directive_netlist PRIVATE
+        FluxSchematic
+        FluxSymbols
+        FluxSimulator
+        FluxCore
+        FluxUI
+        Qt${QT_VERSION_MAJOR}::Core
+        Qt${QT_VERSION_MAJOR}::Gui
+        Qt${QT_VERSION_MAJOR}::Widgets
+        Qt${QT_VERSION_MAJOR}::Test
+    )
+    if(VIOSPICE_ENABLE_PYTHON)
+        target_link_libraries(test_spice_directive_netlist PRIVATE FluxPython)
+    endif()
+    add_test(NAME schematic.spice_directive_netlist COMMAND test_spice_directive_netlist)
+endif()
+
 if(BUILD_TESTING AND VIOSPICE_ENABLE_TESTS)
     add_subdirectory(tests)
 endif()

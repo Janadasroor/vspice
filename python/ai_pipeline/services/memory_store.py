@@ -25,6 +25,10 @@ def _memory_file_path(project_path):
     return os.path.join(memory_dir, "memory.json")
 
 
+def get_memory_file_path(project_path):
+    return _memory_file_path(project_path)
+
+
 def _default_memory(project_path):
     return {
         "version": 1,
@@ -121,6 +125,80 @@ def update_memory(project_path, user_prompt, assistant_response):
         memory["recent_turns"] = memory["recent_turns"][-20:]
 
     save_memory(project_path, memory)
+
+
+def remember_fact(project_path, text, bucket="project_notes"):
+    memory = load_memory(project_path)
+    clean = _compact(text, 220)
+    if not clean:
+        return False, "Nothing to remember."
+    if bucket not in {"project_notes", "user_preferences"}:
+        bucket = "project_notes"
+    items = list(memory.get(bucket, []))
+    if clean in items:
+        return True, f"Already stored in {bucket.replace('_', ' ')}."
+    items.insert(0, clean)
+    memory[bucket] = items[:20]
+    save_memory(project_path, memory)
+    return True, f"Stored in {bucket.replace('_', ' ')}."
+
+
+def forget_fact(project_path, text):
+    memory = load_memory(project_path)
+    needle = _compact(text, 220).lower()
+    if not needle:
+        return False, "Nothing to forget."
+
+    removed = []
+    for bucket in ("user_preferences", "project_notes", "recent_topics"):
+        kept = []
+        for item in memory.get(bucket, []):
+            if needle in str(item).lower():
+                removed.append((bucket, item))
+            else:
+                kept.append(item)
+        memory[bucket] = kept
+
+    if removed:
+        save_memory(project_path, memory)
+        labels = ", ".join(item for _, item in removed[:5])
+        return True, f"Removed {len(removed)} memory item(s): {labels}"
+    return False, "No matching memory item was found."
+
+
+def clear_memory(project_path):
+    memory = _default_memory(project_path)
+    save_memory(project_path, memory)
+    return True
+
+
+def render_memory_report(project_path):
+    memory = load_memory(project_path)
+    lines = []
+    lines.append("Persistent memory is enabled for this project.")
+    memory_path = get_memory_file_path(project_path)
+    if memory_path:
+        lines.append(f"Memory file: {memory_path}")
+
+    prefs = memory.get("user_preferences", [])
+    notes = memory.get("project_notes", [])
+    topics = memory.get("recent_topics", [])
+    turns = memory.get("recent_turns", [])
+
+    lines.append(f"User preferences: {len(prefs)}")
+    for item in prefs[:8]:
+        lines.append(f"- {item}")
+
+    lines.append(f"Project notes: {len(notes)}")
+    for item in notes[:10]:
+        lines.append(f"- {item}")
+
+    lines.append(f"Recent topics: {len(topics)}")
+    for item in topics[:8]:
+        lines.append(f"- {item}")
+
+    lines.append(f"Recent turns stored: {len(turns)}")
+    return "\n".join(lines)
 
 
 def format_memory_context(project_path, history_json=""):

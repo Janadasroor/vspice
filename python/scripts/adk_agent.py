@@ -40,7 +40,7 @@ except ImportError as e:
 
 try:
     from ai_pipeline.ai_tools.tools import ToolRegistry  # pyre-ignore[21]
-    from ai_pipeline.services.memory_store import format_memory_context, update_memory  # pyre-ignore[21]
+    from ai_pipeline.services.memory_store import clear_memory, forget_fact, format_memory_context, remember_fact, render_memory_report, update_memory  # pyre-ignore[21]
 except ImportError as e:
     print(json.dumps({"error": f"Could not import ToolRegistry: {str(e)}"}), file=sys.stderr)
     sys.exit(1)
@@ -75,7 +75,41 @@ def get_tools(registry):
         FunctionTool(execute_commands),
     ]
 
+
+def _handle_memory_command(prompt_text, project_path):
+    text = str(prompt_text or "").strip()
+    lower = text.lower()
+
+    if lower in {"show memory", "memory", "view memory"}:
+        return render_memory_report(project_path)
+
+    if lower in {"clear memory", "reset memory"}:
+        clear_memory(project_path)
+        return "Project memory was cleared."
+
+    if lower.startswith("remember "):
+        payload = text[9:].strip()
+        bucket = "project_notes"
+        if payload.lower().startswith("preference:"):
+            payload = payload.split(":", 1)[1].strip()
+            bucket = "user_preferences"
+        ok, message = remember_fact(project_path, payload, bucket=bucket)
+        return message if ok else f"Memory command failed: {message}"
+
+    if lower.startswith("forget "):
+        payload = text[7:].strip()
+        ok, message = forget_fact(project_path, payload)
+        return message if ok else f"Memory command failed: {message}"
+
+    return None
+
 async def run_agent(prompt_text, project_path, context="", mode="schematic", model_name="gemini-2.5-flash-lite", history_json="", output_stream=sys.stdout):
+    memory_command_response = _handle_memory_command(prompt_text, project_path)
+    if memory_command_response is not None:
+        output_stream.write(memory_command_response)
+        output_stream.flush()
+        return
+
     # 2. Setup Tool Registry
     registry = ToolRegistry(project_path)
     tools = get_tools(registry)

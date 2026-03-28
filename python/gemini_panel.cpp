@@ -380,6 +380,14 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
         connect(copyAct, &QAction::triggered, this, &GeminiPanel::onCopyClicked);
         QAction* refreshAct = menu.addAction(QIcon(":/icons/toolbar_refresh.png"), "Refresh Models");
         connect(refreshAct, &QAction::triggered, this, &GeminiPanel::onRefreshModelsClicked);
+        QAction* showMemoryAct = menu.addAction("Show Memory");
+        connect(showMemoryAct, &QAction::triggered, this, [this]() {
+            if (!m_isWorking) askPrompt("show memory", false);
+        });
+        QAction* clearMemoryAct = menu.addAction("Clear Memory");
+        connect(clearMemoryAct, &QAction::triggered, this, [this]() {
+            if (!m_isWorking) askPrompt("clear memory", false);
+        });
         QAction* thinkingAct = menu.addAction("Toggle Thinking Tray");
         thinkingAct->setCheckable(true);
         thinkingAct->setChecked(m_statusButton->isChecked());
