@@ -11,6 +11,8 @@
 #include <QLineEdit>
 #include <QLabel>
 
+class SymbolPreviewPopup;
+
 class SchematicComponentsWidget : public QWidget {
     Q_OBJECT
 
@@ -26,6 +28,9 @@ signals:
     void symbolCreated(const QString &symbolName);
     void symbolPlacementRequested(const class SymbolDefinition& symbol);
     void modelAssignmentRequested(const QString& modelName);
+    
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     void onSearchTextChanged(const QString &text);
@@ -45,6 +50,10 @@ private:
     QSortFilterProxyModel *m_proxyModel;
 
     SymbolDefinition m_selectedSymbol;
+    SymbolPreviewPopup* m_previewPopup;
+
+private slots:
+    void onItemHovered(const QModelIndex& index);
 };
 
 #endif // SCHEMATICCOMPONENTSWIDGET_H

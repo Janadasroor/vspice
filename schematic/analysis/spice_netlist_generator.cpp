@@ -1130,7 +1130,17 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                         netlist += QString("* Warning: Model '%1' not found for %2\n").arg(mn, ref);
                     } else if (sub) {
                         int symPinsCount = sym->connectionPoints().size();
-                        const auto mappingPins = sym->spiceNodeMapping();
+                        auto mappingPins = sym->spiceNodeMapping();
+                        if (!comp.pinPadMapping.isEmpty()) {
+                            mappingPins.clear();
+                            for (auto it = comp.pinPadMapping.constBegin(); it != comp.pinPadMapping.constEnd(); ++it) {
+                                bool ok = false;
+                                const int symbolPin = it.key().toInt(&ok);
+                                if (ok && !it.value().trimmed().isEmpty()) {
+                                    mappingPins.insert(symbolPin, it.value().trimmed());
+                                }
+                            }
+                        }
                         if (!mappingPins.isEmpty() && line.startsWith("X", Qt::CaseInsensitive)) {
                             // For subcircuits with explicit mapping, compare against mapped simulation pins
                             // instead of raw drawable symbol pins (which may contain extra NC/alt-unit pins).
@@ -1148,7 +1158,17 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                 }
             }
             
-            auto mapping = sym->spiceNodeMapping();
+            QMap<int, QString> mapping = sym->spiceNodeMapping();
+            if (!comp.pinPadMapping.isEmpty()) {
+                mapping.clear();
+                for (auto it = comp.pinPadMapping.constBegin(); it != comp.pinPadMapping.constEnd(); ++it) {
+                    bool ok = false;
+                    const int symbolPin = it.key().toInt(&ok);
+                    if (ok && !it.value().trimmed().isEmpty()) {
+                        mapping.insert(symbolPin, it.value().trimmed());
+                    }
+                }
+            }
             if (!mapping.isEmpty()) {
                 // KiCad Sim.Pins mapping is typically: symbolPinNumber -> subcktPinName.
                 // If we know the active subckt signature, emit nodes in its formal pin order.
