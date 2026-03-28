@@ -91,37 +91,22 @@ class SimulationAdapter:
             
             # Find the JSON part in case there's extra logging.
             output = result.stdout.strip()
-            # Try to find the last complete JSON block in case of multiple outputs
-            try:
-                # Find all '{' and try to parse from each one backwards
-                potential_json = []
-                for i in range(len(output)):
-                    if output[i] == '{':
-                        # Find matching '}' or just take to the end and let json.loads decide
-                        for j in range(len(output)-1, i, -1):
-                            if output[j] == '}':
-                                segment = output[i:j+1]
-                                try:
-                                    parsed = json.loads(segment)
-                                    potential_json.append(parsed)
-                                    break
-                                except:
-                                    continue
-                
-                if potential_json:
-                    # Take the most comprehensive one (usually the last one)
-                    self.last_results = potential_json[-1]
-                    return self.last_results
-            except:
-                pass
+            if not output:
+                self.last_error = f"Simulation produced no output. Error: {(result.stderr or '').strip()}"
+                return None
+
+            # Fast search for the JSON block
+            json_start = output.find('{')
+            json_end = output.rfind('}')
             
-            # Simple fallback
-            if "{" in output and "}" in output:
-                json_start = output.find("{")
-                json_end = output.rfind("}")
-                json_data = output[json_start:json_end + 1]
-                self.last_results = json.loads(json_data)
-                return self.last_results
+            if json_start != -1 and json_end != -1 and json_end > json_start:
+                try:
+                    json_data = output[json_start : json_end + 1]
+                    self.last_results = json.loads(json_data)
+                    return self.last_results
+                except json.JSONDecodeError as e:
+                    self.last_error = f"Failed to parse JSON: {str(e)}"
+            
             self.last_error = "Simulation output did not contain valid JSON."
             return None
         except Exception as e:

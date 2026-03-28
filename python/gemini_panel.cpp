@@ -47,6 +47,16 @@
 namespace {
 QString compactErrorSummary(const QString& raw, int maxLen = 180) {
     QString text = raw;
+    if (text.contains("RESOURCE_EXHAUSTED", Qt::CaseInsensitive) || text.contains("429", Qt::CaseInsensitive)) {
+        return "GEMINI QUOTA EXCEEDED: You have exceeded your free tier rate limit. Please wait about 30 seconds and try again.";
+    }
+    if (text.contains("SAFETY", Qt::CaseInsensitive)) {
+        return "SAFETY FILTER BLOCKED: The model refused to answer because of safety constraints.";
+    }
+    if (text.contains("API_KEY_INVALID", Qt::CaseInsensitive) || text.contains("invalid api key", Qt::CaseInsensitive)) {
+        return "INVALID API KEY: Please check your Gemini settings and ensure your API key is correct.";
+    }
+
     text.replace("\r\n", "\n");
     text = text.trimmed();
     if (text.isEmpty()) return QString("Unknown error");
@@ -1273,7 +1283,7 @@ void GeminiPanel::onProcessFinished(int ec) {
     if (!m_thinkingBuffer.isEmpty()) { appendSystemNote(QString("<div style='background: #161b22; border-left: 4px solid #58a6ff; padding: 12px; margin: 16px 0 18px 0;'><div style='color: #8b949e; font-size: 10px; font-weight: bold; margin-bottom: 8px;'>THINKING PROCESS</div><div style='color: #c9d1d9; font-size: 13px; line-height: 1.6;'>%1</div></div>").arg(m_thinkingBuffer.toHtmlEscaped().replace("\n", "<br>"))); }
     if (!m_responseBuffer.isEmpty()) {
         QString cleanResponse = m_responseBuffer;
-        cleanResponse.replace(QRegularExpression(R"((?im)(?:^\s*[\u25c8*•\-]?\s*)?Context attached\s*)"), "");
+        cleanResponse.replace(QRegularExpression(R"((?im)(?:^\s*[◈*•\-]?\s*)?Context attached\s*)"), "");
         cleanResponse.replace(QRegularExpression(R"(\n{3,})"), "\n\n");
         cleanResponse = cleanResponse.trimmed();
         QVariantMap ai; ai["role"] = "model"; ai["text"] = cleanResponse; m_history.append(ai);

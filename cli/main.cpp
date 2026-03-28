@@ -68,6 +68,10 @@
 #include "simulator/bridge/model_library_manager.h"
 
 namespace {
+bool g_quiet = false;
+bool g_noColor = false;
+bool g_exitOnWarning = false;
+
 std::optional<int> parseTimeoutMs(const QString& value, QString* error) {
     const QString trimmed = value.trimmed();
     if (trimmed.isEmpty()) {
@@ -533,7 +537,7 @@ static bool loadRawAscii(const QString& path, RawData* out, QString* error) {
         for (int i = 0; i < out->y.size(); ++i) out->y[i].reserve(numPoints);
 
         if (isBinary) {
-            std::cout << "RawDataParser (CLI): Using binary parsing mode" << std::endl;
+            if (!g_quiet) std::cerr << "RawDataParser (CLI): Using binary parsing mode" << std::endl;
             qint64 totalDoubles = (qint64)numPoints * numVariables;
             qint64 remainingBytes = endPtr - dataPtr;
             if (remainingBytes >= totalDoubles * (qint64)sizeof(double)) {
@@ -578,9 +582,6 @@ static bool loadRawAscii(const QString& path, RawData* out, QString* error) {
 }
 using Flux::Model::SymbolDefinition;
 using Flux::Model::SymbolPrimitive;
-bool g_quiet = false;
-bool g_noColor = false;
-bool g_exitOnWarning = false;
 
 QString sha256Hex(const QByteArray& data) {
     return QString::fromLatin1(QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex());
@@ -761,10 +762,10 @@ QString stripAnsiCodes(const QString& text) {
 }
 
 void printInfo(const QString& msg) {
-    if (!g_quiet) std::cout << stripAnsiCodes(msg).toStdString() << std::endl;
+    if (!g_quiet) std::cerr << stripAnsiCodes(msg).toStdString() << std::endl;
 }
 void printInfoStd(const std::string& msg) {
-    if (!g_quiet) std::cout << stripAnsiCodes(QString::fromStdString(msg)).toStdString() << std::endl;
+    if (!g_quiet) std::cerr << stripAnsiCodes(QString::fromStdString(msg)).toStdString() << std::endl;
 }
 
 Qt::PenStyle parseLineStyle(const QString& style) {
@@ -3482,7 +3483,10 @@ int main(int argc, char *argv[]) {
     if (g_noColor) {
         qputenv("NO_COLOR", "1");
     }
-    const bool jsonRequested = parser.isSet(jsonOption);
+    const bool jsonRequested = parser.isSet(jsonOption) || app.arguments().contains("--json");
+    if (jsonRequested) {
+        g_quiet = true;
+    }
     if (g_quiet || jsonRequested) {
         QLoggingCategory::setFilterRules(QStringLiteral("*.debug=false\n"));
     }
@@ -3625,7 +3629,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        if (!g_quiet) std::cout << "Simulating circuit " << filePath.toStdString() << " (Ngspice backend)..." << std::endl;
+        if (!g_quiet) std::cerr << "Simulating circuit " << filePath.toStdString() << " (Ngspice backend)..." << std::endl;
         
         QString analysisType = parser.value("analysis").toLower();
         SpiceNetlistGenerator::SimulationParams spiceParams;
@@ -3638,18 +3642,18 @@ int main(int argc, char *argv[]) {
             spiceParams.step = parser.value("step");
             if (spiceParams.stop.isEmpty()) spiceParams.stop = "10m";
             if (spiceParams.step.isEmpty()) spiceParams.step = "100u";
-            if (!g_quiet) std::cout << "  - Type: Transient (Stop=" << spiceParams.stop.toStdString() << ", Step=" << spiceParams.step.toStdString() << ")" << std::endl;
+            if (!g_quiet) std::cerr << "  - Type: Transient (Stop=" << spiceParams.stop.toStdString() << ", Step=" << spiceParams.step.toStdString() << ")" << std::endl;
         } else if (analysisType == "ac") {
             t = SimAnalysisType::AC;
             spiceParams.type = SpiceNetlistGenerator::AC;
             spiceParams.start = "10";
             spiceParams.stop = "1meg";
             spiceParams.step = "100";
-            if (!g_quiet) std::cout << "  - Type: AC Sweep (10Hz to 1MHz)" << std::endl;
+            if (!g_quiet) std::cerr << "  - Type: AC Sweep (10Hz to 1MHz)" << std::endl;
         } else {
             t = SimAnalysisType::OP;
             spiceParams.type = SpiceNetlistGenerator::OP;
-            if (!g_quiet) std::cout << "  - Type: DC Operating Point" << std::endl;
+            if (!g_quiet) std::cerr << "  - Type: DC Operating Point" << std::endl;
         }
 
         QString netlistText = SpiceNetlistGenerator::generate(&scene, QFileInfo(filePath).absolutePath(), nullptr, spiceParams);
@@ -3730,25 +3734,25 @@ int main(int argc, char *argv[]) {
         }
 
         if (t == SimAnalysisType::OP) {
-            if (!g_quiet) std::cout << "\n--- DC Operating Point Results ---" << std::endl;
+            if (!g_quiet) std::cerr << "\n--- DC Operating Point Results ---" << std::endl;
             for (const auto& [node, v] : results.nodeVoltages) {
-                if (!g_quiet) std::cout << "V(" << node << ") = " << v << " V" << std::endl;
+                if (!g_quiet) std::cerr << "V(" << node << ") = " << v << " V" << std::endl;
             }
             for (const auto& [branch, i] : results.branchCurrents) {
-                if (!g_quiet) std::cout << "I(" << branch << ") = " << (i * 1000.0) << " mA" << std::endl;
+                if (!g_quiet) std::cerr << "I(" << branch << ") = " << (i * 1000.0) << " mA" << std::endl;
             }
         } else {
-            if (!g_quiet) std::cout << "\nGenerated " << results.waveforms.size() << " waveforms." << std::endl;
+            if (!g_quiet) std::cerr << "\nGenerated " << results.waveforms.size() << " waveforms." << std::endl;
             for (const auto& wave : results.waveforms) {
-                if (!g_quiet) std::cout << "  - " << wave.name << " (" << wave.yData.size() << " points)" << std::endl;
+                if (!g_quiet) std::cerr << "  - " << wave.name << " (" << wave.yData.size() << " points)" << std::endl;
                 if (!wave.yData.empty()) {
-                    if (!g_quiet) std::cout << "    Range: [" << *std::min_element(wave.yData.begin(), wave.yData.end()) 
+                    if (!g_quiet) std::cerr << "    Range: [" << *std::min_element(wave.yData.begin(), wave.yData.end()) 
                               << " V, " << *std::max_element(wave.yData.begin(), wave.yData.end()) << " V]" << std::endl;
                 }
             }
         }
 
-        if (!g_quiet) std::cout << "\nSimulation successful." << std::endl;
+        if (!g_quiet) std::cerr << "\nSimulation successful." << std::endl;
         std::cout.flush();
         std::cerr.flush();
         std::_Exit(0);

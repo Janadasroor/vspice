@@ -1,6 +1,7 @@
 import json
 import re
 import os
+import math
 from ..services.simulation_adapter.engine import SimulationAdapter
 from ..services.power_metrics.compute import compute_average_power
 from ..services.waveform_viz.plot_service import PlotService
@@ -271,6 +272,7 @@ class ToolRegistry:
                 "min": min(y),
                 "max": max(y),
                 "avg": sum(y) / len(y),
+                "rms": math.sqrt(sum(v*v for v in y) / len(y)) if y else 0.0,
             }
         except Exception as e:
             return {"error": str(e)}
