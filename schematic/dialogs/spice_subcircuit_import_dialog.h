@@ -17,11 +17,18 @@ class SpiceSubcircuitImportDialog : public QDialog {
 
 public:
     struct Result {
+        struct PinMapping {
+            QString subcktPin;
+            QString symbolPinName;
+            int symbolPinNumber = 0;
+        };
+
         QString subcktName;
         QString fileName;
         QString absolutePath;
         QString relativeIncludePath;
         QStringList pins;
+        QList<PinMapping> pinMappings;
         QString netlistText;
         bool insertIncludeDirective = true;
         bool openSymbolEditor = true;

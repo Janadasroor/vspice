@@ -3,6 +3,8 @@
 #include "config_manager.h"
 #include "schematic_file_io.h"
 #include "theme_manager.h"
+#include "../schematic/items/schematic_item.h"
+#include "../schematic/analysis/net_manager.h"
 #include <QMenu>
 #include <QUndoStack>
 #include <QMessageBox>
@@ -848,6 +850,8 @@ void GeminiPanel::onVoiceClicked() {
 void GeminiPanel::handleActionTag(const QString& actionText) {
     const QString action = actionText.trimmed();
     if (action.isEmpty()) return;
+
+    QGraphicsView* view = m_scene ? m_scene->views().value(0, nullptr) : nullptr;
     
     if (m_statusButton) m_statusButton->setText(action.toUpper());
     showToolCallBanner(action);
@@ -883,8 +887,9 @@ void GeminiPanel::handleActionTag(const QString& actionText) {
         double y = getParam("y").toDouble();
         QString ref = getParam("ref");
 
-        if (!text.isEmpty() && m_view) {
-            m_view->addHint(text, QPointF(x, y), ref);
+        if (!text.isEmpty() && view) {
+            QMetaObject::invokeMethod(view, "addHint", Qt::DirectConnection,
+                                      Q_ARG(QString, text), Q_ARG(QPointF, QPointF(x, y)), Q_ARG(QString, ref));
         }
     } else if (action.startsWith("zoom_to(")) {
         QString params = action.mid(8);
@@ -901,11 +906,11 @@ void GeminiPanel::handleActionTag(const QString& actionText) {
         };
 
         QString ref = getParam("ref");
-        if (!ref.isEmpty() && m_view && m_scene) {
+        if (!ref.isEmpty() && view && m_scene) {
             for (auto* item : m_scene->items()) {
                 if (auto* sItem = dynamic_cast<SchematicItem*>(item)) {
                     if (sItem->reference() == ref && !sItem->isSubItem()) {
-                        m_view->fitInView(sItem->sceneBoundingRect().adjusted(-150, -150, 150, 150), Qt::KeepAspectRatio);
+                        view->fitInView(sItem->sceneBoundingRect().adjusted(-150, -150, 150, 150), Qt::KeepAspectRatio);
                         sItem->setSelected(true);
                         break;
                     }
@@ -928,10 +933,18 @@ void GeminiPanel::handleActionTag(const QString& actionText) {
 
         QString net = getParam("name");
         if (!net.isEmpty() && m_netManager) {
-            onItemsHighlighted(m_netManager->getRefsOnNet(net));
+            QStringList refs;
+            for (SchematicItem* item : m_netManager->getItemsForNet(net)) {
+                if (!item || item->isSubItem()) continue;
+                const QString ref = item->reference().trimmed();
+                if (!ref.isEmpty() && !refs.contains(ref)) refs.append(ref);
+            }
+            emit itemsHighlighted(refs);
         }
     } else if (action == "clear_hints") {
-        if (m_view) m_view->clearHints();
+        if (view) {
+            QMetaObject::invokeMethod(view, "clearHints", Qt::DirectConnection);
+        }
     }
 }
 

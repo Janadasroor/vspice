@@ -1174,7 +1174,13 @@ void SchematicEditor::createDockWidgets() {
     m_geminiPanel->setNetManager(m_netManager);
     m_geminiPanel->setUndoStack(m_undoStack);
     connect(m_geminiPanel, &GeminiPanel::itemsHighlighted, this, &SchematicEditor::onItemsHighlighted);
-    connect(m_geminiPanel, &GeminiPanel::snippetGenerated, this, &SchematicEditor::onSnippetGenerated);
+    connect(m_geminiPanel, &GeminiPanel::snippetGenerated, this, [this](const QString& jsonSnippet) {
+        QPointF pos;
+        if (m_view) {
+            pos = m_view->mapToScene(m_view->viewport()->rect().center());
+        }
+        onSnippetGenerated(jsonSnippet, pos);
+    });
     connect(m_geminiPanel, &GeminiPanel::netlistGenerated, this, [this](const QString& netlist) {
         if (!m_scene) return;
         QTemporaryFile tempFile;

@@ -24,5 +24,5 @@ Based on a review of the current implementation, here are several recommendation
 - **Voice-to-Task:** Fully implement the "VOICE" feature to allow commands like "Zoom to the output stage" or "Run a 10ms transient simulation".
 
 ## 5. Component Browser
-- **Live Preview:** Show a high-fidelity preview of the symbol AND the associated footprints/3D models when hovering over a component in the browser.
+- **Live Preview:** Show a high-fidelity preview of the symbol when hovering over a component in the browser.
 - **Smart Search:** Enhance search with natural language keywords (e.g., "Low noise op-amp" or "Fast switching diode").

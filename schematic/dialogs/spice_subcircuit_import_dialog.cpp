@@ -123,16 +123,17 @@ void SpiceSubcircuitImportDialog::setupUi() {
     formLayout->addWidget(m_pathPreviewLabel, 2, 1);
     mainLayout->addLayout(formLayout);
 
-    auto* pinsLabel = new QLabel("Detected Pins", this);
+    auto* pinsLabel = new QLabel("Pin Mapping Setup", this);
     mainLayout->addWidget(pinsLabel);
 
     m_pinTable = new QTableWidget(this);
-    m_pinTable->setColumnCount(2);
-    m_pinTable->setHorizontalHeaderLabels({"Order", "Pin"});
+    m_pinTable->setColumnCount(3);
+    m_pinTable->setHorizontalHeaderLabels({"Subckt Pin", "Symbol Pin #", "Symbol Label"});
+    m_pinTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_pinTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_pinTable->horizontalHeader()->setStretchLastSection(true);
     m_pinTable->verticalHeader()->setVisible(false);
-    m_pinTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_pinTable->setSelectionMode(QAbstractItemView::NoSelection);
+    m_pinTable->setSelectionBehavior(QAbstractItemView::SelectItems);
     m_pinTable->setMinimumHeight(160);
     mainLayout->addWidget(m_pinTable);
 
@@ -244,10 +245,30 @@ void SpiceSubcircuitImportDialog::updateFromText() {
     }
     refreshPathPreview();
 
+    const QList<Result::PinMapping> previousMappings = m_result.pinMappings;
+
     m_pinTable->setRowCount(pins.size());
     for (int row = 0; row < pins.size(); ++row) {
-        m_pinTable->setItem(row, 0, new QTableWidgetItem(QString::number(row + 1)));
-        m_pinTable->setItem(row, 1, new QTableWidgetItem(pins.at(row)));
+        const QString subcktPin = pins.at(row);
+        QString symbolLabel = subcktPin;
+        int symbolPinNumber = row + 1;
+
+        if (row < previousMappings.size()) {
+            const Result::PinMapping& prev = previousMappings.at(row);
+            if (prev.subcktPin.compare(subcktPin, Qt::CaseInsensitive) == 0) {
+                if (!prev.symbolPinName.trimmed().isEmpty()) symbolLabel = prev.symbolPinName.trimmed();
+                if (prev.symbolPinNumber > 0) symbolPinNumber = prev.symbolPinNumber;
+            }
+        }
+
+        auto* subcktPinItem = new QTableWidgetItem(subcktPin);
+        subcktPinItem->setFlags(subcktPinItem->flags() & ~Qt::ItemIsEditable);
+        auto* symbolPinNumberItem = new QTableWidgetItem(QString::number(symbolPinNumber));
+        auto* symbolLabelItem = new QTableWidgetItem(symbolLabel);
+
+        m_pinTable->setItem(row, 0, subcktPinItem);
+        m_pinTable->setItem(row, 1, symbolPinNumberItem);
+        m_pinTable->setItem(row, 2, symbolLabelItem);
     }
 
     QStringList messages;
@@ -310,11 +331,39 @@ void SpiceSubcircuitImportDialog::onAccepted() {
     const QString relativeIncludePath = QDir::fromNativeSeparators(QDir(baseDir).relativeFilePath(absolutePath));
     ModelLibraryManager::instance().reload();
 
+    QList<Result::PinMapping> pinMappings;
+    QSet<int> usedSymbolPinNumbers;
+    for (int row = 0; row < m_pinTable->rowCount(); ++row) {
+        QTableWidgetItem* subcktPinItem = m_pinTable->item(row, 0);
+        QTableWidgetItem* symbolPinNumberItem = m_pinTable->item(row, 1);
+        QTableWidgetItem* symbolLabelItem = m_pinTable->item(row, 2);
+        if (!subcktPinItem || !symbolPinNumberItem || !symbolLabelItem) continue;
+
+        Result::PinMapping mapping;
+        mapping.subcktPin = subcktPinItem->text().trimmed();
+        mapping.symbolPinName = symbolLabelItem->text().trimmed();
+        mapping.symbolPinNumber = symbolPinNumberItem->text().toInt();
+
+        if (mapping.subcktPin.isEmpty()) continue;
+        if (mapping.symbolPinName.isEmpty()) mapping.symbolPinName = mapping.subcktPin;
+        if (mapping.symbolPinNumber <= 0) {
+            QMessageBox::warning(this, "Import SPICE Subcircuit", QString("Symbol pin number for %1 must be greater than zero.").arg(mapping.subcktPin));
+            return;
+        }
+        if (usedSymbolPinNumbers.contains(mapping.symbolPinNumber)) {
+            QMessageBox::warning(this, "Import SPICE Subcircuit", QString("Duplicate symbol pin number %1 in mapping table.").arg(mapping.symbolPinNumber));
+            return;
+        }
+        usedSymbolPinNumbers.insert(mapping.symbolPinNumber);
+        pinMappings.append(mapping);
+    }
+
     m_result.subcktName = subcktName;
     m_result.fileName = fileName;
     m_result.absolutePath = absolutePath;
     m_result.relativeIncludePath = relativeIncludePath;
     m_result.netlistText = netlistText.trimmed();
+    m_result.pinMappings = pinMappings;
     m_result.insertIncludeDirective = m_insertIncludeCheck->isChecked();
     m_result.openSymbolEditor = m_openSymbolEditorCheck->isChecked();
     m_result.autoPlaceAfterSave = m_openSymbolEditorCheck->isChecked() && m_autoPlaceAfterSaveCheck->isChecked();

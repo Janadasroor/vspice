@@ -204,7 +204,22 @@ static SymbolDefinition buildImportedSubcktSymbol(const SpiceSubcircuitImportDia
     def.setSpiceModelName(res.subcktName);
 
     QMap<int, QString> mapping;
-    const int pinCount = res.pins.size();
+    QList<SpiceSubcircuitImportDialog::Result::PinMapping> pinMappings = res.pinMappings;
+    if (pinMappings.isEmpty()) {
+        for (int i = 0; i < res.pins.size(); ++i) {
+            SpiceSubcircuitImportDialog::Result::PinMapping mappingEntry;
+            mappingEntry.subcktPin = res.pins.at(i);
+            mappingEntry.symbolPinName = res.pins.at(i);
+            mappingEntry.symbolPinNumber = i + 1;
+            pinMappings.append(mappingEntry);
+        }
+    }
+
+    std::sort(pinMappings.begin(), pinMappings.end(), [](const auto& a, const auto& b) {
+        return a.symbolPinNumber < b.symbolPinNumber;
+    });
+
+    const int pinCount = pinMappings.size();
     const int leftCount = (pinCount + 1) / 2;
     const qreal bodyWidth = 120.0;
     const qreal bodyHalfHeight = qMax<qreal>(40.0, pinCount * 12.0);
@@ -215,16 +230,18 @@ static SymbolDefinition buildImportedSubcktSymbol(const SpiceSubcircuitImportDia
     def.addPrimitive(SymbolPrimitive::createText(res.subcktName, QPointF(-30.0, -bodyHalfHeight - 18.0), 10));
 
     for (int i = 0; i < pinCount; ++i) {
+        const auto& pinMapping = pinMappings.at(i);
         const bool leftSide = (i < leftCount);
         const int sideIndex = leftSide ? i : (i - leftCount);
         const int countOnSide = leftSide ? leftCount : (pinCount - leftCount);
         const qreal y = ((countOnSide - 1) * pinSpacing * -0.5) + (sideIndex * pinSpacing);
         const QPointF pos(leftSide ? (-bodyWidth / 2.0 - pinLength) : (bodyWidth / 2.0 + pinLength), y);
         const QString orientation = leftSide ? "Right" : "Left";
-        const int symbolPinNumber = i + 1;
-        const QString subcktPinName = res.pins.at(i);
+        const int symbolPinNumber = pinMapping.symbolPinNumber;
+        const QString subcktPinName = pinMapping.subcktPin;
+        const QString symbolPinName = pinMapping.symbolPinName.isEmpty() ? subcktPinName : pinMapping.symbolPinName;
 
-        SymbolPrimitive pin = SymbolPrimitive::createPin(pos, symbolPinNumber, subcktPinName, orientation, pinLength);
+        SymbolPrimitive pin = SymbolPrimitive::createPin(pos, symbolPinNumber, symbolPinName, orientation, pinLength);
         def.addPrimitive(pin);
         mapping.insert(symbolPinNumber, subcktPinName);
     }
