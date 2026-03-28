@@ -1087,6 +1087,15 @@ void WaveformViewer::applyZoomState(const ZoomState &s) {
 }
 
 void WaveformViewer::onZoomRectCompleted(const QRectF &valueRect) {
+    VioChartView* view = qobject_cast<VioChartView*>(sender());
+    ChartPane* sourcePane = nullptr;
+    for (auto* p : m_panes) {
+        if (p->view == view) {
+            sourcePane = p;
+            break;
+        }
+    }
+
     pushZoomState();
     if (m_panes.isEmpty()) return;
     
@@ -1095,8 +1104,8 @@ void WaveformViewer::onZoomRectCompleted(const QRectF &valueRect) {
         p->axisX->setRange(valueRect.left(), valueRect.right());
     }
     
-    for (auto* p : m_panes) {
-        p->axisY->setRange(valueRect.top(), valueRect.bottom());
+    if (sourcePane) {
+        sourcePane->axisY->setRange(valueRect.top(), valueRect.bottom());
     }
     m_blockUpdates = false;
 }
@@ -1195,6 +1204,7 @@ WaveformViewer::ChartPane* WaveformViewer::createPane(WaveformViewer::SignalType
     connect(pane->view, &VioChartView::cursorsMoved, this, &WaveformViewer::updateCursors);
     connect(pane->view, &VioChartView::contextMenuRequested, this, &WaveformViewer::onContextMenuRequested);
     connect(pane->view, &VioChartView::clicked, this, &WaveformViewer::onPaneClicked);
+    connect(pane->view, &VioChartView::zoomRectCompleted, this, &WaveformViewer::onZoomRectCompleted);
     
     return pane;
 }

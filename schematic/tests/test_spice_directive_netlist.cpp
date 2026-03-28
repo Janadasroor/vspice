@@ -12,6 +12,8 @@ class SpiceDirectiveNetlistTest : public QObject {
 private slots:
     void generatesWarningsAndHonorsManualDirectives();
     void reportsDuplicateElementsAndUnclosedSubckts();
+    void rewritesSimpleLtspiceIfExpressions();
+    void rewritesIfWithTrueAndFalseBranches();
 };
 
 void SpiceDirectiveNetlistTest::generatesWarningsAndHonorsManualDirectives() {
@@ -68,6 +70,51 @@ void SpiceDirectiveNetlistTest::reportsDuplicateElementsAndUnclosedSubckts() {
     QVERIFY2(netlist.contains("* Warning: Missing .ends for subcircuit opamp."), qPrintable(netlist));
     QCOMPARE(netlist.count(".ac dec 10 1 1Meg"), 1);
     QVERIFY2(!netlist.contains(".tran 1u 1m"), qPrintable(netlist));
+}
+
+void SpiceDirectiveNetlistTest::rewritesSimpleLtspiceIfExpressions() {
+    QGraphicsScene scene;
+
+    auto* directive = new SchematicSpiceDirectiveItem(
+        "BGAH GAH 0 V={if(V(REFA)>V(TRI), VG, 0)}\n"
+        ".model DBODY D(Ron=0.01 Roff=1e9 Vfwd=0.8)\n"
+        ".meas tran Iload_rms RMS I(RLOAD) FROM=1m TO=2m\n"
+        ".tran 1u 2m",
+        QPointF(0, 0));
+    scene.addItem(directive);
+
+    SpiceNetlistGenerator::SimulationParams params;
+    params.type = SpiceNetlistGenerator::Transient;
+    params.step = "1u";
+    params.stop = "2m";
+
+    const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
+
+    QVERIFY2(netlist.contains("* LTspice rewrite: BGAH GAH 0 V={if(V(REFA)>V(TRI), VG, 0)}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BGAH GAH 0 V={((VG)*(u((V(REFA))-(V(TRI)))))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("LTspice-style diode model parameters detected"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("I(R...) style expressions"), qPrintable(netlist));
+    QVERIFY2(!netlist.contains(".tran 1u 2m\n.tran 1u 2m"), qPrintable(netlist));
+}
+
+void SpiceDirectiveNetlistTest::rewritesIfWithTrueAndFalseBranches() {
+    QGraphicsScene scene;
+
+    auto* directive = new SchematicSpiceDirectiveItem(
+        "BDRV G 0 V={if(V(IN)>0.5, 12, -3)}\n"
+        ".tran 1u 1m",
+        QPointF(0, 0));
+    scene.addItem(directive);
+
+    SpiceNetlistGenerator::SimulationParams params;
+    params.type = SpiceNetlistGenerator::Transient;
+    params.step = "1u";
+    params.stop = "1m";
+
+    const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
+
+    QVERIFY2(netlist.contains("* LTspice rewrite: BDRV G 0 V={if(V(IN)>0.5, 12, -3)}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BDRV G 0 V={((12)*(u((V(IN))-(0.5))) + (-3)*(1-(u((V(IN))-(0.5)))))"), qPrintable(netlist));
 }
 
 QTEST_MAIN(SpiceDirectiveNetlistTest)

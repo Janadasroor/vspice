@@ -133,6 +133,7 @@ private slots:
     void onExpressionSubmitted(const QString &expression, const QColor &color = QColor(), const QString &targetName = QString());
     void onLegendCtrlClicked(const QString &seriesName);
     void onPaneClicked();
+    void onZoomRectCompleted(const QRectF &valueRect);
 
 private:
     enum class SignalType { VOLTAGE, CURRENT, POWER, OTHER };
@@ -229,5 +230,4 @@ private:
     QStack<ZoomState> m_zoomRedo;
     void pushZoomState();
     void applyZoomState(const ZoomState &s);
-    void onZoomRectCompleted(const QRectF &valueRect);
 };

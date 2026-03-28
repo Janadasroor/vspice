@@ -34,6 +34,59 @@ struct UserSpiceContentSummary {
     bool hasElementCards = false;
 };
 
+QString rewriteLtspiceBehavioralIf(const QString& line, QStringList* warnings = nullptr) {
+    QString out = line;
+
+    static const QRegularExpression ifRe(
+        "\\bif\\s*\\(\\s*([^,]+?)\\s*([<>]=?)\\s*([^,]+?)\\s*,\\s*([^,]+?)\\s*,\\s*(0|0\\.0*)\\s*\\)",
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression ifElseRe(
+        "\\bif\\s*\\(\\s*([^,]+?)\\s*([<>]=?)\\s*([^,]+?)\\s*,\\s*([^,]+?)\\s*,\\s*([^,]+?)\\s*\\)",
+        QRegularExpression::CaseInsensitiveOption);
+
+    QRegularExpressionMatch match = ifRe.match(out);
+    if (!match.hasMatch()) {
+        match = ifElseRe.match(out);
+        if (!match.hasMatch()) return out;
+    }
+
+    const QString lhs = match.captured(1).trimmed();
+    const QString op = match.captured(2).trimmed();
+    const QString rhs = match.captured(3).trimmed();
+    const QString trueExpr = match.captured(4).trimmed();
+    const QString falseExpr = match.captured(5).trimmed();
+
+    QString stepExpr;
+    if (op == ">" || op == ">=") stepExpr = QString("u((%1)-(%2))").arg(lhs, rhs);
+    else if (op == "<" || op == "<=") stepExpr = QString("u((%1)-(%2))").arg(rhs, lhs);
+    else return out;
+
+    const bool falseIsZero = falseExpr == "0" || falseExpr == "0.0";
+    QString replacement;
+    if (falseIsZero) {
+        replacement = QString("((%1)*(%2))").arg(trueExpr, stepExpr);
+    } else {
+        replacement = QString("((%1)*(%2) + (%3)*(1-(%2)))").arg(trueExpr, stepExpr, falseExpr);
+    }
+
+    out.replace(match.capturedStart(0), match.capturedLength(0), replacement);
+    if (warnings) {
+        warnings->append(QString("Rewrote LTspice-style if(...) to ngspice-safe expression in: %1").arg(line.trimmed()));
+        if (!falseIsZero) {
+            warnings->append(QString("Rewrote LTspice-style if(..., true, false) into weighted u(...) form in: %1").arg(line.trimmed()));
+        }
+    }
+    return out;
+}
+
+QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings = nullptr) {
+    QString out = line;
+    if (out.contains("if(", Qt::CaseInsensitive) && out.contains(" V={", Qt::CaseInsensitive)) {
+        out = rewriteLtspiceBehavioralIf(out, warnings);
+    }
+    return out;
+}
+
 QStringList collapseSpiceContinuationLines(const QString& text) {
     QStringList collapsed;
     QString current;
@@ -555,12 +608,25 @@ UserSpiceContentSummary summarizeUserSpiceText(const QString& text, const QStrin
                     }
                     summary.declaredModelNames.insert(modelName);
                 }
+
+                if (line.contains(" D(", Qt::CaseInsensitive) &&
+                    (line.contains("Ron=", Qt::CaseInsensitive) || line.contains("Roff=", Qt::CaseInsensitive) || line.contains("Vfwd=", Qt::CaseInsensitive))) {
+                    summary.warnings.append(QString("LTspice-style diode model parameters detected in line %1; ngspice may reject Ron/Roff/Vfwd on .model D.").arg(lineNo));
+                }
+            }
+
+            if (card == ".meas" && line.contains("I(", Qt::CaseInsensitive)) {
+                summary.warnings.append(QString("Measurement current expression in line %1 may be LTspice-specific; ngspice is less reliable with I(R...) style expressions.").arg(lineNo));
             }
 
             continue;
         }
 
         summary.hasElementCards = true;
+        const QString rewrittenLine = rewriteLtspiceDirectiveLine(line, &summary.warnings);
+        if (rewrittenLine.contains("if(", Qt::CaseInsensitive)) {
+            summary.warnings.append(QString("LTspice-style if(...) expression remains in line %1 and may fail in ngspice.").arg(lineNo));
+        }
         const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
         if (parts.isEmpty()) continue;
 
@@ -619,17 +685,29 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                         directiveWarnings.append(summary.warnings);
                         hasExplicitAnalysisCard = hasExplicitAnalysisCard || summary.hasExplicitAnalysisCard;
                         hasUserElementCards = hasUserElementCards || summary.hasElementCards;
-                        
-                        if (cmd.startsWith(".mean", Qt::CaseInsensitive)) {
-                            const QString converted = normalizeMeanDirective(cmd);
-                            if (converted != cmd) {
-                                netlist += "* " + cmd + "\n";
-                                netlist += converted + "\n";
-                            } else {
-                                netlist += cmd + "\n";
+
+                        const QStringList cmdLines = collapseSpiceContinuationLines(cmd);
+                        for (const QString& rawCmdLine : cmdLines) {
+                            const QString trimmedCmdLine = rawCmdLine.trimmed();
+                            if (trimmedCmdLine.isEmpty()) {
+                                netlist += "\n";
+                                continue;
                             }
-                        } else {
-                            netlist += cmd + "\n";
+
+                            QString lineToWrite = rewriteLtspiceDirectiveLine(trimmedCmdLine, &directiveWarnings);
+                            if (trimmedCmdLine.startsWith(".mean", Qt::CaseInsensitive)) {
+                                const QString converted = normalizeMeanDirective(trimmedCmdLine);
+                                if (converted != trimmedCmdLine) {
+                                    netlist += "* " + trimmedCmdLine + "\n";
+                                    netlist += converted + "\n";
+                                    continue;
+                                }
+                            }
+
+                            if (lineToWrite != trimmedCmdLine) {
+                                netlist += "* LTspice rewrite: " + trimmedCmdLine + "\n";
+                            }
+                            netlist += lineToWrite + "\n";
                         }
                     }
                 }

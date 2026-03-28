@@ -270,6 +270,11 @@ void SpiceDirectiveDialog::validateDirectiveText() {
                                         .arg(parts.at(1));
                     }
                 }
+
+                if (line.contains(" D(", Qt::CaseInsensitive) &&
+                    (line.contains("Ron=", Qt::CaseInsensitive) || line.contains("Roff=", Qt::CaseInsensitive) || line.contains("Vfwd=", Qt::CaseInsensitive))) {
+                    warnings << QString("Line %1: LTspice-style diode model parameters Ron/Roff/Vfwd may fail in ngspice.").arg(lineNo);
+                }
             }
 
             static const QSet<QString> kAnalysisCards = {
@@ -279,7 +284,15 @@ void SpiceDirectiveDialog::validateDirectiveText() {
                 analysisCards.append(QString("%1 (line %2)").arg(card, QString::number(lineNo)));
             }
 
+            if (card == ".meas" && line.contains("I(", Qt::CaseInsensitive)) {
+                warnings << QString("Line %1: I(R...) style .meas current expressions may not be portable to ngspice.").arg(lineNo);
+            }
+
             continue;
+        }
+
+        if (line.contains("if(", Qt::CaseInsensitive)) {
+            warnings << QString("Line %1: LTspice-style if(...) may fail in ngspice; prefer u(...) or let VioSpice rewrite simple cases during netlist generation.").arg(lineNo);
         }
 
         const QString token = firstToken(line);
