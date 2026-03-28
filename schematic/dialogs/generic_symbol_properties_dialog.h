@@ -5,6 +5,7 @@
 
 class GenericComponentItem;
 class QComboBox;
+class QPushButton;
 class QLineEdit;
 class QTableWidget;
 
@@ -24,6 +25,7 @@ private:
     SchematicItem* m_item;
     GenericComponentItem* m_genericItem;
     QComboBox* m_subcktPicker;
+    QPushButton* m_browseSubcktButton;
     QLineEdit* m_spiceModelEdit;
     QTableWidget* m_pinMappingTable;
 };

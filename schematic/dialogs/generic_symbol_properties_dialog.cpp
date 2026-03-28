@@ -1,14 +1,19 @@
 #include "generic_symbol_properties_dialog.h"
 #include "../editor/schematic_commands.h"
 #include "../items/generic_component_item.h"
+#include "subcircuit_picker_dialog.h"
 #include "../../core/assignment_validator.h"
 #include "../../symbols/symbol_library.h"
 #include "../../simulator/bridge/model_library_manager.h"
 #include <QComboBox>
+#include <QCompleter>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QHeaderView>
+#include <QHBoxLayout>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -40,7 +45,7 @@ Flux::Model::SymbolDefinition symbolForValidation(const SchematicItem* item) {
 }
 
 GenericSymbolPropertiesDialog::GenericSymbolPropertiesDialog(SchematicItem* item, QUndoStack* undoStack, QGraphicsScene* scene, QWidget* parent)
-    : SmartPropertiesDialog({item}, undoStack, scene, parent), m_item(item), m_genericItem(dynamic_cast<GenericComponentItem*>(item)), m_subcktPicker(nullptr), m_spiceModelEdit(nullptr), m_pinMappingTable(nullptr) {
+    : SmartPropertiesDialog({item}, undoStack, scene, parent), m_item(item), m_genericItem(dynamic_cast<GenericComponentItem*>(item)), m_subcktPicker(nullptr), m_browseSubcktButton(nullptr), m_spiceModelEdit(nullptr), m_pinMappingTable(nullptr) {
     setWindowTitle(item->itemTypeName() + " Properties");
     
     PropertyTab identityTab;
@@ -96,26 +101,74 @@ void GenericSymbolPropertiesDialog::addSimulationTab() {
     form->addRow("Instance Model", m_spiceModelEdit);
 
     m_subcktPicker = new QComboBox(page);
-    m_subcktPicker->addItem("Custom...");
+    m_subcktPicker->setEditable(true);
+    m_subcktPicker->setInsertPolicy(QComboBox::NoInsert);
+    m_subcktPicker->addItem("Custom...", QString());
     const QVector<SpiceModelInfo> allModels = ModelLibraryManager::instance().allModels();
-    QStringList subcktNames;
+    QVector<SpiceModelInfo> subcktInfos;
     for (const SpiceModelInfo& info : allModels) {
         if (info.type.compare("Subcircuit", Qt::CaseInsensitive) == 0 && !info.name.trimmed().isEmpty()) {
-            subcktNames.append(info.name.trimmed());
+            subcktInfos.append(info);
         }
     }
-    subcktNames.removeDuplicates();
-    std::sort(subcktNames.begin(), subcktNames.end(), [](const QString& a, const QString& b) {
-        return a.toLower() < b.toLower();
+    std::sort(subcktInfos.begin(), subcktInfos.end(), [](const SpiceModelInfo& a, const SpiceModelInfo& b) {
+        return a.name.toLower() < b.name.toLower();
     });
-    for (const QString& name : subcktNames) m_subcktPicker->addItem(name);
+    QSet<QString> seenNames;
+    for (const SpiceModelInfo& info : subcktInfos) {
+        const QString modelName = info.name.trimmed();
+        if (seenNames.contains(modelName.toLower())) continue;
+        seenNames.insert(modelName.toLower());
+
+        QString displayText = modelName;
+        const QString libPath = info.libraryPath.trimmed();
+        const QString description = info.description.trimmed();
+        if (!description.isEmpty() || !libPath.isEmpty()) {
+            QStringList parts;
+            if (!description.isEmpty()) parts << description;
+            if (!libPath.isEmpty()) parts << QFileInfo(libPath).fileName();
+            displayText += QString("  (%1)").arg(parts.join(", "));
+        }
+
+        m_subcktPicker->addItem(displayText, modelName);
+        const int idx = m_subcktPicker->count() - 1;
+        QStringList details;
+        details << modelName;
+        if (!description.isEmpty()) details << description;
+        if (!libPath.isEmpty()) details << QString("Library: %1").arg(libPath);
+        m_subcktPicker->setItemData(idx, details.join('\n'), Qt::ToolTipRole);
+    }
+
+    if (QCompleter* completer = m_subcktPicker->completer()) {
+        completer->setCaseSensitivity(Qt::CaseInsensitive);
+        completer->setFilterMode(Qt::MatchContains);
+        completer->setCompletionMode(QCompleter::PopupCompletion);
+    }
 
     const QString currentModel = m_item->spiceModel().trimmed().isEmpty()
         ? (symbol.modelName().trimmed().isEmpty() ? symbol.spiceModelName().trimmed() : symbol.modelName().trimmed())
         : m_item->spiceModel().trimmed();
-    const int comboIndex = m_subcktPicker->findText(currentModel);
-    m_subcktPicker->setCurrentIndex(comboIndex >= 0 ? comboIndex : 0);
-    form->addRow("Project Subckt", m_subcktPicker);
+    int comboIndex = -1;
+    for (int i = 1; i < m_subcktPicker->count(); ++i) {
+        if (m_subcktPicker->itemData(i).toString().compare(currentModel, Qt::CaseInsensitive) == 0) {
+            comboIndex = i;
+            break;
+        }
+    }
+    if (comboIndex >= 0) {
+        m_subcktPicker->setCurrentIndex(comboIndex);
+        m_subcktPicker->setEditText(m_subcktPicker->itemText(comboIndex));
+    } else {
+        m_subcktPicker->setCurrentIndex(0);
+        m_subcktPicker->setEditText(currentModel);
+    }
+    QWidget* subcktPickerRow = new QWidget(page);
+    QHBoxLayout* subcktPickerLayout = new QHBoxLayout(subcktPickerRow);
+    subcktPickerLayout->setContentsMargins(0, 0, 0, 0);
+    subcktPickerLayout->addWidget(m_subcktPicker, 1);
+    m_browseSubcktButton = new QPushButton("Browse...", subcktPickerRow);
+    subcktPickerLayout->addWidget(m_browseSubcktButton);
+    form->addRow("Project Subckt", subcktPickerRow);
 
     QLineEdit* sourcePath = new QLineEdit(page);
     sourcePath->setReadOnly(true);
@@ -132,10 +185,46 @@ void GenericSymbolPropertiesDialog::addSimulationTab() {
     m_pinMappingTable->verticalHeader()->setVisible(false);
     layout->addWidget(m_pinMappingTable);
 
-    connect(m_subcktPicker, &QComboBox::currentTextChanged, this, [this](const QString& text) {
+    connect(m_subcktPicker, &QComboBox::editTextChanged, this, [this](const QString& text) {
         if (!m_spiceModelEdit || !m_subcktPicker) return;
-        if (m_subcktPicker->currentIndex() <= 0) return;
-        m_spiceModelEdit->setText(text.trimmed());
+        int matchedIndex = -1;
+        for (int i = 1; i < m_subcktPicker->count(); ++i) {
+            if (m_subcktPicker->itemText(i).compare(text.trimmed(), Qt::CaseInsensitive) == 0) {
+                matchedIndex = i;
+                break;
+            }
+        }
+        if (matchedIndex >= 0) {
+            m_spiceModelEdit->setText(m_subcktPicker->itemData(matchedIndex).toString().trimmed());
+        } else {
+            m_spiceModelEdit->setText(text.trimmed());
+        }
+    });
+
+    connect(m_subcktPicker, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (!m_spiceModelEdit || !m_subcktPicker) return;
+        if (index == 0 && m_subcktPicker->currentText() == "Custom...") return;
+        const QString modelName = m_subcktPicker->itemData(index).toString().trimmed();
+        m_spiceModelEdit->setText(modelName.isEmpty() ? m_subcktPicker->currentText().trimmed() : modelName);
+    });
+
+    connect(m_browseSubcktButton, &QPushButton::clicked, this, [this]() {
+        const QString currentModel = m_spiceModelEdit ? m_spiceModelEdit->text().trimmed() : QString();
+        SubcircuitPickerDialog dlg(currentModel, this);
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        const QString selected = dlg.selectedModel().trimmed();
+        if (selected.isEmpty()) return;
+        if (m_spiceModelEdit) m_spiceModelEdit->setText(selected);
+
+        for (int i = 1; i < m_subcktPicker->count(); ++i) {
+            if (m_subcktPicker->itemData(i).toString().compare(selected, Qt::CaseInsensitive) == 0) {
+                m_subcktPicker->setCurrentIndex(i);
+                return;
+            }
+        }
+        m_subcktPicker->setCurrentIndex(0);
+        m_subcktPicker->setEditText(selected);
     });
 
     QList<SymbolPrimitive> pins;
