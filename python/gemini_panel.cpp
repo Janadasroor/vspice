@@ -515,7 +515,7 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
 
     m_inputField = new QTextEdit(this);
     m_inputField->setPlaceholderText("Message Viora AI...  (Enter = send, Shift+Enter = new line)");
-    m_inputField->setFixedHeight(72);
+    m_inputField->setFixedHeight(56);
     m_inputField->setAcceptRichText(false);
     m_inputField->setStyleSheet(QString(
         "QTextEdit { background: transparent; color: %1; border: none; padding: 2px 0; font-size: 13px; }"
