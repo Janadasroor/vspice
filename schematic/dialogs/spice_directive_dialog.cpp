@@ -287,12 +287,27 @@ void SpiceDirectiveDialog::validateDirectiveText() {
             if (card == ".meas" && line.contains("I(", Qt::CaseInsensitive)) {
                 warnings << QString("Line %1: I(R...) style .meas current expressions may not be portable to ngspice.").arg(lineNo);
             }
+            if (card == ".meas" && line.contains(" PARAM ", Qt::CaseInsensitive)) {
+                warnings << QString("Line %1: .meas PARAM was kept as-is; verify LTspice/ngspice compatibility.").arg(lineNo);
+            }
+            if (card == ".meas" && line.contains(" FIND ", Qt::CaseInsensitive) && line.contains(" AT=", Qt::CaseInsensitive)) {
+                warnings << QString("Line %1: .meas FIND ... AT= may differ between LTspice and ngspice.").arg(lineNo);
+            }
+            if ((card == ".meas" || card == ".func" || card == ".param") && line.contains("table(", Qt::CaseInsensitive)) {
+                warnings << QString("Line %1: table(...) may behave differently between LTspice and ngspice.").arg(lineNo);
+            }
 
             continue;
         }
 
         if (line.contains("if(", Qt::CaseInsensitive)) {
             warnings << QString("Line %1: LTspice-style if(...) may fail in ngspice; prefer u(...) or let VioSpice rewrite simple cases during netlist generation.").arg(lineNo);
+        }
+        if ((line.contains("&&") || line.contains("||") || line.contains('&') || line.contains('|')) && line.contains("V={", Qt::CaseInsensitive)) {
+            warnings << QString("Line %1: LTspice-style boolean operators may need compatibility rewriting for ngspice.").arg(lineNo);
+        }
+        if (line.contains("table(", Qt::CaseInsensitive)) {
+            warnings << QString("Line %1: table(...) expression detected; verify ngspice compatibility.").arg(lineNo);
         }
 
         const QString token = firstToken(line);

@@ -14,6 +14,8 @@ private slots:
     void reportsDuplicateElementsAndUnclosedSubckts();
     void rewritesSimpleLtspiceIfExpressions();
     void rewritesIfWithTrueAndFalseBranches();
+    void rewritesLtspiceBooleanOperators();
+    void warnsAboutLtspiceMeasForms();
 };
 
 void SpiceDirectiveNetlistTest::generatesWarningsAndHonorsManualDirectives() {
@@ -115,6 +117,51 @@ void SpiceDirectiveNetlistTest::rewritesIfWithTrueAndFalseBranches() {
 
     QVERIFY2(netlist.contains("* LTspice rewrite: BDRV G 0 V={if(V(IN)>0.5, 12, -3)}"), qPrintable(netlist));
     QVERIFY2(netlist.contains("BDRV G 0 V={((12)*(u((V(IN))-(0.5))) + (-3)*(1-(u((V(IN))-(0.5)))))"), qPrintable(netlist));
+}
+
+void SpiceDirectiveNetlistTest::rewritesLtspiceBooleanOperators() {
+    QGraphicsScene scene;
+
+    auto* directive = new SchematicSpiceDirectiveItem(
+        "BLOGIC OUT 0 V={(V(A)>1)&&(V(B)>1)}\n"
+        "BALT OUT2 0 V={(V(A)>1)||(V(B)>1)}\n"
+        ".func LUT(x) {table(x, 0,0, 1,1)}\n"
+        ".tran 1u 1m",
+        QPointF(0, 0));
+    scene.addItem(directive);
+
+    SpiceNetlistGenerator::SimulationParams params;
+    params.type = SpiceNetlistGenerator::Transient;
+    params.step = "1u";
+    params.stop = "1m";
+
+    const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
+
+    QVERIFY2(netlist.contains("BLOGIC OUT 0 V={(V(A)>1) and (V(B)>1)}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BALT OUT2 0 V={(V(A)>1) or (V(B)>1)}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Rewrote LTspice-style boolean operators"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("table(...)"), qPrintable(netlist));
+}
+
+void SpiceDirectiveNetlistTest::warnsAboutLtspiceMeasForms() {
+    QGraphicsScene scene;
+
+    auto* directive = new SchematicSpiceDirectiveItem(
+        ".meas tran VAL1 PARAM V(out)*I(RLOAD)\n"
+        ".meas tran VAL2 FIND V(out) AT=1m\n"
+        ".tran 1u 2m",
+        QPointF(0, 0));
+    scene.addItem(directive);
+
+    SpiceNetlistGenerator::SimulationParams params;
+    params.type = SpiceNetlistGenerator::Transient;
+    params.step = "1u";
+    params.stop = "2m";
+
+    const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
+
+    QVERIFY2(netlist.contains(".meas PARAM detected and passed through unchanged"), qPrintable(netlist));
+    QVERIFY2(netlist.contains(".meas FIND ... AT= detected"), qPrintable(netlist));
 }
 
 QTEST_MAIN(SpiceDirectiveNetlistTest)

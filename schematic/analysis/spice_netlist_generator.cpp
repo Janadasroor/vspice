@@ -84,6 +84,22 @@ QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings =
     if (out.contains("if(", Qt::CaseInsensitive) && out.contains(" V={", Qt::CaseInsensitive)) {
         out = rewriteLtspiceBehavioralIf(out, warnings);
     }
+
+    if (out.contains(" V={", Qt::CaseInsensitive)) {
+        const QString original = out;
+        out.replace("&&", " and ");
+        out.replace("||", " or ");
+
+        static const QRegularExpression singleAndRe("(?<![&])&(?![&])");
+        static const QRegularExpression singleOrRe("(?<![|])\\|(?![|])");
+        out.replace(singleAndRe, " and ");
+        out.replace(singleOrRe, " or ");
+
+        if (out != original && warnings) {
+            warnings->append(QString("Rewrote LTspice-style boolean operators to ngspice-safe logical operators in: %1").arg(line.trimmed()));
+        }
+    }
+
     return out;
 }
 
@@ -512,6 +528,31 @@ QString sanitizeDirectiveName(const QString& raw) {
     return s.isEmpty() ? QString("m") : s.left(40);
 }
 
+QString normalizeLtspiceMeasDirective(const QString& cmd, QStringList* warnings = nullptr) {
+    QString out = cmd;
+
+    if (out.startsWith(".meas", Qt::CaseInsensitive) && out.contains("I(", Qt::CaseInsensitive)) {
+        if (warnings) {
+            warnings->append(QString("LTspice-style .meas current reference detected: %1").arg(cmd.trimmed()));
+            warnings->append(QString("Consider measuring source current via I(Vsense) or converting resistor current measurements manually for ngspice."));
+        }
+    }
+
+    if (out.startsWith(".meas", Qt::CaseInsensitive) && out.contains(" PARAM ", Qt::CaseInsensitive)) {
+        if (warnings) {
+            warnings->append(QString(".meas PARAM detected and passed through unchanged: %1").arg(cmd.trimmed()));
+        }
+    }
+
+    if (out.startsWith(".meas", Qt::CaseInsensitive) && out.contains(" FIND ", Qt::CaseInsensitive) && out.contains(" AT=", Qt::CaseInsensitive)) {
+        if (warnings) {
+            warnings->append(QString(".meas FIND ... AT= detected; verify LTspice/ngspice syntax compatibility: %1").arg(cmd.trimmed()));
+        }
+    }
+
+    return out;
+}
+
 QString normalizeMeanDirective(const QString& cmd) {
     static const QRegularExpression re(
         "^\\s*\\.mean\\s+(?:(avg|max|min|rms)\\s+)?([^\\s]+)(?:\\s+from\\s*=\\s*([^\\s]+))?(?:\\s+to\\s*=\\s*([^\\s]+))?\\s*$",
@@ -619,6 +660,10 @@ UserSpiceContentSummary summarizeUserSpiceText(const QString& text, const QStrin
                 summary.warnings.append(QString("Measurement current expression in line %1 may be LTspice-specific; ngspice is less reliable with I(R...) style expressions.").arg(lineNo));
             }
 
+            if ((card == ".meas" || card == ".func" || card == ".param") && line.contains("table(", Qt::CaseInsensitive)) {
+                summary.warnings.append(QString("table(...) detected in line %1; LTspice and ngspice may differ in expression behavior here.").arg(lineNo));
+            }
+
             continue;
         }
 
@@ -626,6 +671,9 @@ UserSpiceContentSummary summarizeUserSpiceText(const QString& text, const QStrin
         const QString rewrittenLine = rewriteLtspiceDirectiveLine(line, &summary.warnings);
         if (rewrittenLine.contains("if(", Qt::CaseInsensitive)) {
             summary.warnings.append(QString("LTspice-style if(...) expression remains in line %1 and may fail in ngspice.").arg(lineNo));
+        }
+        if (line.contains("table(", Qt::CaseInsensitive)) {
+            summary.warnings.append(QString("table(...) detected in line %1; review this LTspice expression for ngspice compatibility.").arg(lineNo));
         }
         const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
         if (parts.isEmpty()) continue;
@@ -702,6 +750,10 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                                     netlist += converted + "\n";
                                     continue;
                                 }
+                            }
+
+                            if (trimmedCmdLine.startsWith(".meas", Qt::CaseInsensitive)) {
+                                lineToWrite = normalizeLtspiceMeasDirective(lineToWrite, &directiveWarnings);
                             }
 
                             if (lineToWrite != trimmedCmdLine) {
