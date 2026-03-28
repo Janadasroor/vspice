@@ -1,17 +1,55 @@
 #include "spice_directive_dialog.h"
 #include "../editor/schematic_commands.h"
+#include "../ui/spice_highlighter.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QRegularExpression>
+#include <QSet>
+
+namespace {
+
+QSet<QString> schematicReferences(QGraphicsScene* scene) {
+    QSet<QString> refs;
+    if (!scene) return refs;
+
+    for (QGraphicsItem* item : scene->items()) {
+        auto* schematicItem = dynamic_cast<SchematicItem*>(item);
+        if (!schematicItem) continue;
+        if (schematicItem->itemType() == SchematicItem::SpiceDirectiveType) continue;
+
+        const QString ref = schematicItem->reference().trimmed().toUpper();
+        if (!ref.isEmpty()) refs.insert(ref);
+    }
+
+    return refs;
+}
+
+bool isCommentLine(const QString& line) {
+    return line.startsWith('*') || line.startsWith(';') || line.startsWith('#');
+}
+
+bool isDirectiveLine(const QString& line) {
+    return line.startsWith('.');
+}
+
+QString firstToken(const QString& line) {
+    return line.section(QRegularExpression("\\s+"), 0, 0).trimmed();
+}
+
+}
 
 SpiceDirectiveDialog::SpiceDirectiveDialog(SchematicSpiceDirectiveItem* item, QUndoStack* undoStack, QGraphicsScene* scene, QWidget* parent)
-    : QDialog(parent), m_item(item), m_undoStack(undoStack), m_scene(scene)
+    : QDialog(parent), m_item(item), m_undoStack(undoStack), m_scene(scene), m_commandEdit(nullptr), m_validationLabel(nullptr), m_okButton(nullptr), m_cancelButton(nullptr), m_highlighter(nullptr)
 {
     setupUi();
     loadFromItem();
 
     connect(m_okButton, &QPushButton::clicked, this, &SpiceDirectiveDialog::onAccepted);
     connect(m_cancelButton, &QPushButton::clicked, this, &QDialog::reject);
+    connect(m_commandEdit, &QPlainTextEdit::textChanged, this, &SpiceDirectiveDialog::validateDirectiveText);
+
+    validateDirectiveText();
 }
 
 void SpiceDirectiveDialog::setupUi() {
@@ -36,7 +74,13 @@ void SpiceDirectiveDialog::setupUi() {
     font.setStyleHint(QFont::Monospace);
     font.setPointSize(10);
     m_commandEdit->setFont(font);
+    m_highlighter = new SpiceHighlighter(m_commandEdit->document());
     mainLayout->addWidget(m_commandEdit);
+
+    m_validationLabel = new QLabel(this);
+    m_validationLabel->setWordWrap(true);
+    m_validationLabel->setTextFormat(Qt::PlainText);
+    mainLayout->addWidget(m_validationLabel);
 
     QHBoxLayout* btnLayout = new QHBoxLayout();
     btnLayout->addStretch();
@@ -78,4 +122,106 @@ void SpiceDirectiveDialog::saveToItem() {
             m_item->update();
         }
     }
+}
+
+void SpiceDirectiveDialog::validateDirectiveText() {
+    if (!m_commandEdit || !m_validationLabel || !m_okButton) return;
+
+    const QString text = m_commandEdit->toPlainText();
+    const QStringList lines = text.split('\n');
+    const QSet<QString> sceneRefs = schematicReferences(m_scene);
+
+    QStringList errors;
+    QStringList warnings;
+    QStringList analysisCards;
+    QMap<QString, int> elementLineByRef;
+    QStringList subcktStack;
+
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString rawLine = lines.at(i);
+        const QString line = rawLine.trimmed();
+        const int lineNo = i + 1;
+
+        if (line.isEmpty() || isCommentLine(line) || line.startsWith('+')) continue;
+
+        if (isDirectiveLine(line)) {
+            const QString card = firstToken(line).toLower();
+
+            if (card == ".subckt") {
+                const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+                if (parts.size() < 2) {
+                    errors << QString("Line %1: .subckt is missing a subcircuit name.").arg(lineNo);
+                } else {
+                    subcktStack.append(parts.at(1));
+                }
+            } else if (card == ".ends") {
+                const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+                const QString endName = parts.size() >= 2 ? parts.at(1) : QString();
+                if (subcktStack.isEmpty()) {
+                    errors << QString("Line %1: .ends has no matching .subckt.").arg(lineNo);
+                } else {
+                    const QString openName = subcktStack.takeLast();
+                    if (!endName.isEmpty() && endName.compare(openName, Qt::CaseInsensitive) != 0) {
+                        errors << QString("Line %1: .ends %2 does not match open .subckt %3.")
+                                      .arg(lineNo)
+                                      .arg(endName, openName);
+                    }
+                }
+            }
+
+            static const QSet<QString> kAnalysisCards = {
+                ".tran", ".ac", ".op", ".dc", ".noise", ".four", ".tf", ".disto", ".sens"
+            };
+            if (kAnalysisCards.contains(card)) {
+                analysisCards.append(QString("%1 (line %2)").arg(card, QString::number(lineNo)));
+            }
+
+            continue;
+        }
+
+        const QString token = firstToken(line);
+        if (token.isEmpty()) continue;
+
+        const QString normalizedRef = token.toUpper();
+        if (elementLineByRef.contains(normalizedRef)) {
+            warnings << QString("Line %1: duplicate element reference %2 (first seen on line %3).").arg(lineNo).arg(token).arg(elementLineByRef.value(normalizedRef));
+        } else {
+            elementLineByRef.insert(normalizedRef, lineNo);
+        }
+
+        if (sceneRefs.contains(normalizedRef)) {
+            warnings << QString("Line %1: element reference %2 conflicts with an existing schematic reference.").arg(lineNo).arg(token);
+        }
+    }
+
+    if (!subcktStack.isEmpty()) {
+        errors << QString("Missing .ends for subcircuit %1.").arg(subcktStack.last());
+    }
+
+    if (analysisCards.size() > 1) {
+        warnings << QString("Multiple analysis cards in one directive block: %1.").arg(analysisCards.join(", "));
+    }
+
+    QStringList messages;
+    if (!errors.isEmpty()) {
+        messages << "Errors:";
+        messages << errors;
+    }
+    if (!warnings.isEmpty()) {
+        if (!messages.isEmpty()) messages << QString();
+        messages << "Warnings:";
+        messages << warnings;
+    }
+    if (messages.isEmpty()) {
+        m_validationLabel->setStyleSheet("color: #15803d;");
+        m_validationLabel->setText("Validation: no obvious directive block problems found.");
+    } else if (!errors.isEmpty()) {
+        m_validationLabel->setStyleSheet("color: #b91c1c;");
+        m_validationLabel->setText(messages.join('\n'));
+    } else {
+        m_validationLabel->setStyleSheet("color: #b45309;");
+        m_validationLabel->setText(messages.join('\n'));
+    }
+
+    m_okButton->setEnabled(errors.isEmpty());
 }
