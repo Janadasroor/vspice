@@ -79,6 +79,7 @@ tests/test-folders-paths.md
 benchmark_spice.sh
 opencode.json
 ui-map/*
+ui-ux/*
 tests/DATA/*
 viospicelib/*
 .log

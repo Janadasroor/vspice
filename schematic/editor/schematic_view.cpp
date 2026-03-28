@@ -1345,6 +1345,39 @@ void SchematicView::scrollContentsBy(int dx, int dy) {
     emit transformationChanged();
 }
 void SchematicView::drawForeground(QPainter *painter, const QRectF &rect) {
+    if (m_heatmapEnabled) {
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        QList<QGraphicsItem*> allItems = scene()->items(rect);
+        for (QGraphicsItem* item : allItems) {
+            SchematicItem* sItem = dynamic_cast<SchematicItem*>(item);
+            if (sItem && !sItem->isSubItem() && sItem->powerDissipation() > 1e-9) {
+                double p = sItem->powerDissipation();
+                // Scale radius: 1mW -> ~20px, 1W -> ~60px
+                double radius = 20.0 + std::log10(p * 1e6 + 1.0) * 5.0; 
+                // Color: Green (low) -> Yellow -> Red (high, >100mW)
+                double heatFactor = std::min(1.0, p / 0.1); 
+                QColor heatColor = QColor::fromHsvF((1.0 - heatFactor) * 0.33, 1.0, 1.0, 0.4);
+                
+                QPointF center = sItem->sceneBoundingRect().center();
+                QRadialGradient grad(center, radius);
+                grad.setColorAt(0, heatColor);
+                grad.setColorAt(1, Qt::transparent);
+                
+                painter->setBrush(grad);
+                painter->setPen(Qt::NoPen);
+                painter->drawEllipse(center, radius, radius);
+                
+                // Optional: draw power value text
+                painter->setPen(QColor(255, 255, 255, 180));
+                painter->setFont(QFont("Inter", 8));
+                painter->drawText(center + QPointF(radius*0.7, -radius*0.7), 
+                                 QString("%1W").arg(p, 0, 'g', 3));
+            }
+        }
+        painter->restore();
+    }
+
     if (!m_showCrosshair) return;
 
     painter->save();

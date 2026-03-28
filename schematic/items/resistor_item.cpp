@@ -225,3 +225,22 @@ QList<QPointF> ResistorItem::connectionPoints() const {
     }
     return points;
 }
+void ResistorItem::setSimState(const QMap<QString, double>& nodeVoltages, const QMap<QString, double>& branchCurrents) {
+    Q_UNUSED(branchCurrents)
+    QString n1 = pinNet(0);
+    QString n2 = pinNet(1);
+    if (n1.isEmpty() || n2.isEmpty()) {
+        m_powerDissipation = 0;
+        return;
+    }
+    double v1 = nodeVoltages.value(n1, 0.0);
+    double v2 = nodeVoltages.value(n2, 0.0);
+    double dv = v1 - v2;
+    double r = parseValue(value());
+    if (r > 1e-12) {
+        m_powerDissipation = (dv * dv) / r;
+    } else {
+        m_powerDissipation = 0;
+    }
+    update();
+}

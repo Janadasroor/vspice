@@ -16,6 +16,7 @@
 #include <QLabel>
 #include <QtCharts/QChart>
 #include <QStack>
+#include <QSplitter>
 #include "measurement_dialog.h"
 #include "analysis_dialog.h"
 #include "fft_analyzer.h"
@@ -29,6 +30,7 @@ public:
 signals:
     void mouseMoved(const QPointF &value);
     void cursorMoved(int id, double x);
+    void cursorsMoved();
     void legendCtrlClicked(const QString &seriesName);
     void contextMenuRequested(const QPoint &globalPos);
     void zoomRectCompleted(const QRectF &valueRect);
@@ -57,14 +59,11 @@ private:
 public:
     void setCursorsEnabled(bool enabled) { m_showCursors = enabled; viewport()->update(); }
     void setCrosshairEnabled(bool enabled) { m_crosshairEnabled = enabled; viewport()->update(); }
-    void setCursorPositions(double c1x, double c1y, double c2x, double c2y, QLineSeries *series = nullptr) { 
-        m_c1x = c1x; m_c1y = c1y; m_c2x = c2x; m_c2y = c2y; 
-        m_activeSeries = series;
-        viewport()->update(); 
-    }
+    void setCursorPositions(double c1x, double c1y, double c2x, double c2y, QLineSeries *series = nullptr);
+    double snapToSeries(double x, QLineSeries *series);
+    bool isCrosshairEnabled() const { return m_crosshairEnabled; }
     double cursor1X() const { return m_c1x; }
     double cursor2X() const { return m_c2x; }
-    bool isCrosshairEnabled() const { return m_crosshairEnabled; }
 };
 
 class WaveformViewer : public QWidget {
@@ -131,8 +130,18 @@ private slots:
     void onLegendCtrlClicked(const QString &seriesName);
 
 private:
-    VioChartView *m_chartView;
-    QChart *m_chart;
+    enum class SignalType { VOLTAGE, CURRENT, POWER, OTHER };
+
+    struct ChartPane {
+        VioChartView* view = nullptr;
+        QChart* chart = nullptr;
+        SignalType type = SignalType::OTHER;
+        QValueAxis* axisY = nullptr;
+        QValueAxis* axisX = nullptr;
+    };
+
+    QList<ChartPane*> m_panes;
+    QSplitter* m_splitter;
     QListWidget *m_nodeList;
     QLabel *m_coordLabel;
     MeasurementDialog *m_measureDialog;
@@ -142,7 +151,6 @@ private:
     bool m_acMode = false;
     double m_cursor1X, m_cursor2X;
     QString m_activeCursorSeries;
-    enum class SignalType { VOLTAGE, CURRENT, POWER, OTHER };
     
     QLabel *m_statsLabel;
     QString m_activeSeriesName;
@@ -162,6 +170,7 @@ private:
         QColor customColor;
         double lineWidth = 1.5;
         Qt::PenStyle penStyle = Qt::SolidLine;
+        int paneIndex = 0;
     };
     
     QMap<QString, SignalData> m_signals;
@@ -170,6 +179,10 @@ private:
     
     void setupUi();
     void setupStyle();
+    ChartPane* createPane(SignalType type);
+    void removePane(int index);
+    ChartPane* getPaneForType(SignalType type);
+    void syncAxesX(QValueAxis* source);
     void zoomFitYOnly();
     void updateNodeItemStyle(QListWidgetItem* item);
     void showAnalysisForSeries(const QString &seriesName);
@@ -199,7 +212,8 @@ private:
     bool m_hasLastMouseValue = false;
 
     struct ZoomState {
-        double xMin, xMax, yMin, yMax;
+        double xMin, xMax;
+        QList<QPair<double, double>> yRanges; // One for each pane
     };
     QStack<ZoomState> m_zoomUndo;
     QStack<ZoomState> m_zoomRedo;

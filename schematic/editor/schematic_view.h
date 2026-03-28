@@ -109,6 +109,9 @@ public:
     void setSelectionFilter(SelectionFilter filter) { m_selectionFilter = filter; }
     SelectionFilter selectionFilter() const { return m_selectionFilter; }
     
+    void setHeatmapEnabled(bool enabled) { m_heatmapEnabled = enabled; viewport()->update(); }
+    bool isHeatmapEnabled() const { return m_heatmapEnabled; }
+    
     void setHandToolActive(bool active);
     bool isHandToolActive() const { return m_handToolActive; }
 
@@ -162,6 +165,7 @@ private:
     bool m_spacePressed = false;
     bool m_handToolActive = false;
     SelectionFilter m_selectionFilter = SelectAll;
+    bool m_heatmapEnabled = false;
 
     QTimer* m_autoScrollTimer;
     QPoint m_autoScrollDelta;

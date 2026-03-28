@@ -421,6 +421,13 @@ void SchematicEditor::createToolBar() {
     m_toggleMiniMapAction->setCheckable(true);
     m_toggleMiniMapAction->setShortcut(QKeySequence("Ctrl+M"));
     connect(m_toggleMiniMapAction, &QAction::toggled, this, &SchematicEditor::onToggleMiniMap);
+    
+    m_toggleHeatmapAction = viewMenu->addAction("Show Thermal Heatmap");
+    m_toggleHeatmapAction->setCheckable(true);
+    m_toggleHeatmapAction->setShortcut(QKeySequence("Ctrl+H"));
+    connect(m_toggleHeatmapAction, &QAction::toggled, this, [this](bool checked) {
+        if (m_view) m_view->setHeatmapEnabled(checked);
+    });
 
     QMenu* gridStyleMenu = viewMenu->addMenu("Grid Style");
     QActionGroup* gridStyleGroup = new QActionGroup(this);
@@ -618,6 +625,25 @@ void SchematicEditor::createToolBar() {
     QAction* zoomOutAct = mainToolbar->addAction(getThemeIcon(":/icons/view_zoom_out.svg"), "Zoom Out");
     zoomOutAct->setShortcut(QKeySequence::ZoomOut);
     connect(zoomOutAct, &QAction::triggered, this, &SchematicEditor::onZoomOut);
+
+    mainToolbar->addSeparator();
+    
+    QToolButton* heatmapBtn = new QToolButton(this);
+    heatmapBtn->setDefaultAction(m_toggleHeatmapAction);
+    heatmapBtn->setText("Heatmap");
+    // Simple fire/flame icon using primitives if no SVG
+    QPixmap heatPix(24, 24);
+    heatPix.fill(Qt::transparent);
+    {
+        QPainter p(&heatPix);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setBrush(QColor("#f97316")); // Orange
+        p.setPen(Qt::NoPen);
+        p.drawEllipse(6, 12, 12, 10);
+        p.drawEllipse(8, 6, 8, 12);
+    }
+    m_toggleHeatmapAction->setIcon(QIcon(heatPix));
+    mainToolbar->addWidget(heatmapBtn);
 
     mainToolbar->addSeparator();
 

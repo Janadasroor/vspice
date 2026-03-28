@@ -57,6 +57,29 @@ VioChartView::VioChartView(QChart *chart, QWidget *parent) : QChartView(chart, p
     m_rubberBand = new QRubberBand(QRubberBand::Rectangle, this);
 }
 
+void VioChartView::setCursorPositions(double c1x, double c1y, double c2x, double c2y, QLineSeries *series) {
+    m_c1x = c1x; m_c1y = c1y; m_c2x = c2x; m_c2y = c2y;
+    m_activeSeries = series;
+    viewport()->update();
+}
+
+double VioChartView::snapToSeries(double x, QLineSeries *series) {
+    if (!series || series->points().isEmpty()) return x;
+    auto points = series->points();
+    
+    // Binary search for nearest point
+    auto it = std::lower_bound(points.begin(), points.end(), QPointF(x, 0), [](const QPointF& p1, const QPointF& p2){
+        return p1.x() < p2.x();
+    });
+    
+    if (it == points.end()) return points.last().x();
+    if (it == points.begin()) return points.first().x();
+    
+    auto prev = std::prev(it);
+    if (std::abs(x - prev->x()) < std::abs(x - it->x())) return prev->x();
+    return it->x();
+}
+
 void VioChartView::mouseMoveEvent(QMouseEvent *event) {
     m_mousePos = event->pos();
 
@@ -83,9 +106,14 @@ void VioChartView::mouseMoveEvent(QMouseEvent *event) {
 
     if (m_movingCursor > 0 && m_showCursors) {
         double x = chart()->mapToValue(event->pos()).x();
+        if (m_activeSeries) {
+            x = snapToSeries(x, m_activeSeries);
+        }
+        
         if (m_movingCursor == 1) m_c1x = x;
         else m_c2x = x;
         emit cursorMoved(m_movingCursor, x);
+        emit cursorsMoved();
         viewport()->update();
     }
     if (m_crosshairEnabled) {
@@ -290,6 +318,27 @@ void VioChartView::drawForeground(QPainter *painter, const QRectF &rect) {
 
     drawC(m_c1x, m_c1y, QColor("#00ffff"), "1");
     drawC(m_c2x, m_c2y, QColor("#ffaa00"), "2");
+
+    // Draw Delta Overlay
+    if (m_c1x != -1 && m_c2x != -1) {
+        QPointF p1 = chart()->mapToPosition(QPointF(m_c1x, m_c1y), m_activeSeries);
+        QPointF p2 = chart()->mapToPosition(QPointF(m_c2x, m_c2y), m_activeSeries);
+        
+        if (plot.contains(p1.x(), plot.center().y()) && plot.contains(p2.x(), plot.center().y())) {
+            painter->setPen(QPen(Qt::white, 1, Qt::SolidLine));
+            painter->drawLine(p1, p2);
+            
+            double dx = std::abs(m_c2x - m_c1x);
+            double dy = m_c2y - m_c1y;
+            QString dxStr = SiFormatter::format(dx, "s");
+            QString dyStr = SiFormatter::format(dy, "");
+            QString freqStr = dx > 1e-15 ? SiFormatter::format(1.0/dx, "Hz") : "---";
+            
+            QString label = QString("dX: %1 | dY: %2 | 1/dX: %3").arg(dxStr, dyStr, freqStr);
+            painter->setPen(Qt::white);
+            painter->drawText(QRectF(plot.left(), plot.bottom() - 25, plot.width(), 20), Qt::AlignCenter, label);
+        }
+    }
 }
 
 WaveformViewer::WaveformViewer(QWidget *parent) : QWidget(parent), 
@@ -334,16 +383,13 @@ void WaveformViewer::keyPressEvent(QKeyEvent *event) {
         return;
     case Qt::Key_Left:
     case Qt::Key_Right:
-        if (m_cursorsEnabled) {
-            auto axesX = m_chart->axes(Qt::Horizontal);
-            if (!axesX.isEmpty()) {
-                auto *ax = qobject_cast<QValueAxis*>(axesX.first());
-                if (ax) {
-                    double step = (ax->max() - ax->min()) / 100.0;
-                    if (event->key() == Qt::Key_Left) step = -step;
-                    m_cursor1X += step;
-                    updateCursors();
-                }
+        if (m_cursorsEnabled && !m_panes.isEmpty()) {
+            auto *ax = m_panes.first()->axisX;
+            if (ax) {
+                double step = (ax->max() - ax->min()) / 100.0;
+                if (event->key() == Qt::Key_Left) step = -step;
+                m_cursor1X += step;
+                updateCursors();
             }
         }
         event->accept();
@@ -385,13 +431,12 @@ void WaveformViewer::setupUi() {
     layout->setSpacing(0);
 
     auto *toolbar = new QToolBar("Waveform Controls", this);
-    toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    
     toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
     toolbar->setMinimumHeight(24);
     toolbar->setStyleSheet(R"(
-        QToolBar { spacing: 2px; padding: 0px 2px; }
-        QToolButton { padding: 2px 6px; margin: 0px; font-size: 11px; min-height: 20px; }
+        QToolBar { spacing: 2px; padding: 0px 2px; background: #1a1a1a; border-bottom: 1px solid #333; }
+        QToolButton { padding: 2px 6px; margin: 0px; font-size: 11px; min-height: 20px; color: #ccc; }
+        QToolButton:hover { background: #333; }
     )");
 
     toolbar->addAction("Z+", this, &WaveformViewer::zoomIn);
@@ -414,6 +459,8 @@ void WaveformViewer::setupUi() {
     m_nodeList = new QListWidget(this);
     m_nodeList->setSelectionMode(QAbstractItemView::MultiSelection);
     m_nodeList->setFixedWidth(120);
+    m_nodeList->setStyleSheet("QListWidget { background: #111; border-right: 1px solid #333; color: #eee; }");
+
     connect(m_nodeList, &QListWidget::itemSelectionChanged, this, &WaveformViewer::onNodeSelected);
     connect(m_nodeList, &QListWidget::itemChanged, this, [this](QListWidgetItem* item){
         updateNodeItemStyle(item);
@@ -421,37 +468,14 @@ void WaveformViewer::setupUi() {
     });
     connect(m_nodeList, &QListWidget::itemClicked, this, &WaveformViewer::onNodeClicked);
     
-    m_chart = new QChart();
-    m_chart->setBackgroundVisible(true);
-    m_chart->legend()->setAlignment(Qt::AlignTop);
-    m_chart->legend()->setMarkerShape(QLegend::MarkerShapeRectangle);
-    m_chart->legend()->setBackgroundVisible(false);
-    m_chart->legend()->setLabelColor(Qt::white);
-    m_chart->setMargins(QMargins(0, 0, 0, 0));
-    m_chart->setBackgroundRoundness(0);
-
-    m_chartView = new VioChartView(m_chart);
-    m_chartView->setRenderHint(QPainter::Antialiasing);
-    m_chartView->setRubberBand(QChartView::RectangleRubberBand);
-    connect(m_chartView, &VioChartView::mouseMoved, this, &WaveformViewer::onMouseMoved);
-    connect(m_chartView, &VioChartView::cursorMoved, this, &WaveformViewer::updateCursors);
-    connect(m_chartView, &VioChartView::legendCtrlClicked, this, &WaveformViewer::onLegendCtrlClicked);
-    connect(m_chartView, &VioChartView::zoomRectCompleted, this, &WaveformViewer::onZoomRectCompleted);
-    connect(m_chartView, &VioChartView::contextMenuRequested, this, &WaveformViewer::onContextMenuRequested);
-
-    // Set up default axes so cursor mapping always works (even before signals are loaded)
-    auto *defaultAxisX = new QValueAxis();
-    defaultAxisX->setRange(0, 1);
-    defaultAxisX->setTitleText("Time (s)");
-    auto *defaultAxisY = new QValueAxis();
-    defaultAxisY->setRange(-1, 1);
-    defaultAxisY->setTitleText("Amplitude");
-    m_chart->addAxis(defaultAxisX, Qt::AlignBottom);
-    m_chart->addAxis(defaultAxisY, Qt::AlignLeft);
-    
     mainArea->addWidget(m_nodeList);
-    mainArea->addWidget(m_chartView, 1);
-    layout->addLayout(mainArea, 1);
+
+    m_splitter = new QSplitter(Qt::Vertical, this);
+    m_splitter->setHandleWidth(1);
+    m_splitter->setStyleSheet("QSplitter::handle { background: #333; }");
+    mainArea->addWidget(m_splitter, 1);
+
+    layout->addLayout(mainArea);
     
     auto *footer = new QHBoxLayout();
     m_coordLabel = new QLabel("Ready");
@@ -466,11 +490,12 @@ void WaveformViewer::setupUi() {
 }
 
 void WaveformViewer::setupStyle() {
-    m_chart->setTheme(QChart::ChartThemeDark);
-    m_chart->setBackgroundBrush(QBrush(Qt::black));
-    m_chart->setPlotAreaBackgroundBrush(QBrush(Qt::black));
-    m_chart->setTitleBrush(QBrush(Qt::white));
-
+    for (auto* p : m_panes) {
+        p->chart->setTheme(QChart::ChartThemeDark);
+        p->chart->setBackgroundBrush(QBrush(QColor(20, 20, 20)));
+        p->chart->setPlotAreaBackgroundBrush(QBrush(QColor(15, 15, 15)));
+        p->chart->setTitleBrush(QBrush(Qt::white));
+    }
     m_nodeList->setStyleSheet(R"(
         QListWidget { background: #f3f4f6; color: #111827; border: 1px solid #e5e7eb; }
         QListWidget::item { padding: 2px 4px; color: #374151; }
@@ -484,20 +509,17 @@ void WaveformViewer::clear() {
     m_nodeList->blockSignals(true);
     m_nodeList->clear();
     m_nodeList->blockSignals(false);
-    m_chartView->setCursorPositions(m_chartView->cursor1X(), 0, m_chartView->cursor2X(), 0, nullptr);
-    m_chart->removeAllSeries();
-    auto axes = m_chart->axes();
-    for (auto* a : axes) {
-        m_chart->removeAxis(a);
-        a->deleteLater();
+    
+    for (auto* p : m_panes) {
+        p->chart->removeAllSeries();
+        p->view->setCursorPositions(m_cursor1X, 0, m_cursor2X, 0, nullptr);
     }
     m_activeSeriesName.clear();
 }
 
 bool WaveformViewer::currentXRange(double& minX, double& maxX) const {
-    auto axesX = m_chart->axes(Qt::Horizontal);
-    if (axesX.isEmpty()) return false;
-    auto* axis = qobject_cast<QValueAxis*>(axesX[0]);
+    if (m_panes.isEmpty()) return false;
+    auto* axis = m_panes.first()->axisX;
     if (!axis) return false;
     minX = axis->min();
     maxX = axis->max();
@@ -532,7 +554,7 @@ void WaveformViewer::addSignal(const QString& name, const QVector<double>& time,
     SignalData data;
     data.name = name;
     QString lowerName = name.toLower();
-    if (lowerName.startsWith("v(") || lowerName.startsWith("v_")) data.type = SignalType::VOLTAGE;
+    if (lowerName.startsWith("v(") || lowerName.startsWith("v_") || lowerName == "v") data.type = SignalType::VOLTAGE;
     else if (lowerName.contains("#branch") || lowerName.startsWith("i(")) data.type = SignalType::CURRENT;
     else if (lowerName.startsWith("p(")) data.type = SignalType::POWER;
     else data.type = SignalType::OTHER;
@@ -550,7 +572,6 @@ void WaveformViewer::addSignal(const QString& name, const QVector<double>& time,
     for (int i = 0; i < m_nodeList->count(); ++i) {
         if (m_nodeList->item(i)->text() == name) {
             exists = true;
-            // If already checked, update the plot to show new data
             if (m_nodeList->item(i)->checkState() == Qt::Checked) {
                 updatePlot(false);
             }
@@ -562,7 +583,7 @@ void WaveformViewer::addSignal(const QString& name, const QVector<double>& time,
         m_nodeList->blockSignals(true);
         auto* item = new QListWidgetItem(name, m_nodeList);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsSelectable);
-        item->setCheckState(Qt::Unchecked); // Default to unchecked so only explicit probes show up
+        item->setCheckState(Qt::Unchecked);
         updateNodeItemStyle(item);
         m_nodeList->blockSignals(false);
     }
@@ -571,7 +592,6 @@ void WaveformViewer::addSignal(const QString& name, const QVector<double>& time,
 void WaveformViewer::appendPoint(const QString& name, double x, double y) {
     if (!m_signals.contains(name)) {
         addSignal(name, {x}, {y});
-        // We don't auto-check by default, but we should check if it's already in the list
     }
     
     auto& sig = m_signals[name];
@@ -580,68 +600,24 @@ void WaveformViewer::appendPoint(const QString& name, double x, double y) {
     
     if (m_blockUpdates) return;
 
-    // Fast check for signal existence in chart
+    ChartPane* pane = getPaneForType(sig.type);
     QLineSeries* lineSeries = nullptr;
-    for (auto* series : m_chart->series()) {
+    for (auto* series : pane->chart->series()) {
         if (series->name() == name) {
             lineSeries = qobject_cast<QLineSeries*>(series);
             break;
         }
     }
 
-    // If series not in chart but signal is checked, add it now
-    if (!lineSeries) {
-        bool checked = false;
-        for (int i = 0; i < m_nodeList->count(); ++i) {
-            if (m_nodeList->item(i)->text() == name) {
-                checked = (m_nodeList->item(i)->checkState() == Qt::Checked);
-                break;
-            }
-        }
-        
-        if (checked) {
-            lineSeries = new QLineSeries();
-            lineSeries->setName(name);
-            m_chart->addSeries(lineSeries);
-            auto axesX = m_chart->axes(Qt::Horizontal);
-            auto axesY = m_chart->axes(Qt::Vertical);
-            if (axesX.isEmpty() || axesY.isEmpty()) {
-                updatePlot(true); // Re-init axes
-                return; 
-            }
-            lineSeries->attachAxis(axesX[0]);
-            lineSeries->attachAxis(axesY[0]);
-        }
-    }
-
     if (lineSeries) {
-        lineSeries->append(x, y);
+        lineSeries->append(x, m_acMode ? toDb(y) : y);
         
-        // If it's the very first points, set a reasonable range immediately
-        if (lineSeries->count() < 10) {
-            auto axesX = m_chart->axes(Qt::Horizontal);
-            auto axesY = m_chart->axes(Qt::Vertical);
-            if (!axesX.isEmpty() && !axesY.isEmpty()) {
-                auto* ax = qobject_cast<QValueAxis*>(axesX[0]);
-                auto* ay = qobject_cast<QValueAxis*>(axesY[0]);
-                ax->setRange(std::min(0.0, x), std::max(1e-3, x * 1.5));
-                ay->setRange(y - 1.0, y + 1.0);
-            }
-        }
-
-        // Throttled auto-scale: only update every N points
+        // Throttled auto-scale
         int& count = m_pointCounters[name];
         if ((++count % 50) == 0) {
-            auto axesX = m_chart->axes(Qt::Horizontal);
-            auto axesY = m_chart->axes(Qt::Vertical);
-            if (!axesX.isEmpty() && !axesY.isEmpty()) {
-                auto* ax = qobject_cast<QValueAxis*>(axesX[0]);
-                auto* ay = qobject_cast<QValueAxis*>(axesY[0]);
-                
-                if (x > ax->max()) ax->setMax(x * 1.1);
-                if (y > ay->max()) ay->setMax(y > 0 ? y * 1.2 : y * 0.8);
-                if (y < ay->min()) ay->setMin(y < 0 ? y * 1.2 : y * 0.8);
-            }
+            if (x > pane->axisX->max()) pane->axisX->setMax(x * 1.1);
+            if (y > pane->axisY->max()) pane->axisY->setMax(y > 0 ? y * 1.2 : y * 0.8);
+            if (y < pane->axisY->min()) pane->axisY->setMin(y < 0 ? y * 1.2 : y * 0.8);
         }
     }
 }
@@ -667,9 +643,10 @@ void WaveformViewer::appendPoints(const QString& name, const std::vector<double>
     
     if (m_blockUpdates) return;
 
-    // Fast path: if the series is already in the chart, append to it directly
+    // Find the correct pane and series
+    ChartPane* pane = getPaneForType(m_signals[name].type);
     QLineSeries* lineSeries = nullptr;
-    for (auto* s : m_chart->series()) {
+    for (auto* s : pane->chart->series()) {
         if (s->name() == name) {
             lineSeries = qobject_cast<QLineSeries*>(s);
             break;
@@ -680,7 +657,6 @@ void WaveformViewer::appendPoints(const QString& name, const std::vector<double>
         const int batchSize = static_cast<int>(times.size());
         const int maxBucketsInChart = 5000;
         
-        // If the batch is very large, decimate it before appending
         if (batchSize > 200) {
             int step = batchSize / 100;
             if (step < 1) step = 1;
@@ -696,18 +672,11 @@ void WaveformViewer::appendPoints(const QString& name, const std::vector<double>
             }
         }
 
-        // If the series has grown too large, trigger a full decimation to keep UI responsive
         if (lineSeries->count() > maxBucketsInChart * 1.5) {
             QMetaObject::invokeMethod(this, "updatePlot", Qt::QueuedConnection, Q_ARG(bool, false));
         } else {
-            // Throttled auto-scale check (rough)
             double tLast = times.back();
-            auto axesX = m_chart->axes(Qt::Horizontal);
-            if (!axesX.isEmpty()) {
-                if (auto* ax = qobject_cast<QValueAxis*>(axesX[0])) {
-                    if (tLast > ax->max()) ax->setMax(tLast * 1.05);
-                }
-            }
+            if (tLast > pane->axisX->max()) pane->axisX->setMax(tLast * 1.05);
         }
         return;
     }
@@ -763,106 +732,57 @@ void WaveformViewer::onMouseMoved(const QPointF &value) {
     // Check what types of signals are currently loaded
     bool hasV = false, hasI = false, hasP = false;
     for (const auto& sig : m_signals) {
+        bool isChecked = false;
+        for (int i = 0; i < m_nodeList->count(); ++i) {
+            if (m_nodeList->item(i)->text() == sig.name && m_nodeList->item(i)->checkState() == Qt::Checked) {
+                isChecked = true;
+                break;
+            }
+        }
+        if (!isChecked) continue;
+        
         if (sig.type == SignalType::VOLTAGE) hasV = true;
         else if (sig.type == SignalType::CURRENT) hasI = true;
         else if (sig.type == SignalType::POWER) hasP = true;
     }
     
-    QPoint pos = m_chartView->mapFromGlobal(QCursor::pos());
-    // Note: chart()->mapToValue(pos) is already passed as 'value' but mapped to global cursor might be more accurate for crosshair
-    
-    if (hasV) {
-        double valV = value.y(); // Default to current mouse Y
-        coordStr += QString(" | V: %1").arg(SiFormatter::format(valV / m_vMultiplier, m_vUnit));
-    }
-    if (hasI) {
-        double valI = value.y(); 
-        coordStr += QString(" | I: %1").arg(SiFormatter::format(valI / m_iMultiplier, m_iUnit));
-    }
-    if (hasP) {
-        double valP = value.y();
-        coordStr += QString(" | P: %1").arg(SiFormatter::format(valP / m_pMultiplier, m_pUnit));
-    }
+    // Mapping the mouse position back to the focused pane's series would be ideal.
+    // For now, just show the last reported value.y()
+    coordStr += QString(" | Y: %1").arg(SiFormatter::format(value.y(), ""));
     
     m_coordLabel->setText(coordStr);
 }
 
-void WaveformViewer::toggleCrosshair() {
-    m_chartView->setCrosshairEnabled(!m_chartView->isCrosshairEnabled());
-}
-
 void WaveformViewer::toggleCursors() {
     m_cursorsEnabled = !m_cursorsEnabled;
-    m_chartView->setCursorsEnabled(m_cursorsEnabled);
+    for (auto* p : m_panes) p->view->setCursorsEnabled(m_cursorsEnabled);
     if (m_cursorsEnabled) {
         if (!m_measureDialog) m_measureDialog = new MeasurementDialog(this);
         m_measureDialog->setAcMode(m_acMode);
         m_measureDialog->show();
 
-        // Always initialize cursors to visible positions within current axis range
-        {
-            auto axes = m_chart->axes(Qt::Horizontal);
-            if (!axes.isEmpty()) {
-                auto *axis = qobject_cast<QValueAxis*>(axes.first());
-                if (axis) {
-                    double min = axis->min();
-                    double max = axis->max();
-                    // Only reset if cursors are unset OR out of range
-                    bool cursor1Valid = (m_chartView->cursor1X() >= min && m_chartView->cursor1X() <= max);
-                    bool cursor2Valid = (m_chartView->cursor2X() >= min && m_chartView->cursor2X() <= max);
-                    if (!cursor1Valid || !cursor2Valid) {
-                        double range = max - min;
-                        m_cursor1X = min + range * 0.25;
-                        m_cursor2X = min + range * 0.75;
-                        m_chartView->setCursorPositions(m_cursor1X, 0, m_cursor2X, 0);
-                    }
-                }
-            }
+        if (m_cursor1X == 0 && m_cursor2X == 0) {
+            m_cursor1X = m_panes.first()->axisX->min() + (m_panes.first()->axisX->max() - m_panes.first()->axisX->min()) * 0.25;
+            m_cursor2X = m_panes.first()->axisX->min() + (m_panes.first()->axisX->max() - m_panes.first()->axisX->min()) * 0.75;
         }
         updateCursors();
-    } else if (m_measureDialog) {
-        m_measureDialog->hide();
+    } else {
+        if (m_measureDialog) m_measureDialog->hide();
     }
 }
 
+void WaveformViewer::toggleCrosshair() {
+    if (m_panes.isEmpty()) return;
+    bool enabled = !m_panes.first()->view->isCrosshairEnabled();
+    for (auto* p : m_panes) p->view->setCrosshairEnabled(enabled);
+}
+
 void WaveformViewer::updateCursors() {
-    if (!m_cursorsEnabled) return;
+    if (!m_cursorsEnabled || m_panes.isEmpty()) return;
 
-    m_cursor1X = m_chartView->cursor1X();
-    m_cursor2X = m_chartView->cursor2X();
+    m_cursor1X = m_panes.first()->view->cursor1X();
+    m_cursor2X = m_panes.first()->view->cursor2X();
 
-    // If there is no series, just update positions without Y interpolation
-    if (m_chart->series().isEmpty()) {
-        m_chartView->setCursorPositions(m_cursor1X, 0, m_cursor2X, 0);
-        if (m_measureDialog) {
-            const QString h1 = m_acMode ? SiFormatter::format(m_cursor1X, "Hz")
-                                        : SiFormatter::format(m_cursor1X / m_timeMultiplier, m_timeUnit);
-            const QString h2 = m_acMode ? SiFormatter::format(m_cursor2X, "Hz")
-                                        : SiFormatter::format(m_cursor2X / m_timeMultiplier, m_timeUnit);
-            const QString dh = m_acMode ? SiFormatter::format(std::abs(m_cursor2X - m_cursor1X), "Hz")
-                                        : SiFormatter::format(std::abs(m_cursor2X - m_cursor1X) / m_timeMultiplier, m_timeUnit);
-            if (m_acMode) {
-                m_measureDialog->updateAcValues("",
-                    h1, "---", "---", "---",
-                    h2, "---", "---", "---",
-                    dh, "---", "---", "---");
-            } else {
-                m_measureDialog->updateValues("", 
-                    h1, "N/A",
-                    h2, "N/A",
-                    dh, "N/A",
-                    "---", "---");
-            }
-        }
-        return;
-    }
-
-    QLineSeries *series = qobject_cast<QLineSeries*>(m_chart->series().first());
-    if (!series) return;
-
-    m_cursor1X = m_chartView->cursor1X();
-    m_cursor2X = m_chartView->cursor2X();
-    
     auto getY = [&](QLineSeries* s, double x) {
         if (!s) return 0.0;
         auto points = s->points();
@@ -876,80 +796,42 @@ void WaveformViewer::updateCursors() {
         return points.last().y();
     };
 
-    auto getPhaseSeries = [&](const QString& baseName) -> QLineSeries* {
-        const QString phaseName = baseName + " (Phase)";
-        for (auto* s : m_chart->series()) {
-            if (auto* ls = qobject_cast<QLineSeries*>(s)) {
-                if (ls->name() == phaseName) return ls;
+    for (auto* p : m_panes) {
+        QLineSeries* primarySeries = nullptr;
+        // Try to find a series in this pane to measure
+        for (auto* s : p->chart->series()) {
+            if (s->name() == m_activeSeriesName) {
+                primarySeries = qobject_cast<QLineSeries*>(s);
+                break;
             }
         }
-        return nullptr;
-    };
-
-    auto getYLegacy = [&](double x) {
-        auto points = series->points();
-        if (points.isEmpty()) return 0.0;
-        for (int i = 0; i < points.size() - 1; ++i) {
-            if (x >= points[i].x() && x <= points[i+1].x()) {
-                double t = (x - points[i].x()) / (points[i+1].x() - points[i].x());
-                return points[i].y() + t * (points[i+1].y() - points[i].y());
-            }
-        }
-        return points.last().y();
-    };
-
-    double v1 = getYLegacy(m_cursor1X);
-    double v2 = getYLegacy(m_cursor2X);
-    m_chartView->setCursorPositions(m_cursor1X, v1, m_cursor2X, v2, series);
-
-    if (m_measureDialog) {
-        const double dt = m_cursor2X - m_cursor1X;
-        const double dv = v2 - v1;
-        QString unit = "";
-        if (m_signals.contains(series->name())) {
-            const auto type = m_signals[series->name()].type;
-            if (type == SignalType::VOLTAGE) unit = "V";
-            else if (type == SignalType::CURRENT) unit = "A";
-            else if (type == SignalType::POWER) unit = "W";
+        if (!primarySeries && !p->chart->series().isEmpty()) {
+            primarySeries = qobject_cast<QLineSeries*>(p->chart->series().first());
         }
 
-        QString freqStr = "---";
-        QString slopeStr = "---";
-        if (std::abs(dt) > 1e-15) {
-            freqStr = SiFormatter::format(1.0 / std::abs(dt), "Hz");
-            slopeStr = SiFormatter::format(dv / dt, unit + "/s");
-        }
-
-        if (m_acMode) {
-            QString ph1 = "---";
-            QString ph2 = "---";
-            QString dph = "---";
-            QString gd = "---";
-            QLineSeries* phaseSeries = getPhaseSeries(series->name());
-            bool hasPhase = (phaseSeries != nullptr);
-            if (hasPhase) {
-                const double p1 = getY(phaseSeries, m_cursor1X);
-                const double p2 = getY(phaseSeries, m_cursor2X);
-                ph1 = QString::number(p1, 'g', 4) + " deg";
-                ph2 = QString::number(p2, 'g', 4) + " deg";
-                dph = QString::number(p2 - p1, 'g', 4) + " deg";
-                if (std::abs(dt) > 1e-12) {
-                    const double gdVal = -((p2 - p1) / 360.0) / dt;
-                    gd = SiFormatter::format(gdVal, "s");
+        if (primarySeries) {
+            double v1 = getY(primarySeries, m_cursor1X);
+            double v2 = getY(primarySeries, m_cursor2X);
+            p->view->setCursorPositions(m_cursor1X, v1, m_cursor2X, v2, primarySeries);
+            
+            // If this is the active series, update the measure dialog
+            if (m_activeSeriesName.isEmpty() || primarySeries->name() == m_activeSeriesName) {
+                 if (m_measureDialog && m_measureDialog->isVisible()) {
+                    double dt = m_cursor2X - m_cursor1X;
+                    double dv = v2 - v1;
+                    QString freqStr = (std::abs(dt) > 1e-12) ? SiFormatter::format(1.0/std::abs(dt), "Hz") : "---";
+                    QString slopeStr = (std::abs(dt) > 1e-12) ? SiFormatter::format(dv/dt, "V/s") : "---";
+                    
+                    m_measureDialog->updateValues(primarySeries->name(), 
+                        SiFormatter::format(m_cursor1X, "s"), SiFormatter::format(v1, ""),
+                        SiFormatter::format(m_cursor2X, "s"), SiFormatter::format(v2, ""),
+                        SiFormatter::format(dt, "s"), SiFormatter::format(dv, ""),
+                        freqStr, slopeStr
+                    );
                 }
             }
-
-            m_measureDialog->updateAcValues(series->name(),
-                SiFormatter::format(m_cursor1X, "Hz"), formatDb(v1), ph1, "---",
-                SiFormatter::format(m_cursor2X, "Hz"), formatDb(v2), ph2, "---",
-                SiFormatter::format(dt, "Hz"), formatDb(dv), dph, gd);
         } else {
-            m_measureDialog->updateValues(series->name(), 
-                SiFormatter::format(m_cursor1X, "s"), SiFormatter::format(v1, ""),
-                SiFormatter::format(m_cursor2X, "s"), SiFormatter::format(v2, ""),
-                SiFormatter::format(dt, "s"), SiFormatter::format(dv, ""),
-                freqStr, slopeStr
-            );
+            p->view->setCursorPositions(m_cursor1X, 0, m_cursor2X, 0, nullptr);
         }
     }
 }
@@ -957,427 +839,125 @@ void WaveformViewer::updateCursors() {
 void WaveformViewer::updatePlot(bool autoScale) {
     if (m_blockUpdates) return;
     
-    // Save current X/Y ranges unless autoScale is requested
-    double xMin = 0, xMax = 1, yMin = -1, yMax = 1;
-    bool hasRange = false;
-    auto oldAxesX = m_chart->axes(Qt::Horizontal);
-    auto oldAxesY = m_chart->axes(Qt::Vertical);
-    if (!autoScale && !oldAxesX.isEmpty() && !oldAxesY.isEmpty()) {
-        auto* ax = qobject_cast<QValueAxis*>(oldAxesX[0]);
-        auto* ay = qobject_cast<QValueAxis*>(oldAxesY[0]);
-        if (ax && ay) {
-            xMin = ax->min(); xMax = ax->max();
-            yMin = ay->min(); yMax = ay->max();
-            hasRange = true;
-        }
+    for (auto* pane : m_panes) {
+        pane->chart->removeAllSeries();
+        pane->view->setCursorPositions(m_cursor1X, 0, m_cursor2X, 0, nullptr);
     }
-
-    m_chartView->setCursorPositions(m_chartView->cursor1X(), 0, m_chartView->cursor2X(), 0, nullptr);
-    
-    // Safety: we used to remove ALL series/axes, but that's unstable and slow.
-    // Instead, let's keep the axes if they exist and just clear the series.
-    m_chart->removeAllSeries();
     
     if (m_signals.isEmpty()) return;
 
-    // Range tracking
-    double minX = 1e30, maxX = -1e30;
-    double minY = 1e30, maxY = -1e30;
-    bool hasData = false;
+    struct PaneStats {
+        double minY = 1e30, maxY = -1e30;
+        bool hasData = false;
+    };
+    QMap<ChartPane*, PaneStats> paneStats;
+    double globalMinX = 1e30, globalMaxX = -1e30;
+    bool hasAnyData = false;
 
-    // Determine target range if auto-scaling
-    if (autoScale) {
-        for (const auto& sig : m_signals) {
-            // Only consider checked signals for auto-scaling
-            bool isChecked = false;
-            for (int i = 0; i < m_nodeList->count(); ++i) {
-                if (m_nodeList->item(i)->text() == sig.name && m_nodeList->item(i)->checkState() == Qt::Checked) {
-                    isChecked = true;
-                    break;
+    for (int i = 0; i < m_nodeList->count(); ++i) {
+        QListWidgetItem* item = m_nodeList->item(i);
+        if (item->checkState() == Qt::Checked) {
+            QString name = item->text();
+            if (m_signals.contains(name)) {
+                auto& sig = m_signals[name];
+                if (sig.time.isEmpty()) continue;
+                
+                ChartPane* pane = getPaneForType(sig.type);
+                auto& stats = paneStats[pane];
+                
+                double sMinX = *std::min_element(sig.time.begin(), sig.time.end());
+                double sMaxX = *std::max_element(sig.time.begin(), sig.time.end());
+                globalMinX = std::min(globalMinX, sMinX);
+                globalMaxX = std::max(globalMaxX, sMaxX);
+                
+                for (double v : sig.values) {
+                    double tv = m_acMode ? toDb(v) : v;
+                    stats.minY = std::min(stats.minY, tv);
+                    stats.maxY = std::max(stats.maxY, tv);
                 }
+                stats.hasData = true;
+                hasAnyData = true;
             }
-            if (!isChecked || sig.time.isEmpty()) continue;
-            
-            minX = std::min(minX, *std::min_element(sig.time.begin(), sig.time.end()));
-            maxX = std::max(maxX, *std::max_element(sig.time.begin(), sig.time.end()));
-            for (double v : sig.values) {
-                double tv = m_acMode ? toDb(v) : v;
-                minY = std::min(minY, tv);
-                maxY = std::max(maxY, tv);
-            }
-            hasData = true;
         }
-        if (!hasData) { minX = 0; maxX = 1; minY = -1; maxY = 1; }
-        else {
-            // Add some padding
-            double padY = (maxY - minY) * 0.1;
-            if (padY == 0) padY = 0.5;
-            minY -= padY; maxY += padY;
+    }
+
+    if (!hasAnyData) {
+        globalMinX = 0; globalMaxX = 1;
+    }
+
+    for (auto* pane : m_panes) {
+        if (autoScale) {
+            pane->axisX->setRange(globalMinX, globalMaxX);
         }
-    } else if (hasRange) {
-        minX = xMin; maxX = xMax; minY = yMin; maxY = yMax;
-        hasData = true;
+        pane->axisX->setTitleText(m_acMode ? "Frequency (Hz)" : "Time (s)");
+        
+        if (autoScale && paneStats.contains(pane)) {
+            auto& stats = paneStats[pane];
+            double pad = (stats.maxY - stats.minY) * 0.1;
+            if (pad == 0) pad = 0.5;
+            pane->axisY->setRange(stats.minY - pad, stats.maxY + pad);
+        }
+        pane->axisY->setTitleText(m_acMode ? "Magnitude (dB)" : 
+            (pane->type == SignalType::VOLTAGE ? "Voltage (V)" : 
+             pane->type == SignalType::CURRENT ? "Current (A)" : "Value"));
     }
 
-    // Reuse or create axes
-    QValueAxis *axisX = nullptr, *axisY = nullptr;
-    auto axesX = m_chart->axes(Qt::Horizontal);
-    auto axesY = m_chart->axes(Qt::Vertical);
-    
-    if (axesX.isEmpty()) {
-        axisX = new QValueAxis();
-        m_chart->addAxis(axisX, Qt::AlignBottom);
-    } else axisX = qobject_cast<QValueAxis*>(axesX[0]);
-
-    if (axesY.isEmpty()) {
-        axisY = new QValueAxis();
-        m_chart->addAxis(axisY, Qt::AlignLeft);
-    } else axisY = qobject_cast<QValueAxis*>(axesY[0]);
-
-    if (axisX) {
-        axisX->setTitleText(m_acMode ? "Frequency (Hz)" : "Time (s)");
-        axisX->setRange(minX, maxX);
-        axisX->setLabelFormat("%.2g");
-    }
-    if (axisY) {
-        axisY->setTitleText(m_acMode ? "Magnitude (dB)" : "Amplitude");
-        axisY->setRange(minY, maxY);
-        axisY->setLabelFormat("%.2g");
-    }
-
-    QPen axisPen(Qt::white);
-    axisPen.setWidth(1);
-    if (axisX) {
-        axisX->setLinePen(axisPen);
-        axisX->setLabelsBrush(QBrush(Qt::white));
-        axisX->setTitleBrush(QBrush(Qt::white));
-        axisX->setGridLinePen(QPen(QColor("#404040"), 1, Qt::DotLine));
-    }
-    if (axisY) {
-        axisY->setLinePen(axisPen);
-        axisY->setLabelsBrush(QBrush(Qt::white));
-        axisY->setTitleBrush(QBrush(Qt::white));
-        axisY->setGridLinePen(QPen(QColor("#404040"), 1, Qt::DotLine));
-    }
-
-    bool needsPhaseAxis = false;
-    double minPhase = 1e30;
-    double maxPhase = -1e30;
-
-    bool hasAnyChecked = false;
-    int colorIdx = 0;
     for (int i = 0; i < m_nodeList->count(); ++i) {
         QListWidgetItem* item = m_nodeList->item(i);
         if (item->checkState() == Qt::Checked) {
             QString name = item->text();
             if (m_signals.contains(name)) {
                 const auto& data = m_signals[name];
+                ChartPane* pane = getPaneForType(data.type);
+                
                 auto* series = new QLineSeries();
                 series->setName(name);
+                series->setPen(QPen(data.customColor.isValid() ? data.customColor : item->foreground().color(), data.lineWidth, data.penStyle));
                 
-                // Optimized loading: use Min-Max decimation to preserve peaks and avoid aliasing
-                const int maxBuckets = 5000;
-                const int totalSize = static_cast<int>(data.time.size());
-                
-                auto yForPlot = [&](double v) {
-                    return m_acMode ? toDb(v) : v;
-                };
-
-                QVector<double> sortedTime;
-                QVector<double> sortedValues;
-                QVector<double> sortedPhase;
-                if (m_acMode && totalSize > 1) {
-                    QVector<int> order(totalSize);
-                    std::iota(order.begin(), order.end(), 0);
-                    std::sort(order.begin(), order.end(), [&](int a, int b) {
-                        return data.time[a] < data.time[b];
-                    });
-                    sortedTime.resize(totalSize);
-                    sortedValues.resize(totalSize);
-                    if (data.hasPhase && data.phase.size() == data.values.size()) {
-                        sortedPhase.resize(totalSize);
-                    }
-                    for (int j = 0; j < totalSize; ++j) {
-                        sortedTime[j] = data.time[order[j]];
-                        sortedValues[j] = data.values[order[j]];
-                        if (!sortedPhase.isEmpty()) {
-                            sortedPhase[j] = data.phase[order[j]];
-                        }
-                    }
-                } else {
-                    sortedTime = data.time;
-                    sortedValues = data.values;
-                    if (data.hasPhase && data.phase.size() == data.values.size()) {
-                        sortedPhase = data.phase;
-                    }
+                const int totalSize = data.time.size();
+                const int step = std::max(1, totalSize / 2000); 
+                for (int j = 0; j < totalSize; j += step) {
+                    double y = m_acMode ? toDb(data.values[j]) : data.values[j];
+                    series->append(data.time[j], y);
+                }
+                if (totalSize > 1 && (totalSize - 1) % step != 0) {
+                     double y = m_acMode ? toDb(data.values.last()) : data.values.last();
+                     series->append(data.time.last(), y);
                 }
 
-                if (totalSize <= maxBuckets) {
-                    QList<QPointF> points;
-                    points.reserve(totalSize);
-                    for (int j = 0; j < totalSize; ++j) {
-                        points.append(QPointF(sortedTime[j], yForPlot(sortedValues[j])));
-                    }
-                    series->append(points);
-                } else {
-                    // Optimized: only decimate visible range if possible
-                    int startIdx = 0;
-                    int endIdx = totalSize;
-                    if (hasRange && !autoScale) {
-                        auto itStart = std::lower_bound(sortedTime.begin(), sortedTime.end(), xMin);
-                        auto itEnd = std::upper_bound(sortedTime.begin(), sortedTime.end(), xMax);
-                        startIdx = std::distance(sortedTime.begin(), itStart);
-                        endIdx = std::distance(sortedTime.begin(), itEnd);
-                        if (startIdx > 0) startIdx--; // include one point before for continuity
-                        if (endIdx < totalSize) endIdx++; // include one point after
-                    }
-
-                    const int rangeSize = endIdx - startIdx;
-                    if (rangeSize <= maxBuckets) {
-                        QList<QPointF> points;
-                        points.reserve(rangeSize);
-                        for (int j = startIdx; j < endIdx; ++j) {
-                            points.append(QPointF(sortedTime[j], yForPlot(sortedValues[j])));
-                        }
-                        series->append(points);
-                    } else {
-                        int bucketSize = rangeSize / maxBuckets;
-                        if (bucketSize < 1) bucketSize = 1;
-                        QList<QPointF> points;
-                        points.reserve(maxBuckets * 2 + 1);
-                        for (int b = 0; b < maxBuckets; ++b) {
-                            int start = startIdx + b * bucketSize;
-                            int end = (b == maxBuckets - 1) ? endIdx : start + bucketSize;
-                            if (start >= endIdx) break;
-                            
-                            int minIdx = start;
-                            int maxIdx = start;
-                            double minVal = yForPlot(sortedValues[start]);
-                            double maxVal = minVal;
-                            for (int j = start + 1; j < std::min(end, endIdx); ++j) {
-                                const double y = yForPlot(sortedValues[j]);
-                                if (y < minVal) { minVal = y; minIdx = j; }
-                                if (y > maxVal) { maxVal = y; maxIdx = j; }
-                            }
-                            
-                            if (minIdx < maxIdx) {
-                                points.append(QPointF(sortedTime[minIdx], yForPlot(sortedValues[minIdx])));
-                                points.append(QPointF(sortedTime[maxIdx], yForPlot(sortedValues[maxIdx])));
-                            } else if (minIdx > maxIdx) {
-                                points.append(QPointF(sortedTime[maxIdx], yForPlot(sortedValues[maxIdx])));
-                                points.append(QPointF(sortedTime[minIdx], yForPlot(sortedValues[minIdx])));
-                            } else {
-                                points.append(QPointF(sortedTime[minIdx], yForPlot(sortedValues[minIdx])));
-                            }
-                        }
-                        series->append(points);
-                    }
-                }
-                
-                const QList<QColor> colors = {QColor(0, 204, 0), QColor(0, 0, 255), QColor(255, 0, 0), QColor(0, 255, 255), QColor(255, 0, 255), QColor(255, 255, 0)};
-                QColor seriesColor = data.customColor.isValid() ? data.customColor : colors[colorIdx % colors.size()];
-                QPen pen(seriesColor, data.lineWidth, data.penStyle);
-                series->setPen(pen);
-                m_chart->addSeries(series);
-                series->attachAxis(axisX);
-                series->attachAxis(axisY);
-
-                if (m_acMode && data.hasPhase && !sortedPhase.isEmpty()) {
-                    auto* phaseSeries = new QLineSeries();
-                    phaseSeries->setName(name + " (Phase)");
-                    QPen phasePen(colors[colorIdx % colors.size()], 1.2, Qt::DashLine);
-                    phaseSeries->setPen(phasePen);
-
-                    if (totalSize <= maxBuckets) {
-                        QList<QPointF> points;
-                        points.reserve(totalSize);
-                        for (int j = 0; j < totalSize; ++j) {
-                            points.append(QPointF(sortedTime[j], sortedPhase[j]));
-                        }
-                        phaseSeries->append(points);
-                    } else {
-                        int bucketSize = totalSize / maxBuckets;
-                        QList<QPointF> points;
-                        points.reserve(maxBuckets * 2 + 1);
-                        for (int b = 0; b < maxBuckets; ++b) {
-                            int start = b * bucketSize;
-                            int end = (b == maxBuckets - 1) ? totalSize : (b + 1) * bucketSize;
-
-                            int minIdx = start;
-                            int maxIdx = start;
-                            double minVal = sortedPhase[start];
-                            double maxVal = minVal;
-                            for (int j = start + 1; j < end; ++j) {
-                                const double y = sortedPhase[j];
-                                if (y < minVal) { minVal = y; minIdx = j; }
-                                if (y > maxVal) { maxVal = y; maxIdx = j; }
-                            }
-
-                            if (minIdx < maxIdx) {
-                                points.append(QPointF(sortedTime[minIdx], sortedPhase[minIdx]));
-                                points.append(QPointF(sortedTime[maxIdx], sortedPhase[maxIdx]));
-                            } else if (minIdx > maxIdx) {
-                                points.append(QPointF(sortedTime[maxIdx], sortedPhase[maxIdx]));
-                                points.append(QPointF(sortedTime[minIdx], sortedPhase[minIdx]));
-                            } else {
-                                points.append(QPointF(sortedTime[minIdx], sortedPhase[minIdx]));
-                            }
-                        }
-                        if (!points.isEmpty() && points.last().x() < sortedTime.back()) {
-                            points.append(QPointF(sortedTime.back(), sortedPhase.back()));
-                        }
-                        phaseSeries->append(points);
-                    }
-
-                    if (sortedPhase.size() == sortedTime.size()) {
-                        for (double v : sortedPhase) {
-                            minPhase = std::min(minPhase, v);
-                            maxPhase = std::max(maxPhase, v);
-                        }
-                        needsPhaseAxis = true;
-                    }
-
-                    m_chart->addSeries(phaseSeries);
-                    phaseSeries->attachAxis(axisX);
-                    // axisYPhase will be added after series loop if needed
-                }
-
-                hasAnyChecked = true;
-                colorIdx++;
+                pane->chart->addSeries(series);
+                series->attachAxis(pane->axisX);
+                series->attachAxis(pane->axisY);
             }
         }
-    }
-
-    QValueAxis* axisYPhase = nullptr;
-    if (m_acMode && needsPhaseAxis) {
-        axisYPhase = new QValueAxis();
-        axisYPhase->setTitleText("Phase (deg)");
-        axisYPhase->setLabelFormat("%.0f");
-        axisYPhase->setGridLineVisible(false);
-        if (!std::isfinite(minPhase) || !std::isfinite(maxPhase) || minPhase > maxPhase) {
-            minPhase = -180.0;
-            maxPhase = 180.0;
-        }
-        if (std::abs(maxPhase - minPhase) < 1e-6) {
-            minPhase -= 10.0;
-            maxPhase += 10.0;
-        } else {
-            const double pad = (maxPhase - minPhase) * 0.1;
-            minPhase -= pad;
-            maxPhase += pad;
-        }
-        axisYPhase->setRange(minPhase, maxPhase);
-        axisYPhase->setLinePen(axisPen);
-        axisYPhase->setLabelsBrush(QBrush(Qt::white));
-        axisYPhase->setTitleBrush(QBrush(Qt::white));
-        m_chart->addAxis(axisYPhase, Qt::AlignRight);
-
-        // Attach phase series to the phase axis
-        for (auto* s : m_chart->series()) {
-            if (s->name().endsWith("(Phase)")) {
-                s->attachAxis(axisYPhase);
-            }
-        }
-    }
-    
-    if (hasAnyChecked || autoScale) {
-        if (m_preserveXRangeOnce) {
-            zoomFitYOnly(); // This will adjust Y but we want to force X
-            auto axesX = m_chart->axes(Qt::Horizontal);
-            if (!axesX.isEmpty()) {
-                if (auto* axX = qobject_cast<QValueAxis*>(axesX[0])) {
-                    axX->setRange(m_preserveXMin, m_preserveXMax);
-                }
-            }
-            m_preserveXRangeOnce = false;
-        }
-        // Standard range already set at top of updatePlot
-    }
-
-    if (m_holdXRangeCount > 0) {
-        auto axesX = m_chart->axes(Qt::Horizontal);
-        if (!axesX.isEmpty()) {
-            if (auto* axisX = qobject_cast<QValueAxis*>(axesX[0])) {
-                axisX->setRange(m_holdXMin, m_holdXMax);
-            }
-        }
-        m_holdXRangeCount--;
     }
 }
 
-void WaveformViewer::zoomIn() { m_chart->zoomIn(); }
-void WaveformViewer::zoomOut() { m_chart->zoomOut(); }
-void WaveformViewer::zoomFit() {
-    auto axesX = m_chart->axes(Qt::Horizontal);
-    auto axesY = m_chart->axes(Qt::Vertical);
-    if (axesX.isEmpty() || axesY.isEmpty()) return;
-    
-    double minX = 1e30, maxX = -1e30, minY = 1e30, maxY = -1e30;
-    bool found = false;
-
-    // Use internal signal data for reliable range calculation instead of chart points
-    for (int i = 0; i < m_nodeList->count(); ++i) {
-        QListWidgetItem* item = m_nodeList->item(i);
-        if (item->checkState() == Qt::Checked) {
-            QString name = item->text();
-            if (m_signals.contains(name)) {
-                const auto& data = m_signals[name];
-                if (data.time.isEmpty()) continue;
-                
-                auto minMaxX = std::minmax_element(data.time.begin(), data.time.end());
-                double localMinY = 1e30;
-                double localMaxY = -1e30;
-                for (double v : data.values) {
-                    const double y = m_acMode ? toDb(v) : v;
-                    localMinY = std::min(localMinY, y);
-                    localMaxY = std::max(localMaxY, y);
-                }
-                
-                minX = std::min(minX, *minMaxX.first);
-                maxX = std::max(maxX, *minMaxX.second);
-                minY = std::min(minY, localMinY);
-                maxY = std::max(maxY, localMaxY);
-                found = true;
-            }
-        }
-    }
-
-    if (found) {
-        // Ensure non-zero range for X
-        if (std::abs(maxX - minX) < 1e-15) {
-            minX -= 1.0;
-            maxX += 1.0;
-        }
-        // Ensure non-zero range for Y
-        if (std::abs(maxY - minY) < 1e-15) {
-            double dy = std::abs(minY) < 1e-9 ? 1.0 : std::abs(minY) * 0.1;
-            minY -= dy;
-            maxY += dy;
-        } else {
-            double dy = (maxY - minY) * 0.1;
-            minY -= dy;
-            maxY += dy;
-        }
-        
-        qobject_cast<QValueAxis*>(axesX[0])->setRange(minX, maxX);
-        qobject_cast<QValueAxis*>(axesY[0])->setRange(minY, maxY);
+void WaveformViewer::zoomIn() { for (auto* p : m_panes) p->chart->zoomIn(); }
+void WaveformViewer::zoomOut() { for (auto* p : m_panes) p->chart->zoomOut(); }
+void WaveformViewer::exportImage() {
+    if (m_panes.isEmpty()) return;
+    QPixmap pixmap = m_splitter->grab();
+    QString fileName = QFileDialog::getSaveFileName(this, "Export Waveform", "", "Images (*.png *.jpg)");
+    if (!fileName.isEmpty()) {
+        pixmap.save(fileName);
     }
 }
-void WaveformViewer::resetZoom() { m_chart->zoomReset(); }
+
+void WaveformViewer::resetZoom() { for (auto* p : m_panes) p->chart->zoomReset(); }
 
 void WaveformViewer::pushZoomState() {
-    auto axesX = m_chart->axes(Qt::Horizontal);
-    auto axesY = m_chart->axes(Qt::Vertical);
-    if (axesX.isEmpty() || axesY.isEmpty()) return;
-    auto *axX = qobject_cast<QValueAxis*>(axesX.first());
-    auto *axY = qobject_cast<QValueAxis*>(axesY.first());
-    if (!axX || !axY) return;
-    ZoomState s = {axX->min(), axX->max(), axY->min(), axY->max()};
-    // Avoid duplicate pushes
+    if (m_panes.isEmpty()) return;
+    ZoomState s;
+    s.xMin = m_panes.first()->axisX->min();
+    s.xMax = m_panes.first()->axisX->max();
+    for (auto* p : m_panes) {
+        s.yRanges.append({p->axisY->min(), p->axisY->max()});
+    }
+
     if (!m_zoomUndo.isEmpty()) {
         const auto &top = m_zoomUndo.top();
-        if (qFuzzyCompare(top.xMin, s.xMin) && qFuzzyCompare(top.xMax, s.xMax) &&
-            qFuzzyCompare(top.yMin, s.yMin) && qFuzzyCompare(top.yMax, s.yMax))
+        if (qFuzzyCompare(top.xMin, s.xMin) && qFuzzyCompare(top.xMax, s.xMax) && top.yRanges == s.yRanges)
             return;
     }
     m_zoomUndo.push(s);
@@ -1385,96 +965,73 @@ void WaveformViewer::pushZoomState() {
 }
 
 void WaveformViewer::applyZoomState(const ZoomState &s) {
-    auto axesX = m_chart->axes(Qt::Horizontal);
-    auto axesY = m_chart->axes(Qt::Vertical);
-    if (axesX.isEmpty() || axesY.isEmpty()) return;
-    auto *axX = qobject_cast<QValueAxis*>(axesX.first());
-    auto *axY = qobject_cast<QValueAxis*>(axesY.first());
-    if (!axX || !axY) return;
-    axX->setRange(s.xMin, s.xMax);
-    axY->setRange(s.yMin, s.yMax);
+    if (m_panes.isEmpty()) return;
+    
+    m_blockUpdates = true;
+    for (int i = 0; i < m_panes.size(); ++i) {
+        m_panes[i]->axisX->setRange(s.xMin, s.xMax);
+        if (i < s.yRanges.size()) {
+            m_panes[i]->axisY->setRange(s.yRanges[i].first, s.yRanges[i].second);
+        }
+    }
+    m_blockUpdates = false;
 }
 
 void WaveformViewer::onZoomRectCompleted(const QRectF &valueRect) {
     pushZoomState();
-    auto axesX = m_chart->axes(Qt::Horizontal);
-    auto axesY = m_chart->axes(Qt::Vertical);
-    if (axesX.isEmpty() || axesY.isEmpty()) return;
-    auto *axX = qobject_cast<QValueAxis*>(axesX.first());
-    auto *axY = qobject_cast<QValueAxis*>(axesY.first());
-    if (!axX || !axY) return;
-    axX->setRange(valueRect.left(), valueRect.right());
-    axY->setRange(valueRect.top(), valueRect.bottom());
+    if (m_panes.isEmpty()) return;
+    
+    m_blockUpdates = true;
+    for (auto* p : m_panes) {
+        p->axisX->setRange(valueRect.left(), valueRect.right());
+    }
+    
+    for (auto* p : m_panes) {
+        p->axisY->setRange(valueRect.top(), valueRect.bottom());
+    }
+    m_blockUpdates = false;
 }
 
 void WaveformViewer::undoZoom() {
     if (m_zoomUndo.isEmpty()) return;
-    auto axesX = m_chart->axes(Qt::Horizontal);
-    auto axesY = m_chart->axes(Qt::Vertical);
-    if (axesX.isEmpty() || axesY.isEmpty()) return;
-    auto *axX = qobject_cast<QValueAxis*>(axesX.first());
-    auto *axY = qobject_cast<QValueAxis*>(axesY.first());
-    if (!axX || !axY) return;
-    // Push current state to redo
-    m_zoomRedo.push({axX->min(), axX->max(), axY->min(), axY->max()});
+    pushZoomState();
+    m_zoomRedo.push(m_zoomUndo.pop());
     applyZoomState(m_zoomUndo.pop());
 }
 
 void WaveformViewer::redoZoom() {
     if (m_zoomRedo.isEmpty()) return;
-    auto axesX = m_chart->axes(Qt::Horizontal);
-    auto axesY = m_chart->axes(Qt::Vertical);
-    if (axesX.isEmpty() || axesY.isEmpty()) return;
-    auto *axX = qobject_cast<QValueAxis*>(axesX.first());
-    auto *axY = qobject_cast<QValueAxis*>(axesY.first());
-    if (!axX || !axY) return;
-    // Push current state to undo
-    m_zoomUndo.push({axX->min(), axX->max(), axY->min(), axY->max()});
+    pushZoomState();
     applyZoomState(m_zoomRedo.pop());
 }
 
+void WaveformViewer::zoomFit() {
+    updatePlot(true);
+}
+
 void WaveformViewer::zoomFitYOnly() {
-    auto axesY = m_chart->axes(Qt::Vertical);
-    if (axesY.isEmpty()) return;
-
-    double minY = 1e30, maxY = -1e30;
-    bool found = false;
-
-    for (int i = 0; i < m_nodeList->count(); ++i) {
-        QListWidgetItem* item = m_nodeList->item(i);
-        if (item->checkState() == Qt::Checked) {
-            QString name = item->text();
-            if (m_signals.contains(name)) {
-                const auto& data = m_signals[name];
-                if (data.values.isEmpty()) continue;
-                double localMinY = 1e30;
-                double localMaxY = -1e30;
-                for (double v : data.values) {
-                    const double y = m_acMode ? toDb(v) : v;
-                    localMinY = std::min(localMinY, y);
-                    localMaxY = std::max(localMaxY, y);
+    for (auto* p : m_panes) {
+        double minY = 1e30, maxY = -1e30;
+        bool found = false;
+        for (int i = 0; i < m_nodeList->count(); ++i) {
+            QListWidgetItem* item = m_nodeList->item(i);
+            if (item->checkState() == Qt::Checked) {
+                QString name = item->text();
+                if (m_signals.contains(name)) {
+                    const auto& data = m_signals[name];
+                    if (getPaneForType(data.type) != p) continue;
+                    for (double v : data.values) {
+                        const double y = m_acMode ? toDb(v) : v;
+                        minY = std::min(minY, y);
+                        maxY = std::max(maxY, y);
+                    }
+                    found = true;
                 }
-                minY = std::min(minY, localMinY);
-                maxY = std::max(maxY, localMaxY);
-                found = true;
             }
         }
-    }
-
-    if (!found) return;
-
-    if (std::abs(maxY - minY) < 1e-15) {
-        double dy = std::abs(minY) < 1e-9 ? 1.0 : std::abs(minY) * 0.1;
-        minY -= dy;
-        maxY += dy;
-    } else {
-        double dy = (maxY - minY) * 0.1;
-        minY -= dy;
-        maxY += dy;
-    }
-
-    if (auto* axisY = qobject_cast<QValueAxis*>(axesY[0])) {
-        axisY->setRange(minY, maxY);
+        if (!found) continue;
+        double dy = (std::abs(maxY - minY) < 1e-15) ? 1.0 : (maxY - minY) * 0.1;
+        p->axisY->setRange(minY - dy, maxY + dy);
     }
 }
 
@@ -1485,6 +1042,68 @@ void WaveformViewer::setAcMode(bool enabled) {
         m_measureDialog->setAcMode(m_acMode);
     }
     updatePlot(false);
+}
+
+WaveformViewer::ChartPane* WaveformViewer::createPane(WaveformViewer::SignalType type) {
+    auto* pane = new ChartPane();
+    pane->type = type;
+    pane->chart = new QChart();
+    pane->chart->setTheme(QChart::ChartThemeDark);
+    pane->chart->setBackgroundBrush(QBrush(QColor(20, 20, 20)));
+    pane->chart->setPlotAreaBackgroundBrush(QBrush(QColor(15, 15, 15)));
+    pane->chart->legend()->hide();
+    
+    pane->view = new VioChartView(pane->chart);
+    pane->view->setRenderHint(QPainter::Antialiasing);
+    pane->view->setRubberBand(QChartView::RectangleRubberBand);
+    pane->view->setInteractive(true);
+    pane->view->setCursorsEnabled(m_cursorsEnabled);
+    
+    pane->axisX = new QValueAxis();
+    pane->axisX->setLabelsBrush(QBrush(Qt::white));
+    pane->axisX->setTitleBrush(QBrush(Qt::white));
+    pane->axisX->setGridLinePen(QPen(QColor("#333"), 1, Qt::DotLine));
+    
+    pane->axisY = new QValueAxis();
+    pane->axisY->setLabelsBrush(QBrush(Qt::white));
+    pane->axisY->setTitleBrush(QBrush(Qt::white));
+    pane->axisY->setGridLinePen(QPen(QColor("#333"), 1, Qt::DotLine));
+    
+    pane->chart->addAxis(pane->axisX, Qt::AlignBottom);
+    pane->chart->addAxis(pane->axisY, Qt::AlignLeft);
+    
+    m_panes.append(pane);
+    m_splitter->addWidget(pane->view);
+    
+    connect(pane->axisX, &QValueAxis::rangeChanged, this, [this, pane](){
+        syncAxesX(pane->axisX);
+    });
+    
+    connect(pane->view, &VioChartView::mouseMoved, this, &WaveformViewer::onMouseMoved);
+    connect(pane->view, &VioChartView::cursorsMoved, this, &WaveformViewer::updateCursors);
+    
+    return pane;
+}
+
+void WaveformViewer::syncAxesX(QValueAxis* source) {
+    if (m_blockUpdates || !source) return;
+    m_blockUpdates = true;
+    double min = source->min();
+    double max = source->max();
+    for (auto* p : m_panes) {
+        if (p->axisX != source) {
+            p->axisX->setRange(min, max);
+        }
+    }
+    m_blockUpdates = false;
+}
+
+WaveformViewer::ChartPane* WaveformViewer::getPaneForType(WaveformViewer::SignalType type) {
+    for (auto* p : m_panes) {
+        if (p->type == type) return p;
+    }
+    // If not found, create one
+    return createPane(type);
 }
 
 void WaveformViewer::onNodeSelected() {
@@ -1516,7 +1135,7 @@ void WaveformViewer::onContextMenuRequested(const QPoint &globalPos) {
 
     QAction* crosshairAct = menu.addAction("Toggle Crosshair");
     crosshairAct->setCheckable(true);
-    crosshairAct->setChecked(m_chartView->isCrosshairEnabled());
+    crosshairAct->setChecked(!m_panes.isEmpty() && m_panes.first()->view->isCrosshairEnabled());
 
     menu.addSeparator();
 
@@ -2229,37 +1848,7 @@ double WaveformViewer::evaluateSimpleMath(const QString &expr, bool &ok) {
     return val;
 }
 
-void WaveformViewer::exportImage() {
-    QString path = QFileDialog::getSaveFileName(this, "Export Chart Image", QString(),
-        "PNG Image (*.png);;SVG Vector (*.svg);;PDF Document (*.pdf)");
-    if (path.isEmpty()) return;
-
-    if (path.endsWith(".svg", Qt::CaseInsensitive)) {
-        QRectF plotRect = m_chartView->rect();
-        QSvgGenerator generator;
-        generator.setFileName(path);
-        generator.setSize(plotRect.size().toSize());
-        generator.setViewBox(plotRect);
-        generator.setTitle("VioSpice Waveform");
-        QPainter painter(&generator);
-        painter.setRenderHint(QPainter::Antialiasing);
-        m_chartView->render(&painter);
-        painter.end();
-    } else if (path.endsWith(".pdf", Qt::CaseInsensitive)) {
-        QPrinter printer(QPrinter::HighResolution);
-        printer.setOutputFormat(QPrinter::PdfFormat);
-        printer.setOutputFileName(path);
-        printer.setPageSize(QPageSize(m_chartView->size(), QPageSize::Point));
-        QPainter painter(&printer);
-        painter.setRenderHint(QPainter::Antialiasing);
-        m_chartView->render(&painter);
-        painter.end();
-    } else {
-        QPixmap pixmap = m_chartView->grab();
-        if (!path.endsWith(".png", Qt::CaseInsensitive)) path += ".png";
-        pixmap.save(path, "PNG");
-    }
-}
+// Duplicate exportImage removed
 
 WaveformViewer::EdgeTimes WaveformViewer::computeEdgeTimes(const QVector<double>& time, const QVector<double>& values) const {
     EdgeTimes result;

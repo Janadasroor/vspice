@@ -235,6 +235,23 @@ public:
 
     virtual void setSimState(const QMap<QString, double>& nodeVoltages, const QMap<QString, double>& branchCurrents) {
         Q_UNUSED(nodeVoltages) Q_UNUSED(branchCurrents)
+        m_powerDissipation = 0;
+    }
+    double powerDissipation() const { return m_powerDissipation; }
+    
+    static double parseValue(const QString& val) {
+        if (val.isEmpty()) return 0;
+        QString s = val.trimmed().toLower();
+        double multiplier = 1.0;
+        if (s.endsWith("k")) { multiplier = 1e3; s.chop(1); }
+        else if (s.endsWith("m") && !s.endsWith("meg")) { multiplier = 1e-3; s.chop(1); }
+        else if (s.endsWith("meg")) { multiplier = 1e6; s.chop(3); }
+        else if (s.endsWith("u")) { multiplier = 1e-6; s.chop(1); }
+        else if (s.endsWith("n")) { multiplier = 1e-9; s.chop(1); }
+        else if (s.endsWith("p")) { multiplier = 1e-12; s.chop(1); }
+        bool ok;
+        double v = s.toDouble(&ok);
+        return ok ? v * multiplier : 0;
     }
     virtual bool isInteractive() const { return false; }
     virtual void onInteractiveClick(const QPointF& scenePos) { Q_UNUSED(scenePos) }
@@ -283,6 +300,7 @@ protected:
     QMap<QString, QString> m_paramExpressions;
     QMap<QString, QString> m_tolerances;
     QMap<QString, QString> m_pinPadMapping;
+    double m_powerDissipation = 0;
 };
 
 #endif // SCHEMATICITEM_H
