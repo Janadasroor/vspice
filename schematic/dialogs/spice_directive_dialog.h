@@ -20,6 +20,7 @@ public:
 
 private slots:
     void onAccepted();
+    void applyCompatibilityFixes();
 
 private:
     void setupUi();
@@ -35,6 +36,7 @@ private:
     QPlainTextEdit* m_commandEdit;
     QLabel* m_validationLabel;
     QTextBrowser* m_previewEdit;
+    QPushButton* m_applyFixesButton;
     QPushButton* m_okButton;
     QPushButton* m_cancelButton;
     SpiceHighlighter* m_highlighter;

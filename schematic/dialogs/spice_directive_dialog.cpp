@@ -104,16 +104,70 @@ QStringList collapseSpiceContinuationLines(const QString& text) {
     return collapsed;
 }
 
+QString rewritePreviewLtspiceBehavioralIf(const QString& line, QStringList* fixes = nullptr) {
+    QString out = line;
+    static const QRegularExpression ifZeroRe(
+        "\\bif\\s*\\(\\s*([^,]+?)\\s*([<>]=?)\\s*([^,]+?)\\s*,\\s*([^,]+?)\\s*,\\s*(0|0\\.0*)\\s*\\)",
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression ifElseRe(
+        "\\bif\\s*\\(\\s*([^,]+?)\\s*([<>]=?)\\s*([^,]+?)\\s*,\\s*([^,]+?)\\s*,\\s*([^,]+?)\\s*\\)",
+        QRegularExpression::CaseInsensitiveOption);
+
+    QRegularExpressionMatch match = ifZeroRe.match(out);
+    if (!match.hasMatch()) {
+        match = ifElseRe.match(out);
+        if (!match.hasMatch()) return out;
+    }
+
+    const QString lhs = match.captured(1).trimmed();
+    const QString op = match.captured(2).trimmed();
+    const QString rhs = match.captured(3).trimmed();
+    const QString trueExpr = match.captured(4).trimmed();
+    const QString falseExpr = match.captured(5).trimmed();
+
+    QString stepExpr;
+    if (op == ">" || op == ">=") stepExpr = QString("u((%1)-(%2))").arg(lhs, rhs);
+    else if (op == "<" || op == "<=") stepExpr = QString("u((%1)-(%2))").arg(rhs, lhs);
+    else return out;
+
+    const bool falseIsZero = falseExpr == "0" || falseExpr == "0.0";
+    const QString replacement = falseIsZero
+        ? QString("((%1)*(%2))").arg(trueExpr, stepExpr)
+        : QString("((%1)*(%2) + (%3)*(1-(%2)))").arg(trueExpr, stepExpr, falseExpr);
+    out.replace(match.capturedStart(0), match.capturedLength(0), replacement);
+    if (fixes) fixes->append(QString("if(...) -> %1").arg(replacement));
+    return out;
+}
+
+QString rewritePreviewDirectiveLine(const QString& line, QStringList* fixes = nullptr) {
+    QString out = line;
+    if (out.contains("if(", Qt::CaseInsensitive) && out.contains(" V={", Qt::CaseInsensitive)) {
+        out = rewritePreviewLtspiceBehavioralIf(out, fixes);
+    }
+    if (out.contains(" V={", Qt::CaseInsensitive)) {
+        const QString original = out;
+        out.replace("&&", " and ");
+        out.replace("||", " or ");
+        static const QRegularExpression singleAndRe("(?<![&])&(?![&])");
+        static const QRegularExpression singleOrRe("(?<![|])\\|(?![|])");
+        out.replace(singleAndRe, " and ");
+        out.replace(singleOrRe, " or ");
+        if (fixes && out != original) fixes->append("boolean operators -> and/or");
+    }
+    return out;
+}
+
 }
 
 SpiceDirectiveDialog::SpiceDirectiveDialog(SchematicSpiceDirectiveItem* item, QUndoStack* undoStack, QGraphicsScene* scene, QWidget* parent)
-    : QDialog(parent), m_item(item), m_undoStack(undoStack), m_scene(scene), m_commandEdit(nullptr), m_validationLabel(nullptr), m_previewEdit(nullptr), m_okButton(nullptr), m_cancelButton(nullptr), m_highlighter(nullptr)
+    : QDialog(parent), m_item(item), m_undoStack(undoStack), m_scene(scene), m_commandEdit(nullptr), m_validationLabel(nullptr), m_previewEdit(nullptr), m_applyFixesButton(nullptr), m_okButton(nullptr), m_cancelButton(nullptr), m_highlighter(nullptr)
 {
     setupUi();
     loadFromItem();
 
     connect(m_okButton, &QPushButton::clicked, this, &SpiceDirectiveDialog::onAccepted);
     connect(m_cancelButton, &QPushButton::clicked, this, &QDialog::reject);
+    connect(m_applyFixesButton, &QPushButton::clicked, this, &SpiceDirectiveDialog::applyCompatibilityFixes);
     connect(m_commandEdit, &QPlainTextEdit::textChanged, this, &SpiceDirectiveDialog::validateDirectiveText);
     connect(m_commandEdit, &QPlainTextEdit::textChanged, this, &SpiceDirectiveDialog::updatePreview);
 
@@ -163,6 +217,8 @@ void SpiceDirectiveDialog::setupUi() {
     mainLayout->addWidget(m_validationLabel);
 
     QHBoxLayout* btnLayout = new QHBoxLayout();
+    m_applyFixesButton = new QPushButton("Apply Compatibility Fixes", this);
+    btnLayout->addWidget(m_applyFixesButton);
     btnLayout->addStretch();
 
     m_cancelButton = new QPushButton("Cancel", this);
@@ -186,6 +242,35 @@ void SpiceDirectiveDialog::loadFromItem() {
 void SpiceDirectiveDialog::onAccepted() {
     saveToItem();
     accept();
+}
+
+void SpiceDirectiveDialog::applyCompatibilityFixes() {
+    if (!m_commandEdit) return;
+
+    const QString originalText = m_commandEdit->toPlainText();
+    const QStringList lines = collapseSpiceContinuationLines(originalText);
+    QStringList rewrittenLines;
+    bool changed = false;
+
+    for (const QString& rawLine : lines) {
+        const QString trimmed = rawLine.trimmed();
+        if (trimmed.isEmpty()) {
+            rewrittenLines << QString();
+            continue;
+        }
+        if (isCommentLine(trimmed)) {
+            rewrittenLines << rawLine;
+            continue;
+        }
+
+        const QString rewritten = rewritePreviewDirectiveLine(trimmed);
+        rewrittenLines << rewritten;
+        changed = changed || (rewritten != trimmed);
+    }
+
+    if (changed) {
+        m_commandEdit->setPlainText(rewrittenLines.join('\n'));
+    }
 }
 
 void SpiceDirectiveDialog::saveToItem() {
@@ -382,6 +467,7 @@ void SpiceDirectiveDialog::updatePreview() {
 
     QStringList preview;
     preview << "* SPICE block preview";
+    QStringList compatibilityFixes;
 
     const QStringList lines = collapseSpiceContinuationLines(text);
     for (const QString& rawLine : lines) {
@@ -394,7 +480,23 @@ void SpiceDirectiveDialog::updatePreview() {
             preview << line;
             continue;
         }
-        preview << line;
+        QStringList lineFixes;
+        const QString rewritten = rewritePreviewDirectiveLine(line, &lineFixes);
+        if (rewritten != line) {
+            preview << "* compatibility fix: " + line;
+            preview << rewritten;
+            for (const QString& fix : lineFixes) {
+                compatibilityFixes << QString("- %1: %2").arg(line, fix);
+            }
+        } else {
+            preview << line;
+        }
+    }
+
+    if (!compatibilityFixes.isEmpty()) {
+        preview << QString();
+        preview << "* Compatibility fixes applied in preview";
+        preview << compatibilityFixes;
     }
 
     m_previewEdit->setPlainText(preview.join('\n'));
