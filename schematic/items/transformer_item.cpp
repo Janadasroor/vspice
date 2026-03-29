@@ -67,13 +67,13 @@ void TransformerItem::buildPrimitives() {
     // Dimensions
     qreal r = 5.0; // Radius of each loop
     qreal d = 10.0; // Diameter / spacing
-    qreal xLeft = -10.0;
-    qreal xRight = 10.0;
+    qreal xLeft = -15.0;
+    qreal xRight = 15.0;
     qreal topY = -20.0;
     
     // --- Primary Side (Left) ---
     // Top Lead
-    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(xLeft, -40), QPointF(xLeft, topY)));
+    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(xLeft, -45), QPointF(xLeft, topY)));
     
     // 4 Loops
     for (int i = 0; i < 4; ++i) {
@@ -86,11 +86,11 @@ void TransformerItem::buildPrimitives() {
     }
     
     // Bottom Lead
-    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(xLeft, topY + (4 * d)), QPointF(xLeft, 40)));
+    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(xLeft, topY + (4 * d)), QPointF(xLeft, 45)));
 
     // --- Secondary Side (Right) ---
     // Top Lead
-    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(xRight, -40), QPointF(xRight, topY)));
+    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(xRight, -45), QPointF(xRight, topY)));
     
     // 4 Loops
     for (int i = 0; i < 4; ++i) {
@@ -101,17 +101,17 @@ void TransformerItem::buildPrimitives() {
     }
     
     // Bottom Lead
-    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(xRight, topY + (4 * d)), QPointF(xRight, 40)));
+    m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(xRight, topY + (4 * d)), QPointF(xRight, 45)));
     
     // --- Core (Double Lines) ---
     m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(-3, -35), QPointF(-3, 35)));
     m_primitives.push_back(std::make_unique<LinePrimitive>(QPointF(3, -35), QPointF(3, 35)));
 
     // Pins
-    m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(xLeft, -40), 2.5, true));
-    m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(xLeft, 40), 2.5, true));
-    m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(xRight, -40), 2.5, true));
-    m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(xRight, 40), 2.5, true));
+    m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(xLeft, -45), 2.5, true));
+    m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(xLeft, 45), 2.5, true));
+    m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(xRight, -45), 2.5, true));
+    m_primitives.push_back(std::make_unique<CirclePrimitive>(QPointF(xRight, 45), 2.5, true));
 }
 
 void TransformerItem::setValue(const QString& value) {
@@ -201,10 +201,10 @@ SchematicItem* TransformerItem::clone() const {
 }
 
 QList<QPointF> TransformerItem::connectionPoints() const {
-    qreal xLeft = -10.0;
-    qreal xRight = 10.0;
+    qreal xLeft = -15.0;
+    qreal xRight = 15.0;
     return { 
-        QPointF(xLeft, -40), QPointF(xLeft, 40),
-        QPointF(xRight, -40), QPointF(xRight, 40)
+        QPointF(xLeft, -45), QPointF(xLeft, 45),
+        QPointF(xRight, -45), QPointF(xRight, 45)
     };
 }

@@ -17,7 +17,7 @@ OscilloscopeItem::OscilloscopeItem(QPointF pos, QGraphicsItem *parent) : Schemat
 }
 
 QRectF OscilloscopeItem::boundingRect() const {
-    return QRectF(-40, -60, 80, 140);
+    return QRectF(-45, -75, 90, 150);
 }
 
 void OscilloscopeItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*, QWidget*) {
@@ -26,18 +26,18 @@ void OscilloscopeItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*,
     // Instrument Body (Professional Slate Gray)
     painter->setBrush(QColor(45, 45, 55));
     painter->setPen(QPen(Qt::white, 2));
-    painter->drawRoundedRect(QRectF(-40, -60, 80, 140).adjusted(2, 2, -2, -2), 5, 5);
+    painter->drawRoundedRect(QRectF(-45, -75, 90, 150).adjusted(2, 2, -2, -2), 5, 5);
 
     // Title
     painter->setPen(QColor(0, 255, 100)); // Glowing green
     QFont titleFont = painter->font(); titleFont.setBold(true); titleFont.setPointSize(8);
     painter->setFont(titleFont);
-    painter->drawText(QRectF(-40, -58, 80, 15), Qt::AlignCenter, "OSCILLOSCOPE");
+    painter->drawText(QRectF(-45, -73, 90, 15), Qt::AlignCenter, "OSCILLOSCOPE");
 
     // Screen area
     painter->setBrush(QColor(10, 20, 10));
     painter->setPen(QPen(Qt::white, 1));
-    painter->drawRect(-30, -40, 60, 50);
+    painter->drawRect(-30, -50, 60, 50);
     
     // Fake grid on screen
     painter->setPen(QPen(QColor(30, 50, 30), 1));
@@ -48,26 +48,27 @@ void OscilloscopeItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*,
     painter->setPen(Qt::white);
     QFont f = painter->font(); f.setPointSize(7); painter->setFont(f);
     
-    painter->drawText(QRectF(-35, 10, 30, 15), Qt::AlignLeft, "CH1");
-    painter->drawText(QRectF(-35, 30, 30, 15), Qt::AlignLeft, "CH2");
-    painter->drawText(QRectF(-35, 50, 30, 15), Qt::AlignLeft, "CH3");
-    painter->drawText(QRectF(-35, 70, 30, 15), Qt::AlignLeft, "CH4");
+    // Labels centered on Y=15, 30, 45, 60
+    painter->drawText(QRectF(-40, 7.5, 30, 15), Qt::AlignLeft, "CH1");
+    painter->drawText(QRectF(-40, 22.5, 30, 15), Qt::AlignLeft, "CH2");
+    painter->drawText(QRectF(-40, 37.5, 30, 15), Qt::AlignLeft, "CH3");
+    painter->drawText(QRectF(-40, 52.5, 30, 15), Qt::AlignLeft, "CH4");
 
-    // Pin connection lines
-    painter->drawLine(-40, 17, -30, 17);
-    painter->drawLine(-40, 37, -30, 37);
-    painter->drawLine(-40, 57, -30, 57);
-    painter->drawLine(-40, 77, -30, 77);
+    // Pin connection lines (now aligned to grid)
+    painter->drawLine(-45, 15, -35, 15);
+    painter->drawLine(-45, 30, -35, 30);
+    painter->drawLine(-45, 45, -35, 45);
+    painter->drawLine(-45, 60, -35, 60);
 
     drawConnectionPointHighlights(painter);
 }
 
 QList<QPointF> OscilloscopeItem::connectionPoints() const {
     return {
-        QPointF(-40, 17), // CH1
-        QPointF(-40, 37), // CH2
-        QPointF(-40, 57), // CH3
-        QPointF(-40, 77)  // CH4
+        QPointF(-45, 15), // CH1
+        QPointF(-45, 30), // CH2
+        QPointF(-45, 45), // CH3
+        QPointF(-45, 60)  // CH4
     };
 }
 
@@ -132,10 +133,10 @@ QString OscilloscopeItem::channelNet(int chIdx) const {
     // Coordinates from connectionPoints()
     QPointF p;
     switch(chIdx) {
-        case 0: p = QPointF(-40, 17); break;
-        case 1: p = QPointF(-40, 37); break;
-        case 2: p = QPointF(-40, 57); break;
-        case 3: p = QPointF(-40, 77); break;
+        case 0: p = QPointF(-45, 15); break;
+        case 1: p = QPointF(-45, 30); break;
+        case 2: p = QPointF(-45, 45); break;
+        case 3: p = QPointF(-45, 60); break;
     }
     
     // Map to scene to find connections via NetManager

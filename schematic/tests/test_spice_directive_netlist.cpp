@@ -45,6 +45,7 @@ private slots:
     void logicComponentGeneratesVectorizedSubcircuit();
     void symbolDefinitionResolvesExplicitPinMetadata();
     void builtInGateAliasesMapToExpectedXspiceModels();
+    void xspiceBusPinsCollapseIntoVectorTokens();
 };
 
 void SpiceDirectiveNetlistTest::generatesWarningsAndHonorsManualDirectives() {
@@ -372,6 +373,7 @@ void SpiceDirectiveNetlistTest::warnsAboutLtspiceBehavioralAndTriggeredSourceOpt
         "BIPAR out7 0 I=V(a) Rpar=1k\n"
         "BRPAR out8 0 R=V(b)+1 Rpar=2k\n"
         "BTRIP out9 0 I=V(c) tripdv=0.7 tripdt=6n\n"
+        "BPWR out10 0 P=V(pwr) vprx=0.1\n"
         "VTRIG out2 0 PULSE(0 1 0 1n 1n 5u 10u) Trigger=V(clk)>0.5 tripdv=0.2 tripdt=1n\n"
         "VPWL out3 0 PWL(0 0 1u 1 2u 0) Trigger=V(en)>0.5 tripdv=0.3 tripdt=2n\n"
         "VSIN out4 0 SINE(0 1 1k 0 0 0) Trigger=V(sen)>0.5 tripdv=0.4 tripdt=3n\n"
@@ -405,6 +407,7 @@ void SpiceDirectiveNetlistTest::warnsAboutLtspiceBehavioralAndTriggeredSourceOpt
     QVERIFY2(netlist.contains("Dropped LTspice B-source tripdv=/tripdt= options from BTRIP because this ngspice configuration rejects them on behavioral sources."), qPrintable(netlist));
     QVERIFY2(netlist.contains("Removed B-source step-rejection options from BTRIP: tripdv=0.7 tripdt=6n"), qPrintable(netlist));
     QVERIFY2(netlist.contains("BTRIP out9 0 I=V(c)"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("LTspice behavioral power-source option vprx= detected and passed through unchanged; ngspice compatibility may differ: BPWR out10 0 P=V(pwr) vprx=0.1"), qPrintable(netlist));
     QVERIFY2(netlist.contains("LTspice PULSE Trigger= detected on VTRIG; VioSpice will approximate it by gating a hidden pulse source."), qPrintable(netlist));
     QVERIFY2(netlist.contains("Approximated LTspice PULSE Trigger= behavior on VTRIG by gating a hidden pulse source with the trigger expression."), qPrintable(netlist));
     QVERIFY2(netlist.contains("LTspice triggered source restart semantics are only partially emulated for VTRIG; the pulse is gated by the trigger but not restarted on each trigger event."), qPrintable(netlist));
@@ -837,6 +840,46 @@ void SpiceDirectiveNetlistTest::builtInGateAliasesMapToExpectedXspiceModels() {
     QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("SRFF", QString()), QString("d_srff"));
     QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("DLATCH", QString()), QString("d_dlatch"));
     QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("SRLATCH", QString()), QString("d_srlatch"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("RAM", QString()), QString("d_ram"));
+}
+
+void SpiceDirectiveNetlistTest::xspiceBusPinsCollapseIntoVectorTokens() {
+    Flux::Model::SymbolDefinition symbol("BusLogic");
+
+    auto addPin = [&](int number, const QString& name, const QString& direction) {
+        Flux::Model::SymbolPrimitive pin = Flux::Model::SymbolPrimitive::createPin(QPointF(0, 0), number, name);
+        pin.data["signalDomain"] = "digital_event";
+        pin.data["signalDirection"] = direction;
+        symbol.addPrimitive(pin);
+    };
+
+    addPin(1, "A0", "input");
+    addPin(2, "A1", "input");
+    addPin(3, "A2", "input");
+    addPin(4, "A3", "input");
+    addPin(5, "EN", "input");
+    addPin(6, "Y0", "output");
+    addPin(7, "Y1", "output");
+    addPin(8, "Y2", "output");
+    addPin(9, "Y3", "output");
+
+    QMap<QString, QString> pins;
+    pins["1"] = "DIN0";
+    pins["2"] = "DIN1";
+    pins["3"] = "DIN2";
+    pins["4"] = "DIN3";
+    pins["5"] = "EN_NET";
+    pins["6"] = "DOUT0";
+    pins["7"] = "DOUT1";
+    pins["8"] = "DOUT2";
+    pins["9"] = "DOUT3";
+
+    const QStringList tokens = SpiceNetlistGenerator::buildXspiceNodeTokensForPins(pins, &symbol);
+
+    QCOMPARE(tokens.size(), 3);
+    QCOMPARE(tokens.at(0), QString("[DIN0 DIN1 DIN2 DIN3]"));
+    QCOMPARE(tokens.at(1), QString("EN_NET"));
+    QCOMPARE(tokens.at(2), QString("[DOUT0 DOUT1 DOUT2 DOUT3]"));
 }
 
 QTEST_MAIN(SpiceDirectiveNetlistTest)

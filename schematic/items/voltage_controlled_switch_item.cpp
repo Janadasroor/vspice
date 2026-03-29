@@ -26,21 +26,21 @@ void VoltageControlledSwitchItem::paint(QPainter* painter, const QStyleOptionGra
     painter->drawEllipse(-32, -2, 4, 4);
     painter->drawEllipse(28, -2, 4, 4);
 
-    // Control terminals
-    painter->drawLine(-10, -25, -10, -10);
-    painter->drawLine(10, 25, 10, 10);
-    painter->drawEllipse(-12, -27, 4, 4);
-    painter->drawEllipse(8, 23, 4, 4);
+    // Control terminals (aligned to grid)
+    painter->drawLine(-15, -30, -15, -10);
+    painter->drawLine(15, 30, 15, 10);
+    painter->drawEllipse(-17, -32, 4, 4);
+    painter->drawEllipse(13, 28, 4, 4);
 
     // Switch body
     painter->drawLine(-30, 0, 30, 0);
-    painter->drawLine(-10, -10, 10, 10);
+    painter->drawLine(-15, -10, 15, 10);
 
     drawConnectionPointHighlights(painter);
 }
 
 QList<QPointF> VoltageControlledSwitchItem::connectionPoints() const {
-    return { QPointF(-45, 0), QPointF(45, 0), QPointF(-10, -25), QPointF(10, 25) };
+    return { QPointF(-45, 0), QPointF(45, 0), QPointF(-15, -30), QPointF(15, 30) };
 }
 
 QJsonObject VoltageControlledSwitchItem::toJson() const {

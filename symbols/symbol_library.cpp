@@ -1614,6 +1614,59 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
         },
         90.0);
 
+    auto addRamSymbol = [&](const QString& name,
+                            const QString& label,
+                            const QString& description,
+                            int dataWidth,
+                            int addressWidth) {
+        SymbolDefinition ram(name);
+        ram.setCategory("Logic");
+        ram.setReferencePrefix("U");
+        ram.setDescription(description);
+        ram.setAliases({label, QString("RAM"), QString("Memory")});
+        ram.setSpiceModelName("RAM");
+        ram.addPrimitive(SymbolPrimitive::createRect(QRectF(-35, -55, 70, 110), false));
+
+        SymbolPrimitive text = SymbolPrimitive::createText(label, QPointF(0, -35), 10, QColor(Qt::black));
+        text.data["hAlign"] = "center";
+        text.data["vAlign"] = "center";
+        ram.addPrimitive(text);
+
+        SymbolPrimitive bodyText = SymbolPrimitive::createText(QString("%1-bit").arg(dataWidth), QPointF(0, -15), 9, QColor(Qt::black));
+        bodyText.data["hAlign"] = "center";
+        bodyText.data["vAlign"] = "center";
+        ram.addPrimitive(bodyText);
+
+        auto makeVectorPin = [&](const QPointF& pos, int number, const QString& pinName,
+                                 const QString& orientation, const QString& direction,
+                                 const QString& group, int index) {
+            SymbolPrimitive pin = makeDigitalPin(pos, number, pinName, orientation, direction);
+            pin.data["signalVectorGroup"] = group;
+            pin.data["signalVectorIndex"] = index;
+            return pin;
+        };
+
+        int pinNumber = 1;
+        for (int i = 0; i < dataWidth; ++i) {
+            ram.addPrimitive(makeVectorPin(QPointF(-55, -45 + i * 10), pinNumber++, QString("DI%1").arg(i), "Right", "input", "data_in", i));
+        }
+        for (int i = 0; i < dataWidth; ++i) {
+            ram.addPrimitive(makeVectorPin(QPointF(55, -45 + i * 10), pinNumber++, QString("DO%1").arg(i), "Left", "output", "data_out", i));
+        }
+        for (int i = 0; i < addressWidth; ++i) {
+            ram.addPrimitive(makeVectorPin(QPointF(-15 + i * 10, 75), pinNumber++, QString("A%1").arg(i), "Up", "input", "address", i));
+        }
+
+        ram.addPrimitive(makeDigitalPin(QPointF(-55, 55), pinNumber++, "WE", "Right", "input"));
+        SymbolPrimitive cs = makeVectorPin(QPointF(55, 55), pinNumber++, "CS0", "Left", "input", "select", 0);
+        ram.addPrimitive(cs);
+
+        addSym(ram);
+    };
+
+    addRamSymbol("RAM_16x8", "RAM 16x8", "16-word by 8-bit XSPICE RAM with vector data/address ports", 8, 4);
+    addRamSymbol("RAM_16x4", "RAM 16x4", "16-word by 4-bit XSPICE RAM with vector data/address ports", 4, 4);
+
     // === Behavioral Sources ===
     auto addBehSource = [&](const QString& name, bool isVoltage) {
         SymbolDefinition s(name);

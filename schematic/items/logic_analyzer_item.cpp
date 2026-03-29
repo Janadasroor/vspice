@@ -11,8 +11,8 @@ LogicAnalyzerItem::LogicAnalyzerItem(QPointF pos, QGraphicsItem *parent)
 }
 
 QRectF LogicAnalyzerItem::boundingRect() const {
-    double height = m_channelCount * 20.0 + 20.0;
-    return QRectF(-30, -10, 60, height);
+    double height = (m_channelCount + 2) * 15.0;
+    return QRectF(-30, -15, 60, height);
 }
 
 void LogicAnalyzerItem::paint(QPainter *painter, const QStyleOptionGraphicsItem* option, QWidget* widget) {
@@ -21,7 +21,7 @@ void LogicAnalyzerItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*
 
     painter->setRenderHint(QPainter::Antialiasing);
     
-    QRectF rect = boundingRect().adjusted(10, 10, -10, -10);
+    QRectF rect = boundingRect().adjusted(5, 5, -5, -5);
     
     // Body
     QPen pen(Qt::white, 2);
@@ -34,17 +34,17 @@ void LogicAnalyzerItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*
     painter->fillRect(rect.left(), rect.top(), rect.width(), 15, QColor(0, 80, 200));
     painter->setPen(Qt::white);
     painter->setFont(QFont("Inter", 7, QFont::Bold));
-    painter->drawText(rect.adjusted(5, 0, -5, -rect.height()+15), Qt::AlignCenter, "LOGIC");
+    painter->drawText(QRectF(rect.left(), rect.top(), rect.width(), 15), Qt::AlignCenter, "LOGIC");
 
     // Channels
     painter->setFont(QFont("Inter", 6));
     for (int i = 0; i < m_channelCount; ++i) {
-        double y = i * 20.0 + 25.0;
+        double y = (i + 1) * 15.0;
         painter->setPen(QPen(QColor(100, 100, 105), 1));
-        painter->drawLine(-20, y, -10, y);
+        painter->drawLine(-30, y, -20, y);
         
         painter->setPen(Qt::white);
-        painter->drawText(QRectF(-8, y - 10, 20, 20), Qt::AlignVCenter, QString("D%1").arg(i));
+        painter->drawText(QRectF(-18, y - 7.5, 20, 15), Qt::AlignVCenter, QString("D%1").arg(i));
     }
 
     drawConnectionPointHighlights(painter);
@@ -53,7 +53,7 @@ void LogicAnalyzerItem::paint(QPainter *painter, const QStyleOptionGraphicsItem*
 QList<QPointF> LogicAnalyzerItem::connectionPoints() const {
     QList<QPointF> pts;
     for (int i = 0; i < m_channelCount; ++i) {
-        pts << QPointF(-20, i * 20.0 + 25.0);
+        pts << QPointF(-30, (i + 1) * 15.0);
     }
     return pts;
 }

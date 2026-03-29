@@ -191,6 +191,7 @@ private:
     void appendUserMessageCard(const QString& text, const QString& headerHtml = QString());
     void appendModelMarkdownCard(const QString& markdownText);
     void appendSystemNote(const QString& html);
+    void appendSystemAction(const QString& title, const QString& details, const QString& icon = QString());
     void scrollChatToBottom();
     void beginAssistantRunUi();
     void finishAssistantRunUi(int exitCode);

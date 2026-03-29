@@ -53,25 +53,26 @@ QString InstrumentProbeItem::schemaTypeName() const {
 
 QRectF InstrumentProbeItem::boundingRect() const {
     if (m_kind == Kind::Oscilloscope) {
-        return QRectF(-40, -60, 80, 140);
+        return QRectF(-45, -75, 90, 150);
     }
-    return QRectF(-40, -30, 80, 70);
+    // Standard 2-terminal instrument
+    return QRectF(-45, -30, 90, 75);
 }
 
 QList<QPointF> InstrumentProbeItem::connectionPoints() const {
     if (m_kind == Kind::Oscilloscope) {
         return {
-            QPointF(-40, 17), // CH1
-            QPointF(-40, 37), // CH2
-            QPointF(-40, 57), // CH3
-            QPointF(-40, 77)  // CH4
+            QPointF(-45, 15), // CH1
+            QPointF(-45, 30), // CH2
+            QPointF(-45, 45), // CH3
+            QPointF(-45, 60)  // CH4
         };
     }
 
     // Two-terminal instrument symbol.
     return {
-        QPointF(-40, 5),  // pin 1
-        QPointF(40, 5)    // pin 2
+        QPointF(-45, 15),  // pin 1
+        QPointF(45, 15)    // pin 2
     };
 }
 
@@ -95,7 +96,7 @@ void InstrumentProbeItem::paint(QPainter* painter, const QStyleOptionGraphicsIte
     if (m_kind == Kind::Oscilloscope) {
         painter->setBrush(QColor(10, 20, 10));
         painter->setPen(QPen(Qt::white, 1));
-        painter->drawRect(-30, -40, 60, 50);
+        painter->drawRect(-30, -50, 60, 50);
 
         painter->setPen(QPen(QColor(30, 50, 30), 1));
         for (int i = -20; i <= 20; i += 10) painter->drawLine(i, -50, i, 0);
@@ -105,19 +106,23 @@ void InstrumentProbeItem::paint(QPainter* painter, const QStyleOptionGraphicsIte
         QFont f = painter->font();
         f.setPointSize(7);
         painter->setFont(f);
-        painter->drawText(QRectF(-35, 10, 30, 15), Qt::AlignLeft, "CH1");
-        painter->drawText(QRectF(-35, 30, 30, 15), Qt::AlignLeft, "CH2");
-        painter->drawText(QRectF(-35, 50, 30, 15), Qt::AlignLeft, "CH3");
-        painter->drawText(QRectF(-35, 70, 30, 15), Qt::AlignLeft, "CH4");
-        painter->drawLine(-40, 17, -30, 17);
-        painter->drawLine(-40, 37, -30, 37);
-        painter->drawLine(-40, 57, -30, 57);
-        painter->drawLine(-40, 77, -30, 77);
+        
+        // Labels centered on Y=15, 30, 45, 60
+        painter->drawText(QRectF(-40, 7.5, 30, 15), Qt::AlignLeft, "CH1");
+        painter->drawText(QRectF(-40, 22.5, 30, 15), Qt::AlignLeft, "CH2");
+        painter->drawText(QRectF(-40, 37.5, 30, 15), Qt::AlignLeft, "CH3");
+        painter->drawText(QRectF(-40, 52.5, 30, 15), Qt::AlignLeft, "CH4");
+        
+        // Pin lines
+        painter->drawLine(-45, 15, -35, 15);
+        painter->drawLine(-45, 30, -35, 30);
+        painter->drawLine(-45, 45, -35, 45);
+        painter->drawLine(-45, 60, -35, 60);
     } else {
         painter->setPen(QPen(Qt::white, 1));
-        painter->drawLine(-40, 5, -26, 5);
-        painter->drawLine(26, 5, 40, 5);
-        painter->drawEllipse(QRectF(-26, -10, 52, 30));
+        painter->drawLine(-45, 15, -26, 15);
+        painter->drawLine(26, 15, 45, 15);
+        painter->drawEllipse(QRectF(-26, 0, 52, 30));
 
         QFont mono = painter->font();
         mono.setPointSize(9);
@@ -127,7 +132,7 @@ void InstrumentProbeItem::paint(QPainter* painter, const QStyleOptionGraphicsIte
         QString glyph = "M";
         if (m_kind == Kind::FrequencyCounter) glyph = "Hz";
         if (m_kind == Kind::LogicProbe) glyph = "L";
-        painter->drawText(QRectF(-20, -2, 40, 16), Qt::AlignCenter, glyph);
+        painter->drawText(QRectF(-20, 8, 40, 16), Qt::AlignCenter, glyph);
     }
 
     drawConnectionPointHighlights(painter);

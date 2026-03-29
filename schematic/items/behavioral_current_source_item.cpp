@@ -57,14 +57,14 @@ void BehavioralCurrentSourceItem::paint(QPainter* painter, const QStyleOptionGra
     }
 
     // Pin markers
-    painter->drawEllipse(QPointF(0, -50), 4, 4);
-    painter->drawEllipse(QPointF(0, 50), 4, 4);
+    painter->drawEllipse(QPointF(0, -45), 4, 4);
+    painter->drawEllipse(QPointF(0, 45), 4, 4);
 
     drawConnectionPointHighlights(painter);
 }
 
 QList<QPointF> BehavioralCurrentSourceItem::connectionPoints() const {
-    return { QPointF(0, -50), QPointF(0, 50) };
+    return { QPointF(0, -45), QPointF(0, 45) };
 }
 
 QJsonObject BehavioralCurrentSourceItem::toJson() const {

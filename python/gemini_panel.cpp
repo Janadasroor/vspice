@@ -153,36 +153,36 @@ QString wrapModelCard(const QString& bodyHtml, const QString& timestamp) {
         return QString(
             "<div style='display:block; width:100%;'>"
             "<div style='"
-            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #f8fafc);"
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #fcfdfe);"
             "color: #1e293b;"
-            "padding: 14px 16px;"
-            "border-radius: 12px;"
+            "padding: 16px 20px;"
+            "border-radius: 16px 16px 16px 4px;"
             "border: 1px solid #e2e8f0;"
-            "margin: 6px 0 12px 0;"
-            "max-width: 92%;"
-            "box-shadow: 0 4px 12px rgba(0,0,0,0.08);"
+            "margin: 8px 0 16px 0;"
+            "max-width: 88%;"
+            "box-shadow: 0 10px 25px rgba(0,0,0,0.06);"
             "'>"
-            "<div style='font-size:10px; color:#64748b; margin-bottom:7px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;'>Viora AI · %2</div>"
-            "%1</div>"
-            "<div style='height:8px;'></div>"
+            "<div style='font-size:10px; color:#64748b; margin-bottom:8px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;'>"
+            "<span style='background:#f1f5f9; padding:2px 6px; border-radius:4px;'>VIORA AI</span> · %2</div>"
+            "<div style='line-height: 1.6;'>%1</div></div>"
             "</div>"
         ).arg(bodyHtml, ts);
     }
     return QString(
         "<div style='display:block; width:100%;'>"
         "<div style='"
-        "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1a2333, stop:1 #0f1520);"
-        "color: #e6edf3;"
-        "padding: 16px;"
-        "border-radius: 12px;"
-        "border: 1px solid #30405a;"
-        "margin: 6px 0 12px 0;"
-        "max-width: 92%;"
-        "box-shadow: 0 8px 24px rgba(0,0,0,0.3);"
+        "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #111a2c, stop:1 #0a0f18);"
+        "color: #ecf2f8;"
+        "padding: 16px 20px;"
+        "border-radius: 16px 16px 16px 4px;"
+        "border: 1px solid #2d3e5a;"
+        "margin: 8px 0 16px 0;"
+        "max-width: 88%;"
+        "box-shadow: 0 12px 30px rgba(0,0,0,0.3);"
         "'>"
-        "<div style='font-size:10px; color:#9fb0c8; margin-bottom:7px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;'>Viora AI · %2</div>"
-        "%1</div>"
-        "<div style='height:8px;'></div>"
+        "<div style='font-size:10px; color:#94a3b8; margin-bottom:8px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;'>"
+        "<span style='background:#1e293b; padding:2px 6px; border-radius:4px; border: 1px solid #334155;'>VIORA AI</span> · %2</div>"
+        "<div style='line-height: 1.6;'>%1</div></div>"
         "</div>"
     ).arg(bodyHtml, ts);
 }
@@ -192,50 +192,72 @@ QString wrapUserCard(const QString& textHtml, const QString& headerHtml, const Q
     const QString ts = timestamp.isEmpty() ? nowTimeChip() : timestamp;
     if (isLight) {
         return QString(
-            "<div style='display:block; width:100%; margin: 8px 0 14px 0; text-align: right;'>"
+            "<div style='display:block; width:100%; margin: 10px 0 18px 0; text-align: right;'>"
             "<div class='user-card' style='"
-            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e8f1ff, stop:1 #dcecff);"
-            "color: #10263f;"
-            "padding: 11px 13px;"
-            "border-radius: 16px 16px 6px 16px;"
-            "border: 1px solid #b9d3f1;"
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3b82f6, stop:1 #2563eb);"
+            "color: #ffffff;"
+            "padding: 12px 18px;"
+            "border-radius: 16px 16px 4px 16px;"
+            "border: none;"
             "display: inline-block;"
-            "max-width: 84%;"
+            "max-width: 80%;"
             "text-align: left;"
-            "box-shadow: 0 6px 16px rgba(37, 99, 235, 0.15);"
+            "box-shadow: 0 8px 20px rgba(37, 99, 235, 0.25);"
             "'>"
-            "<div style='display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 6px 0;'>"
-            "<div style='font-size:10px; line-height:1;'>%2</div>"
-            "<div style='font-size:10px; color:#345678; font-weight:700; text-align:right;'>You · %3</div>"
+            "<div style='display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 6px 0;'>"
+            "<div style='font-size:10px; line-height:1; font-weight:700; color:#eff6ff;'>YOU · %3</div>"
+            "<div style='font-size:10px; color:#eff6ff; text-align:right;'>%2</div>"
             "</div>"
-            "<div style='line-height: 1.58;'>%1</div>"
+            "<div style='line-height: 1.55; font-weight: 500;'>%1</div>"
             "</div>"
             "</div>"
-            "<div style='height:8px;'></div>"
         ).arg(textHtml, headerHtml, ts);
     }
     return QString(
-        "<div style='display:block; width:100%; margin: 8px 0 14px 0; text-align: right;'>"
+        "<div style='display:block; width:100%; margin: 10px 0 18px 0; text-align: right;'>"
         "<div class='user-card' style='"
-        "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2d4669, stop:1 #233a58);"
-        "color: #f1f7ff;"
-        "padding: 11px 13px;"
-        "border-radius: 16px 16px 6px 16px;"
-        "border: 1px solid #4e6f98;"
+        "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1d4ed8, stop:1 #1e40af);"
+        "color: #f8fafc;"
+        "padding: 12px 18px;"
+        "border-radius: 16px 16px 4px 16px;"
+        "border: 1px solid rgba(255,255,255,0.1);"
         "display: inline-block;"
-        "max-width: 84%;"
+        "max-width: 80%;"
         "text-align: left;"
-        "box-shadow: 0 8px 20px rgba(8, 27, 56, 0.40);"
+        "box-shadow: 0 8px 20px rgba(0, 0, 0, 0.40);"
         "'>"
-        "<div style='display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 6px 0;'>"
-        "<div style='font-size:10px; line-height:1;'>%2</div>"
-        "<div style='font-size:10px; color:#c4d9f2; font-weight:700; text-align:right;'>You · %3</div>"
+        "<div style='display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 6px 0;'>"
+        "<div style='font-size:10px; line-height:1; font-weight:700; color:#bfdbfe;'>YOU · %3</div>"
+        "<div style='font-size:10px; color:#bfdbfe; text-align:right;'>%2</div>"
         "</div>"
-        "<div style='line-height: 1.58;'>%1</div>"
+        "<div style='line-height: 1.55;'>%1</div>"
         "</div>"
         "</div>"
-        "<div style='height:8px;'></div>"
     ).arg(textHtml, headerHtml, ts);
+}
+
+QString wrapActionCard(const QString& title, const QString& details, const QString& iconHtml = QString()) {
+    bool isLight = ThemeManager::theme() && ThemeManager::theme()->type() == PCBTheme::Light;
+    if (isLight) {
+        return QString(
+            "<div style='margin: 12px 0; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 14px;'>"
+            "<div style='display:flex; align-items:center; gap:8px;'>"
+            "<span style='font-size:12px;'>%3</span>"
+            "<span style='color: #0f172a; font-weight: 700; font-size: 11px; text-transform: uppercase;'>%1</span>"
+            "</div>"
+            "<div style='color: #64748b; font-size: 11px; margin-top: 4px;'>%2</div>"
+            "</div>"
+        ).arg(title, details, iconHtml);
+    }
+    return QString(
+        "<div style='margin: 12px 0; background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 10px 14px;'>"
+        "<div style='display:flex; align-items:center; gap:8px;'>"
+        "<span style='font-size:12px;'>%3</span>"
+        "<span style='color: #f1f5f9; font-weight: 700; font-size: 11px; text-transform: uppercase;'>%1</span>"
+        "</div>"
+        "<div style='color: #94a3b8; font-size: 11px; margin-top: 4px;'>%2</div>"
+        "</div>"
+    ).arg(title, details, iconHtml);
 }
 } // namespace
 
@@ -249,10 +271,10 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     QString headerBg = (theme && theme->type() == PCBTheme::Light) ? "#f8fafc" : "#161b22";
     
     // Modern Glassy Sidebar Look
-    QString glassBg = (theme && theme->type() == PCBTheme::Light) 
-        ? "rgba(255, 255, 255, 0.9)" 
-        : "rgba(24, 24, 27, 0.85)";
-    
+    QString glassBg = (theme && theme->type() == PCBTheme::Light)
+        ? "rgba(255, 255, 255, 0.95)"
+        : "rgba(13, 17, 23, 0.92)";
+
     setStyleSheet(QString("QWidget { background-color: %1; color: %2; }").arg(glassBg, fg));
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -522,21 +544,27 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     m_thinkingDisplay->hide();
     mainLayout->addWidget(m_thinkingDisplay);
 
-    // Footer Input
+    // Footer Input (Floating Composer Style)
     QWidget* footer = new QWidget(this);
-    QString footerBg = (theme && theme->type() == PCBTheme::Light) ? "#f1f5f9" : "#0d1117";
-    footer->setStyleSheet(QString("background-color: %1; border-top: 1px solid %2;").arg(footerBg, border));
+    footer->setStyleSheet("background-color: transparent; border: none;");
     footer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     QVBoxLayout* footerLayout = new QVBoxLayout(footer);
-    footerLayout->setContentsMargins(12, 12, 12, 12);
+    footerLayout->setContentsMargins(14, 0, 14, 20); // Bottom margin for floating effect
     footerLayout->setSizeConstraint(QLayout::SetMinimumSize);
 
     QWidget* composer = new QWidget(this);
-    composer->setStyleSheet(QString("QWidget { background: %1; border: 1px solid %2; border-radius: 12px; }").arg(bg_main, border));
+    QString compBg = (theme && theme->type() == PCBTheme::Light) ? "#ffffff" : "#161b22";
+    composer->setStyleSheet(QString(
+        "QWidget {"
+        " background: %1;"
+        " border: 1px solid %2;"
+        " border-radius: 18px;"
+        "}"
+    ).arg(compBg, border));
     composer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     QVBoxLayout* composerLayout = new QVBoxLayout(composer);
-    composerLayout->setContentsMargins(12, 10, 12, 10);
-    composerLayout->setSpacing(4);
+    composerLayout->setContentsMargins(14, 12, 14, 12);
+    composerLayout->setSpacing(6);
 
     m_includeContextCheck = new QCheckBox(this);
     m_includeContextCheck->setChecked(true);
@@ -572,9 +600,9 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     m_inputField->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_inputField->setAcceptRichText(false);
     m_inputField->setStyleSheet(QString(
-        "QTextEdit { background: transparent; color: %1; border: none; padding: 2px 0; font-size: 13px; }"
+        "QTextEdit { background: transparent; color: %1; border: none; padding: 4px 0; font-size: 13px; selection-background-color: %3; }"
         "QTextEdit:disabled { color: %2; }")
-        .arg(fg, theme ? theme->textSecondary().name() : "#888"));
+        .arg(fg, theme ? theme->textSecondary().name() : "#888", theme ? theme->accentColor().name() : "#3b82f6"));
     m_inputField->installEventFilter(this);
     connect(m_inputField, &QTextEdit::textChanged, this, &GeminiPanel::updateSendEnabled);
     composerLayout->addWidget(m_inputField);
@@ -627,9 +655,21 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     connect(m_voiceButton, &QPushButton::clicked, this, &GeminiPanel::onVoiceClicked);
 
     m_sendButton = new QPushButton("SEND", this);
-    m_sendButton->setFixedHeight(24);
-    m_sendButton->setStyleSheet(QString("QPushButton { background: %1; color: white; border: 1px solid %2; border-radius: 6px; font-weight: bold; font-size: 10px; padding: 0 12px; } QPushButton:hover { background: %3; }")
-        .arg("#238636", "#2ea043", "#2ea043"));
+    m_sendButton->setFixedHeight(28);
+    m_sendButton->setCursor(Qt::PointingHandCursor);
+    m_sendButton->setStyleSheet(QString(
+        "QPushButton {"
+        " background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %1, stop:1 %2);"
+        " color: white;"
+        " border: none;"
+        " border-radius: 8px;"
+        " font-weight: bold;"
+        " font-size: 10px;"
+        " padding: 0 16px;"
+        "}"
+        "QPushButton:hover { background: %2; }"
+        "QPushButton:disabled { background: %3; color: #a1a1aa; }")
+        .arg("#2563eb", "#1d4ed8", (theme && theme->type() == PCBTheme::Light) ? "#e2e8f0" : "#27272a"));
     connect(m_sendButton, &QPushButton::clicked, this, &GeminiPanel::onSendClicked);
     m_sendButton->setEnabled(false);
 
@@ -2017,6 +2057,10 @@ QString GeminiPanel::gatherInstructions() const {
     return combined;
 }
 
+void GeminiPanel::appendSystemAction(const QString& title, const QString& details, const QString& icon) {
+    appendSystemNote(wrapActionCard(title, details, icon));
+}
+
 void GeminiPanel::parseAndExecuteCommandModeInput(const QString& input) {
     QString text = input.trimmed();
     if (text.isEmpty()) return;
@@ -2029,7 +2073,9 @@ void GeminiPanel::parseAndExecuteCommandModeInput(const QString& input) {
     QRegularExpressionMatchIterator it = actionRegex.globalMatch(text);
     while (it.hasNext()) {
         QRegularExpressionMatch match = it.next();
-        handleActionTag(match.captured(1));
+        QString act = match.captured(1).trimmed();
+        handleActionTag(act);
+        appendSystemAction("Tool Executed", act, "⚡");
         foundAnyTag = true;
     }
 
@@ -2053,21 +2099,26 @@ void GeminiPanel::parseAndExecuteCommandModeInput(const QString& input) {
 
     // Plain text command aliases (only if no tags were found, to avoid double execution if user types "run simulation <ACTION>run_simulation()</ACTION>")
     if (!foundAnyTag) {
-        QString lower = text.toLower();
+        const QString lower = text.trimmed().toLower();
         if (lower == "run simulation" || lower == "simulate" || lower == "start simulation") {
             handleActionTag("run_simulation()");
+            appendSystemAction("Simulation Started", "Engine is initializing...", "🚀");
         } else if (lower == "run erc" || lower == "erc" || lower == "check rules") {
             handleActionTag("run_erc()");
+            appendSystemAction("ERC Running", "Checking design rules...", "🔍");
         } else if (lower == "toggle left panel") {
             handleActionTag("toggle_panel(side=\"left\")");
+            appendSystemAction("Panel Toggled", "Left Sidebar", "📊");
         } else if (lower == "toggle right panel" || lower == "toggle ai panel") {
             handleActionTag("toggle_panel(side=\"right\")");
+            appendSystemAction("Panel Toggled", "Right Sidebar", "🤖");
         } else if (lower == "toggle bottom panel" || lower == "toggle results") {
             handleActionTag("toggle_panel(side=\"bottom\")");
+            appendSystemAction("Panel Toggled", "Bottom Panel", "📈");
         } else if (lower == "clear chat") {
             clearHistory();
         } else {
-             appendSystemNote("<div style='color: #6e7681; font-size: 11px; margin: 5px 0;'>No valid tags or known commands found in Offline Mode. Use &lt;ACTION&gt;tags&lt;/ACTION&gt;.</div>");
+            appendSystemNote("<div style='color: #6e7681; font-size: 11px; margin: 5px 0;'>No valid tags or known commands found in Offline Mode. Use &lt;ACTION&gt;tags&lt;/ACTION&gt;.</div>");
         }
     }
 }
@@ -2079,19 +2130,24 @@ void GeminiPanel::onCopyPromptClicked() {
         context = m_contextProvider();
     }
 
-    QString fullPrompt = "SYSTEM INSTRUCTIONS:\n" + instructions;
+    QString fullPrompt = "PERSONA:\n"
+                  "You are acting as an 'Offline Tool Call Generator' for Viospice, an Electronic Design Automation (EDA) tool.\n"
+                  "The user will provide a command (like 'run simulation' or 'check erc').\n"
+                  "Your PRIMARY objective is to output the correct <ACTION> tags. Even if you see potential design issues or errors in the provided schematic JSON context, DO NOT WITHHOLD THE ACTION TAGS. Always output the tags first, and then add your analysis.\n\n"
+                  "SYSTEM INSTRUCTIONS:\n" + instructions;
     if (!context.isEmpty()) {
         fullPrompt += "\n\nSCHEMATIC CONTEXT (JSON):\n" + context;
     }
     
     // Add a few examples of tools for the browser AI to follow
     fullPrompt += "\n\nTOOL EXECUTION FORMAT:\n"
-                  "If you want to run a tool, you MUST wrap it in <ACTION> tags.\n"
+                  "Wrap ALL tool calls in <ACTION> tags. Be direct and concise.\n"
                   "Examples:\n"
                   "<ACTION>run_simulation()</ACTION>\n"
                   "<ACTION>run_erc()</ACTION>\n"
                   "<ACTION>toggle_panel(side=\"bottom\")</ACTION>\n"
-                  "<ACTION>zoom_to(ref=\"R1\")</ACTION>\n";
+                  "<ACTION>zoom_to(ref=\"R1\")</ACTION>\n"
+                  "<ACTION>highlight_net(name=\"GND\")</ACTION>\n";
 
     QApplication::clipboard()->setText(fullPrompt);
     appendSystemNote("<div style='color: #238636; font-weight: bold; margin: 10px 0;'>[SYSTEM] Full Prompt and context copied to clipboard! You can now paste it into an external AI.</div>");

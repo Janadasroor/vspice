@@ -49,10 +49,10 @@ void ICItem::buildPrimitives() {
         qreal y = -halfH + 22.5 + i * pinSpacing;
         // Pin lead
         m_primitives.push_back(std::make_unique<LinePrimitive>(
-            QPointF(-halfW, y), QPointF(-halfW - 22.5, y)));
+            QPointF(-halfW, y), QPointF(-halfW - 15.0, y)));
         // Connection dot
         m_primitives.push_back(std::make_unique<CirclePrimitive>(
-            QPointF(-halfW - 22.5, y), 3.75, true));
+            QPointF(-halfW - 15.0, y), 3.75, true));
         // Pin number text
         m_primitives.push_back(std::make_unique<TextPrimitive>(
             QString::number(i + 1), QPointF(-halfW + 4.5, y + 6), 10));
@@ -63,13 +63,13 @@ void ICItem::buildPrimitives() {
         qreal y = halfH - 22.5 - i * pinSpacing;
         // Pin lead
         m_primitives.push_back(std::make_unique<LinePrimitive>(
-            QPointF(halfW, y), QPointF(halfW + 22.5, y)));
+            QPointF(halfW, y), QPointF(halfW + 15.0, y)));
         // Connection dot
         m_primitives.push_back(std::make_unique<CirclePrimitive>(
-            QPointF(halfW + 22.5, y), 3.75, true));
+            QPointF(halfW + 15.0, y), 3.75, true));
         // Pin number text
         m_primitives.push_back(std::make_unique<TextPrimitive>(
-            QString::number(pinsPerSide + i + 1), QPointF(halfW - 22.5, y + 6), 10));
+            QString::number(pinsPerSide + i + 1), QPointF(halfW - 15.0, y + 6), 10));
     }
     
     // IC name/value in center (we'll keep this one static as it's the component title)
@@ -186,25 +186,26 @@ SchematicItem* ICItem::clone() const {
 
 QList<QPointF> ICItem::connectionPoints() const {
     QList<QPointF> points;
-    
+
     int pinsPerSide = m_pinCount / 2;
     qreal pinSpacing = 30.0;
     qreal bodyHeight = pinsPerSide * pinSpacing + 15;
     qreal bodyWidth = 90.0;
     qreal halfH = bodyHeight / 2;
     qreal halfW = bodyWidth / 2;
-    
+
     // Left side pins
     for (int i = 0; i < pinsPerSide; ++i) {
         qreal y = -halfH + 22.5 + i * pinSpacing;
-        points.append(QPointF(-halfW - 22.5, y));
+        points.append(QPointF(-halfW - 15.0, y));
     }
-    
-    // Right side pins
+
+    // Right side pins (numbered from bottom up)
     for (int i = 0; i < pinsPerSide; ++i) {
         qreal y = halfH - 22.5 - i * pinSpacing;
-        points.append(QPointF(halfW + 22.5, y));
+        points.append(QPointF(halfW + 15.0, y));
     }
-    
+
     return points;
 }
+
