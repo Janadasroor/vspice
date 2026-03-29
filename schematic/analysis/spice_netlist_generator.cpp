@@ -81,6 +81,59 @@ QString rewriteLtspiceBehavioralIf(const QString& line, QStringList* warnings = 
 
 QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings = nullptr) {
     QString out = line;
+
+    if (out.trimmed().compare(".end", Qt::CaseInsensitive) == 0) {
+        if (warnings) {
+            warnings->append(QString("Dropped .end from directive block; VioSpice appends the final .end automatically."));
+        }
+        return QString();
+    }
+
+    {
+        static const QRegularExpression bSourceRe(
+            "^\\s*(B\\S+)\\s+(\\S+)\\s+(\\S+)\\s+V\\s*=\\s*(.+)$",
+            QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch bMatch = bSourceRe.match(out);
+        if (bMatch.hasMatch() && out.contains("idt(", Qt::CaseInsensitive)) {
+            const QString ref = bMatch.captured(1).trimmed();
+            const QString nplus = bMatch.captured(2).trimmed();
+            const QString nminus = bMatch.captured(3).trimmed();
+            const QString expr = bMatch.captured(4).trimmed();
+
+            static const QRegularExpression idtTailRe(
+                "^(.*?)(?:([+\\-])\\s*)?([^\\s+\\-]+)?\\s*\\*?\\s*idt\\((.+)\\)\\s*$",
+                QRegularExpression::CaseInsensitiveOption);
+            const QRegularExpressionMatch idtMatch = idtTailRe.match(expr);
+            if (idtMatch.hasMatch()) {
+                QString prefix = idtMatch.captured(1).trimmed();
+                const QString sign = idtMatch.captured(2).trimmed();
+                QString coeff = idtMatch.captured(3).trimmed();
+                const QString innerExpr = idtMatch.captured(4).trimmed();
+                coeff.remove(QRegularExpression("\\*+$"));
+                if (coeff.isEmpty()) coeff = "1";
+                if (sign == "-") coeff = QString("-(%1)").arg(coeff);
+                const QString intNode = QString("%1__idt").arg(ref);
+                const QString intDrvRef = QString("B__INTDRV_%1").arg(ref);
+                const QString intCapRef = QString("C__INT_%1").arg(ref);
+                const QString intLeakRef = QString("R__INTLEAK_%1").arg(ref);
+
+                QString rewrittenExpr = prefix;
+                if (rewrittenExpr.isEmpty()) rewrittenExpr = QString("V(%1)").arg(intNode);
+                else rewrittenExpr += QString(" + V(%1)").arg(intNode);
+
+                QStringList rewrittenLines;
+                rewrittenLines << QString("%1 %2 0 I=(%3)*(%4)").arg(intDrvRef, intNode, coeff, innerExpr);
+                rewrittenLines << QString("%1 %2 0 1").arg(intCapRef, intNode);
+                rewrittenLines << QString("%1 %2 0 1G").arg(intLeakRef, intNode);
+                rewrittenLines << QString("%1 %2 %3 V=%4").arg(ref, nplus, nminus, rewrittenExpr);
+                out = rewrittenLines.join("\n");
+                if (warnings) {
+                    warnings->append(QString("Expanded LTspice idt(...) in %1 into an explicit behavioral integrator for ngspice.").arg(ref));
+                }
+            }
+        }
+    }
+
     if (out.contains("if(", Qt::CaseInsensitive) && out.contains(" V={", Qt::CaseInsensitive)) {
         out = rewriteLtspiceBehavioralIf(out, warnings);
     }
@@ -97,6 +150,85 @@ QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings =
 
         if (out != original && warnings) {
             warnings->append(QString("Rewrote LTspice-style boolean operators to ngspice-safe logical operators in: %1").arg(line.trimmed()));
+        }
+    }
+
+    {
+        static const QRegularExpression passiveRserRe(
+            "^\\s*([CL][^\\s]*)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)(.*\\bRser\\s*=\\s*([^\\s]+).*)$",
+            QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch passiveMatch = passiveRserRe.match(out);
+        if (passiveMatch.hasMatch()) {
+            const QString ref = passiveMatch.captured(1).trimmed();
+            const QString node1 = passiveMatch.captured(2).trimmed();
+            const QString node2 = passiveMatch.captured(3).trimmed();
+            const QString value = passiveMatch.captured(4).trimmed();
+            QString extras = passiveMatch.captured(5);
+            const QString rser = passiveMatch.captured(6).trimmed();
+
+            extras.remove(QRegularExpression("\\bRser\\s*=\\s*([^\\s]+)", QRegularExpression::CaseInsensitiveOption));
+            extras = extras.simplified();
+
+            const QString insertedNode = QString("%1__rser").arg(ref);
+            const QString seriesRef = QString("R__RSER_%1").arg(ref);
+            QStringList rewrittenLines;
+            rewrittenLines << QString("%1 %2 %3 %4").arg(seriesRef, node1, insertedNode, rser);
+
+            QString passiveLine = QString("%1 %2 %3 %4").arg(ref, insertedNode, node2, value);
+            if (!extras.isEmpty()) passiveLine += " " + extras;
+            rewrittenLines << passiveLine;
+            out = rewrittenLines.join("\n");
+            if (warnings) {
+                warnings->append(QString("Expanded LTspice inline Rser= on %1 into explicit series resistor for ngspice.").arg(ref));
+            }
+        }
+    }
+
+    {
+        static const QRegularExpression diodeModelRe(
+            "^\\s*\\.model\\s+(\\S+)\\s+D\\((.*)\\)\\s*$",
+            QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch diodeMatch = diodeModelRe.match(out);
+        if (diodeMatch.hasMatch()) {
+            QString body = diodeMatch.captured(2);
+            const QString originalBody = body;
+            body.replace(QRegularExpression("\\bRon\\s*=", QRegularExpression::CaseInsensitiveOption), "Rs=");
+            body.remove(QRegularExpression("(?:^|\\s)Roff\\s*=\\s*[^\\s)]+", QRegularExpression::CaseInsensitiveOption));
+            body.remove(QRegularExpression("(?:^|\\s)Vfwd\\s*=\\s*[^\\s)]+", QRegularExpression::CaseInsensitiveOption));
+            body = body.simplified();
+            if (!body.contains(QRegularExpression("\\bIs\\s*=", QRegularExpression::CaseInsensitiveOption))) {
+                body.prepend("Is=1e-14 ");
+            }
+            if (!body.contains(QRegularExpression("\\bN\\s*=", QRegularExpression::CaseInsensitiveOption))) {
+                body += " N=1";
+            }
+            body = body.simplified();
+            out = QString(".model %1 D(%2)").arg(diodeMatch.captured(1), body);
+            if (warnings && body != originalBody.simplified()) {
+                warnings->append(QString("Rewrote LTspice-style diode model parameters for ngspice in: %1").arg(line.trimmed()));
+            }
+        }
+    }
+
+    {
+        static const QRegularExpression tranRe(
+            "^\\s*\\.tran\\s+(\\S+)\\s+(\\S+)(?:\\s+(\\S+))?(?:\\s+(\\S+))?(.*)$",
+            QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch tranMatch = tranRe.match(out);
+        if (tranMatch.hasMatch()) {
+            const QString tstep = tranMatch.captured(1).trimmed();
+            const QString tstop = tranMatch.captured(2).trimmed();
+            const QString tstart = tranMatch.captured(3).trimmed();
+            const QString tmax = tranMatch.captured(4).trimmed();
+            const QString tail = tranMatch.captured(5).simplified();
+            if ((tstep == "0" || tstep == "0.0") && !tmax.isEmpty()) {
+                out = QString(".tran %1 %2").arg(tmax, tstop);
+                if (!tstart.isEmpty()) out += " " + tstart;
+                if (!tail.isEmpty()) out += " " + tail;
+                if (warnings) {
+                    warnings->append(QString("Rewrote .tran with zero print step to use tmax as tstep for ngspice: %1").arg(line.trimmed()));
+                }
+            }
         }
     }
 
