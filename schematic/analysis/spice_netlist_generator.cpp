@@ -100,16 +100,23 @@ QString normalizeXspiceModelAlias(const QString& rawToken, const QString& typeNa
     if (matches({"d_xnor", "xnor", "gate_xnor", "xnor_gate"})) return "d_xnor";
     if (matches({"d_buffer", "buffer", "buf", "gate_buf", "gate_buffer"})) return "d_buffer";
     if (matches({"d_inverter", "inverter", "inv", "not", "gate_not", "not_gate"})) return "d_inverter";
-    if (matches({"d_dff", "dff", "flipflop", "flip_flop", "d_flipflop", "dflop", "dflop"})) return "d_dff";
-    if (matches({"d_jkff", "jkff", "jk_flipflop", "jkflop"})) return "d_jkff";
-    if (matches({"d_tff", "tff", "toggle_flipflop", "toggleflop"})) return "d_tff";
-    if (matches({"d_srff", "srff", "sr_flipflop", "set_reset_flipflop"})) return "d_srff";
-    if (matches({"d_dlatch", "dlatch", "d_latch"})) return "d_dlatch";
+    if (matches({"d_dff", "dff", "flipflop", "flip_flop", "d_flipflop", "d_flip_flop", "dff_gate", "dflop"})) return "d_dff";
+    if (matches({"d_jkff", "jkff", "jk_flipflop", "jk_flip_flop", "jkflop"})) return "d_jkff";
+    if (matches({"d_tff", "tff", "toggle_flipflop", "toggle_flip_flop", "toggleflop", "t_flipflop", "t_flip_flop"})) return "d_tff";
+    if (matches({"d_srff", "srff", "sr_flipflop", "sr_flip_flop", "set_reset_flipflop", "set_reset_flip_flop"})) return "d_srff";
+    if (matches({"d_dlatch", "dlatch", "d_latch", "d_type_latch"})) return "d_dlatch";
     if (matches({"d_srlatch", "srlatch", "sr_latch", "set_reset_latch"})) return "d_srlatch";
     if (matches({"d_tristate", "tristate", "tri_state"})) return "d_tristate";
 
     if (token.startsWith("d_")) return token;
     return QString();
+}
+
+bool isXspiceLogicComponent(const QString& rawToken, const QString& typeName, const QString& reference) {
+    if (reference.startsWith("A", Qt::CaseInsensitive)) {
+        return true;
+    }
+    return !normalizeXspiceModelAlias(rawToken, typeName).isEmpty();
 }
 
 QString defaultXspiceModelLine(const QString& ref, const QString& codeModel) {
@@ -538,6 +545,7 @@ QString rewriteLtspiceBehavioralFunctions(const QString& line, QStringList* warn
         {"uramp", 1, 1},
         {"limit", 3, 3},
         {"dnlim", 3, 3},
+        {"uplim", 3, 3},
     };
 
     QString out = line;
@@ -558,6 +566,9 @@ QString rewriteLtspiceBehavioralFunctions(const QString& line, QStringList* warn
         }
         if (name.compare("dnlim", Qt::CaseInsensitive) == 0) {
             return QString("max((%1),(%2))").arg(args.at(0), args.at(1));
+        }
+        if (name.compare("uplim", Qt::CaseInsensitive) == 0) {
+            return QString("min((%1),(%2))").arg(args.at(0), args.at(1));
         }
         return QString();
     };
@@ -673,6 +684,43 @@ QString rewriteUnsupportedLtspiceTableFunction(const QString& line, QStringList*
     if (changed && warnings) {
         warnings->append(QString("Approximated LTspice table(...) with nested conditional interpolation for ngspice compatibility in: %1").arg(line.trimmed()));
     }
+    return out;
+}
+
+QString rewriteUnsupportedLtspiceStochasticFunctions(const QString& line, QStringList* warnings = nullptr) {
+    QString out = line;
+    struct FuncSpec { QString name; int minArgs; int maxArgs; QString replacement; };
+    const QList<FuncSpec> funcs = {
+        {"rand", 1, 1, "0"},
+        {"random", 1, 1, "0"},
+        {"white", 1, 1, "0"},
+        {"smallsig", 0, 0, "0"},
+    };
+
+    bool replaced = true;
+    while (replaced) {
+        replaced = false;
+        for (const FuncSpec& func : funcs) {
+            const int funcIndex = out.indexOf(QRegularExpression(QString("\\b%1\\s*\\(").arg(QRegularExpression::escape(func.name)),
+                                                                   QRegularExpression::CaseInsensitiveOption));
+            if (funcIndex < 0) continue;
+            const int openIndex = out.indexOf('(', funcIndex);
+            const int closeIndex = findMatchingParen(out, openIndex);
+            if (openIndex < 0 || closeIndex < 0) continue;
+            const QString inner = out.mid(openIndex + 1, closeIndex - openIndex - 1);
+            const QStringList args = inner.trimmed().isEmpty() ? QStringList() : splitTopLevelSpiceArgs(inner);
+            if (args.size() < func.minArgs || args.size() > func.maxArgs) continue;
+
+            out.replace(funcIndex, closeIndex - funcIndex + 1, func.replacement);
+            replaced = true;
+            if (warnings) {
+                warnings->append(QString("Approximated LTspice %1(...) as 0 because this ngspice configuration does not support %1(...). Original line: %2")
+                                     .arg(func.name, line.trimmed()));
+            }
+            break;
+        }
+    }
+
     return out;
 }
 
@@ -1095,7 +1143,7 @@ QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings =
 
     if ((out.contains("buf(", Qt::CaseInsensitive) || out.contains("inv(", Qt::CaseInsensitive) ||
          out.contains("uramp(", Qt::CaseInsensitive) || out.contains("limit(", Qt::CaseInsensitive) ||
-         out.contains("dnlim(", Qt::CaseInsensitive) ||
+         out.contains("dnlim(", Qt::CaseInsensitive) || out.contains("uplim(", Qt::CaseInsensitive) ||
          out.contains("idtmod(", Qt::CaseInsensitive)) && out.contains("={", Qt::CaseInsensitive)) {
         out = rewriteLtspiceBehavioralFunctions(out, warnings);
     }
@@ -1109,6 +1157,12 @@ QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings =
         if (out.contains("if(", Qt::CaseInsensitive)) {
             out = rewriteLtspiceBehavioralIf(out, warnings);
         }
+    }
+
+    if ((out.contains("rand(", Qt::CaseInsensitive) || out.contains("random(", Qt::CaseInsensitive) ||
+         out.contains("white(", Qt::CaseInsensitive) || out.contains("smallsig(", Qt::CaseInsensitive)) &&
+        out.contains("={", Qt::CaseInsensitive)) {
+        out = rewriteUnsupportedLtspiceStochasticFunctions(out, warnings);
     }
 
     if (out.contains(" V={", Qt::CaseInsensitive)) {
@@ -1827,7 +1881,23 @@ UserSpiceContentSummary summarizeUserSpiceText(const QString& text, const QStrin
             }
 
             if ((card == ".meas" || card == ".func" || card == ".param") && line.contains("table(", Qt::CaseInsensitive)) {
-                summary.warnings.append(QString("table(...) detected in line %1; LTspice and ngspice may differ in expression behavior here.").arg(lineNo));
+                summary.warnings.append(QString("table(...) detected in line %1; VioSpice will approximate inline point-pair forms for ngspice, but file/include-style forms may still differ.").arg(lineNo));
+            }
+
+            if (card == ".func") {
+                summary.warnings.append(QString("LTspice .func detected in line %1; user-defined functions may rely on LTspice dynamic scoping, so verify ngspice compatibility when referenced inside subcircuits or with local .param overrides.").arg(lineNo));
+            }
+
+            if (card == ".step") {
+                summary.warnings.append(QString("LTspice .step detected in line %1; verify ngspice compatibility for sweep syntax, nesting, and file= forms.").arg(lineNo));
+            }
+
+            if (card == ".four") {
+                summary.warnings.append(QString("LTspice .four detected in line %1; verify Fourier-analysis compatibility and output behavior in ngspice.").arg(lineNo));
+            }
+
+            if (card == ".wave") {
+                summary.warnings.append(QString("LTspice .wave detected in line %1; ngspice does not support LTspice WAV export directives.").arg(lineNo));
             }
 
             continue;
@@ -1840,7 +1910,7 @@ UserSpiceContentSummary summarizeUserSpiceText(const QString& text, const QStrin
             summary.warnings.append(QString("LTspice-style if(...) expression remains in line %1 and may fail in ngspice.").arg(lineNo));
         }
         if (line.contains("table(", Qt::CaseInsensitive)) {
-            summary.warnings.append(QString("table(...) detected in line %1; review this LTspice expression for ngspice compatibility.").arg(lineNo));
+            summary.warnings.append(QString("table(...) detected in line %1; VioSpice will approximate inline point-pair forms for ngspice, but file/include-style forms may still differ.").arg(lineNo));
         }
         const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
         if (parts.isEmpty()) continue;
@@ -2266,9 +2336,8 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
     for (const auto& comp : pkg.components) {
         if (comp.excludeFromSim) continue;
         const QString ref = comp.reference;
-        const bool isADevice = ref.startsWith("A", Qt::CaseInsensitive) ||
-                               comp.typeName.toLower().contains("gate") ||
-                               comp.typeName.toLower().contains("digital");
+        const QString rawLogicToken = comp.spiceModel.trimmed().isEmpty() ? comp.value.trimmed() : comp.spiceModel.trimmed();
+        const bool isADevice = isXspiceLogicComponent(rawLogicToken, comp.typeName, ref);
         if (!isADevice) continue;
 
         SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(comp.typeName);
@@ -2405,7 +2474,9 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
             if (comp.value.trimmed().startsWith("V=", Qt::CaseInsensitive)) line = ensurePrefix(ref, "B");
             else line = ensurePrefix(ref, "V");
         }
-        else if (comp.typeName.toLower().contains("gate") || comp.typeName.toLower().contains("digital")) {
+        else if (isXspiceLogicComponent(comp.spiceModel.trimmed().isEmpty() ? comp.value.trimmed() : comp.spiceModel.trimmed(),
+                                        comp.typeName,
+                                        ref)) {
             line = ensurePrefix(ref, "A"); // XSPICE A-device
         }
         else line = ensurePrefix(ref, "X"); // Subcircuit or generic
@@ -3444,6 +3515,10 @@ QString SpiceNetlistGenerator::buildCommand(const SimulationParams& params) {
             return ".fft";
     }
     return ".op";
+}
+
+QString SpiceNetlistGenerator::normalizeXspiceGateModelAlias(const QString& rawToken, const QString& typeName) {
+    return ::normalizeXspiceModelAlias(rawToken, typeName);
 }
 
 QString SpiceNetlistGenerator::formatValue(double value) {

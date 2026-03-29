@@ -146,7 +146,6 @@ private:
     QTextEdit* m_errorSummaryView = nullptr;
     QPlainTextEdit* m_errorRawView = nullptr;
     QToolButton* m_errorRawToggle = nullptr;
-    QCheckBox* m_commandModeCheck = nullptr;
 
     // Private Process for this panel instance
     QProcess* m_process = nullptr;

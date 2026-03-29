@@ -16,6 +16,7 @@
 #include <QTimer>
 #include <QTextStream>
 
+#include <array>
 #include <algorithm>
 #include <cmath>
 
@@ -32,6 +33,8 @@ private slots:
     void rewritesLtspiceBehavioralHelperFunctions();
     void approximatesUnsupportedBehavioralTimeFunctions();
     void approximatesLtspiceTableFunction();
+    void warnsAboutLtspiceStepFourAndWaveDirectives();
+    void warnsAboutLtspiceFuncDynamicScoping();
     void warnsAboutLtspiceBehavioralAndTriggeredSourceOptions();
     void warnsAboutLtspiceMeasForms();
     void rewritesVoltageSourceInstanceExtras();
@@ -40,6 +43,7 @@ private slots:
     void mixedModeManagerInsertsAdcAndDacBridges();
     void logicComponentGeneratesVectorizedSubcircuit();
     void symbolDefinitionResolvesExplicitPinMetadata();
+    void builtInGateAliasesMapToExpectedXspiceModels();
 };
 
 void SpiceDirectiveNetlistTest::generatesWarningsAndHonorsManualDirectives() {
@@ -202,6 +206,11 @@ void SpiceDirectiveNetlistTest::rewritesLtspiceBehavioralHelperFunctions() {
         "BUR out3 0 V=uramp(V(c)-1)\n"
         "BLIM out4 0 V=limit(V(x), -1, 2)\n"
         "BDNL out7 0 V=dnlim(V(y), 1, 0.2)\n"
+        "BUPL out8 0 V=uplim(V(z), 3, 0.5)\n"
+        "BRND out9 0 V=rand(1)\n"
+        "BRDM out10 0 V=random(1)\n"
+        "BWHT out11 0 V=white(1)\n"
+        "BSMS out12 0 V=smallsig()\n"
         "BIF out6 0 V={if(V(in)>1, limit(uramp(V(in)-1), 0, 2), 0)}\n"
         "BMOD out5 0 V=idtmod(V(err), 0, 1, 0)\n"
         ".tran 1u 1m",
@@ -220,12 +229,21 @@ void SpiceDirectiveNetlistTest::rewritesLtspiceBehavioralHelperFunctions() {
     QVERIFY2(netlist.contains("BUR out3 0 V={((V(c)-1)*u(V(c)-1))}"), qPrintable(netlist));
     QVERIFY2(netlist.contains("BLIM out4 0 V={min(max((V(x)),min((-1),(2))),max((-1),(2)))}"), qPrintable(netlist));
     QVERIFY2(netlist.contains("BDNL out7 0 V={max((V(y)),(1))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BUPL out8 0 V={min((V(z)),(3))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BRND out9 0 V={0}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BRDM out10 0 V={0}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BWHT out11 0 V={0}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BSMS out12 0 V={0}"), qPrintable(netlist));
     QVERIFY2(netlist.contains("BIF out6 0 V={((min(max((((V(in)-1)*u(V(in)-1))),min((0),(2))),max((0),(2))))*(u((V(in))-(1))))}"), qPrintable(netlist));
     QVERIFY2(netlist.contains("B__INTDRV_BMOD 0 BMOD__idt I={(1)*(V(err))}"), qPrintable(netlist));
     QVERIFY2(netlist.contains(".ic V(BMOD__idt)=0"), qPrintable(netlist));
     QVERIFY2(netlist.contains("BMOD out5 0 V={((0)+((V(BMOD__idt)-(0))-(1)*floor(((V(BMOD__idt)-(0))/(1)))))}"), qPrintable(netlist));
     QVERIFY2(netlist.contains("Rewrote LTspice behavioral helper functions"), qPrintable(netlist));
     QVERIFY2(netlist.contains("Rewrote LTspice-style if(...) to ngspice-safe expression"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Approximated LTspice rand(...) as 0 because this ngspice configuration does not support rand(...)."), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Approximated LTspice random(...) as 0 because this ngspice configuration does not support random(...)."), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Approximated LTspice white(...) as 0 because this ngspice configuration does not support white(...)."), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Approximated LTspice smallsig(...) as 0 because this ngspice configuration does not support smallsig(...)."), qPrintable(netlist));
     QVERIFY2(netlist.contains("Expanded LTspice idtmod(...) in BMOD into an explicit behavioral integrator for ngspice."), qPrintable(netlist));
     QVERIFY2(netlist.contains("Approximated LTspice idtmod(...) for BMOD by wrapping the explicit integrator output with modulus 1 and offset 0."), qPrintable(netlist));
 }
@@ -272,6 +290,54 @@ void SpiceDirectiveNetlistTest::approximatesLtspiceTableFunction() {
     QVERIFY2(netlist.contains("BTAB out1 0 V={(((0)*(u((0)-(V(a)))) + ((5)*(u((V(a))-(0)) + (10)*(1-(u((V(a))-(0))))))*(1-(u((0)-(V(a)))))))}") ||
              netlist.contains("BTAB out1 0 V={"), qPrintable(netlist));
     QVERIFY2(netlist.contains("Approximated LTspice table(...) with nested conditional interpolation for ngspice compatibility"), qPrintable(netlist));
+}
+
+void SpiceDirectiveNetlistTest::warnsAboutLtspiceStepFourAndWaveDirectives() {
+    QGraphicsScene scene;
+
+    auto* directive = new SchematicSpiceDirectiveItem(
+        ".step param RLOAD LIST 5 10 15\n"
+        ".four 1kHz V(out)\n"
+        ".wave output.wav 16 44.1K V(out)\n"
+        ".tran 1u 1m",
+        QPointF(0, 0));
+    scene.addItem(directive);
+
+    SpiceNetlistGenerator::SimulationParams params;
+    params.type = SpiceNetlistGenerator::Transient;
+    params.step = "1u";
+    params.stop = "1m";
+
+    const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
+
+    QVERIFY2(netlist.contains("LTspice .step detected in line 1; verify ngspice compatibility for sweep syntax, nesting, and file= forms."), qPrintable(netlist));
+    QVERIFY2(netlist.contains("LTspice .four detected in line 2; verify Fourier-analysis compatibility and output behavior in ngspice."), qPrintable(netlist));
+    QVERIFY2(netlist.contains("LTspice .wave detected in line 3; ngspice does not support LTspice WAV export directives."), qPrintable(netlist));
+}
+
+void SpiceDirectiveNetlistTest::warnsAboutLtspiceFuncDynamicScoping() {
+    QGraphicsScene scene;
+
+    auto* directive = new SchematicSpiceDirectiveItem(
+        ".param voltage=1\n"
+        ".func doubled() { 2 * voltage }\n"
+        ".subckt example out\n"
+        "V1 out 0 {doubled()}\n"
+        ".param voltage=10\n"
+        ".ends\n"
+        "X1 n1 example\n"
+        ".tran 1u 1m",
+        QPointF(0, 0));
+    scene.addItem(directive);
+
+    SpiceNetlistGenerator::SimulationParams params;
+    params.type = SpiceNetlistGenerator::Transient;
+    params.step = "1u";
+    params.stop = "1m";
+
+    const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
+
+    QVERIFY2(netlist.contains("LTspice .func detected in line 2; user-defined functions may rely on LTspice dynamic scoping, so verify ngspice compatibility when referenced inside subcircuits or with local .param overrides."), qPrintable(netlist));
 }
 
 void SpiceDirectiveNetlistTest::warnsAboutLtspiceBehavioralAndTriggeredSourceOptions() {
@@ -702,6 +768,51 @@ void SpiceDirectiveNetlistTest::symbolDefinitionResolvesExplicitPinMetadata() {
     QCOMPARE(symbol.pinSignalDirection("1"), QString("input"));
     QCOMPARE(symbol.pinSignalDirection("2"), QString("output"));
     QCOMPARE(symbol.pinSignalDomain("Y"), QString("digital_event"));
+}
+
+void SpiceDirectiveNetlistTest::builtInGateAliasesMapToExpectedXspiceModels() {
+    struct GateExpectation {
+        const char* symbolName;
+        const char* expectedModel;
+    };
+
+    const std::array<GateExpectation, 14> cases = {{
+        {"Gate_AND", "d_and"},
+        {"Gate_NAND", "d_nand"},
+        {"Gate_OR", "d_or"},
+        {"Gate_NOR", "d_nor"},
+        {"Gate_XOR", "d_xor"},
+        {"Gate_XNOR", "d_xnor"},
+        {"Gate_NOT", "d_inverter"},
+        {"Gate_BUF", "d_buffer"},
+        {"D_FlipFlop", "d_dff"},
+        {"JK_FlipFlop", "d_jkff"},
+        {"T_FlipFlop", "d_tff"},
+        {"SR_FlipFlop", "d_srff"},
+        {"D_Latch", "d_dlatch"},
+        {"SR_Latch", "d_srlatch"},
+    }};
+
+    for (const GateExpectation& gateCase : cases) {
+        const QString symbolName = QString::fromLatin1(gateCase.symbolName);
+        QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias(symbolName, symbolName),
+                 QString::fromLatin1(gateCase.expectedModel));
+    }
+
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("AND", QString()), QString("d_and"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("NAND", QString()), QString("d_nand"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("OR", QString()), QString("d_or"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("NOR", QString()), QString("d_nor"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("XOR", QString()), QString("d_xor"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("XNOR", QString()), QString("d_xnor"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("NOT", QString()), QString("d_inverter"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("BUF", QString()), QString("d_buffer"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("DFF", QString()), QString("d_dff"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("JKFF", QString()), QString("d_jkff"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("TFF", QString()), QString("d_tff"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("SRFF", QString()), QString("d_srff"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("DLATCH", QString()), QString("d_dlatch"));
+    QCOMPARE(SpiceNetlistGenerator::normalizeXspiceGateModelAlias("SRLATCH", QString()), QString("d_srlatch"));
 }
 
 QTEST_MAIN(SpiceDirectiveNetlistTest)

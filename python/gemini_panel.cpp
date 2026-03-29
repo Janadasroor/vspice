@@ -601,6 +601,7 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     speedCombo->addItem("PLAN", "schematic");
     speedCombo->addItem("DIRECT", "schematic");
     speedCombo->addItem("ASK", "ask");
+    speedCombo->addItem("CMD", "cmd");
     speedCombo->setCurrentIndex(0);
     speedCombo->setFixedHeight(24);
     speedCombo->setStyleSheet(comboStyle);
@@ -622,10 +623,6 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
         .arg(theme ? theme->textSecondary().name() : "#888", fg));
     connect(m_voiceButton, &QPushButton::clicked, this, &GeminiPanel::onVoiceClicked);
 
-    m_commandModeCheck = new QCheckBox("CMD", this);
-    m_commandModeCheck->setToolTip("Command Mode: Parse tool tags and local commands manually (Offline Tool Calling)");
-    m_commandModeCheck->setStyleSheet(QString("QCheckBox { color: %1; font-size: 10px; font-weight: bold; margin-left: 4px; }").arg(fg));
-
     m_sendButton = new QPushButton("SEND", this);
     m_sendButton->setFixedHeight(24);
     m_sendButton->setStyleSheet(QString("QPushButton { background: %1; color: white; border: 1px solid %2; border-radius: 6px; font-weight: bold; font-size: 10px; padding: 0 12px; } QPushButton:hover { background: %3; }")
@@ -643,7 +640,6 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     toolsRow->addWidget(speedCombo);
     toolsRow->addWidget(m_modelCombo);
     toolsRow->addStretch();
-    toolsRow->addWidget(m_commandModeCheck);
     toolsRow->addWidget(m_voiceButton);
     toolsRow->addWidget(m_sendButton);
     toolsRow->addWidget(m_stopButton);
@@ -1414,7 +1410,7 @@ void GeminiPanel::onSendClicked() {
         m_lastSubmitEpochMs = nowMs;
         m_inputField->clear();
 
-        if (m_commandModeCheck && m_commandModeCheck->isChecked()) {
+        if (m_mode == "cmd") {
             appendUserMessageCard(t);
             parseAndExecuteCommandModeInput(t);
         } else {

@@ -1405,10 +1405,23 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
     addSym(opamp);
 
     // === Logic Gates ===
+    auto makeDigitalPin = [](const QPointF& pos, int number, const QString& name,
+                             const QString& orientation, const QString& direction,
+                             qreal length = 15.0) {
+        SymbolPrimitive pin = SymbolPrimitive::createPin(pos, number, name);
+        pin.data["orientation"] = orientation;
+        pin.data["length"] = length;
+        pin.data["signalDomain"] = "digital_event";
+        pin.data["signalDirection"] = direction;
+        return pin;
+    };
+
     auto addGate = [&](const QString& name, const QString& type) {
         SymbolDefinition gate(name);
         gate.setCategory("Logic");
         gate.setReferencePrefix("U");
+        gate.setDescription(type + " logic gate");
+        gate.setAliases({type + " Gate", type});
         
         const bool bubbleOutput = (type == "NAND" || type == "NOR" || type == "XNOR");
 
@@ -1455,20 +1468,17 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
         
         const bool singleInputGate = (type == "NOT" || type == "BUF");
         const qreal inAY = singleInputGate ? 0.0 : -10.0;
-        SymbolPrimitive inA = SymbolPrimitive::createPin(QPointF(-45, inAY), 1, "A");
-        inA.data["orientation"] = "Right";
+        SymbolPrimitive inA = makeDigitalPin(QPointF(-45, inAY), 1, "A", "Right", "input");
         if (type == "OR" || type == "NOR" || type == "XOR" || type == "XNOR") inA.data["length"] = 15.0;
         gate.addPrimitive(inA);
         if (!singleInputGate) {
-            SymbolPrimitive inB = SymbolPrimitive::createPin(QPointF(-45, 10), 2, "B");
-            inB.data["orientation"] = "Right";
+            SymbolPrimitive inB = makeDigitalPin(QPointF(-45, 10), 2, "B", "Right", "input");
             if (type == "OR" || type == "NOR" || type == "XOR" || type == "XNOR") inB.data["length"] = 15.0;
             gate.addPrimitive(inB);
         }
         const qreal outPinX = bubbleOutput ? 55.0 : 45.0;
-        SymbolPrimitive outY = SymbolPrimitive::createPin(QPointF(outPinX, 0), 3, "Y");
-        outY.data["orientation"] = "Left";
-        outY.data["length"] = singleInputGate ? 30.0 : 15.0;
+        SymbolPrimitive outY = makeDigitalPin(QPointF(outPinX, 0), 3, "Y", "Left", "output",
+                                              singleInputGate ? 30.0 : 15.0);
         gate.addPrimitive(outY);
         addSym(gate);
     };
@@ -1480,6 +1490,129 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
     addGate("Gate_NOR", "NOR");
     addGate("Gate_BUF", "BUF");
     addGate("Gate_NOT", "NOT");
+
+    auto addSequentialLogic = [&](const QString& name,
+                                  const QString& label,
+                                  const QString& description,
+                                  const QStringList& aliases,
+                                  const QString& spiceModel,
+                                  const QList<SymbolPrimitive>& pins,
+                                  qreal bodyHeight) {
+        SymbolDefinition seq(name);
+        seq.setCategory("Logic");
+        seq.setReferencePrefix("U");
+        seq.setDescription(description);
+        seq.setAliases(aliases);
+        seq.setSpiceModelName(spiceModel);
+        seq.addPrimitive(SymbolPrimitive::createRect(QRectF(-25, -bodyHeight / 2.0, 50, bodyHeight), false));
+        SymbolPrimitive text = SymbolPrimitive::createText(label, QPointF(0, 0), 10, QColor(Qt::black));
+        text.data["hAlign"] = "center";
+        text.data["vAlign"] = "center";
+        seq.addPrimitive(text);
+        for (const SymbolPrimitive& pin : pins) {
+            seq.addPrimitive(pin);
+        }
+        addSym(seq);
+    };
+
+    addSequentialLogic(
+        "D_FlipFlop",
+        "D FF",
+        "Edge-triggered D flip-flop with asynchronous set/reset and complementary outputs",
+        {"D Flip-Flop", "D Flip Flop", "DFF", "Gate_DFF"},
+        "DFF",
+        {
+            makeDigitalPin(QPointF(-40, -20), 1, "D", "Right", "input"),
+            makeDigitalPin(QPointF(-40, -5), 2, "CLK", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 10), 3, "SET", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 25), 4, "RESET", "Right", "input"),
+            makeDigitalPin(QPointF(40, -10), 5, "Q", "Left", "output"),
+            makeDigitalPin(QPointF(40, 10), 6, "QN", "Left", "output"),
+        },
+        70.0);
+
+    addSequentialLogic(
+        "JK_FlipFlop",
+        "JK FF",
+        "Edge-triggered JK flip-flop with asynchronous set/reset and complementary outputs",
+        {"JK Flip-Flop", "JK Flip Flop", "JKFF", "Gate_JKFF"},
+        "JKFF",
+        {
+            makeDigitalPin(QPointF(-40, -25), 1, "J", "Right", "input"),
+            makeDigitalPin(QPointF(-40, -10), 2, "K", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 5), 3, "CLK", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 20), 4, "SET", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 35), 5, "RESET", "Right", "input"),
+            makeDigitalPin(QPointF(40, -10), 6, "Q", "Left", "output"),
+            makeDigitalPin(QPointF(40, 10), 7, "QN", "Left", "output"),
+        },
+        90.0);
+
+    addSequentialLogic(
+        "T_FlipFlop",
+        "T FF",
+        "Edge-triggered toggle flip-flop with asynchronous set/reset and complementary outputs",
+        {"T Flip-Flop", "T Flip Flop", "TFF", "Toggle Flip-Flop", "Gate_TFF"},
+        "TFF",
+        {
+            makeDigitalPin(QPointF(-40, -20), 1, "T", "Right", "input"),
+            makeDigitalPin(QPointF(-40, -5), 2, "CLK", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 10), 3, "SET", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 25), 4, "RESET", "Right", "input"),
+            makeDigitalPin(QPointF(40, -10), 5, "Q", "Left", "output"),
+            makeDigitalPin(QPointF(40, 10), 6, "QN", "Left", "output"),
+        },
+        70.0);
+
+    addSequentialLogic(
+        "SR_FlipFlop",
+        "SR FF",
+        "Edge-triggered set-reset flip-flop with asynchronous set/reset and complementary outputs",
+        {"SR Flip-Flop", "SR Flip Flop", "Set-Reset Flip-Flop", "SRFF", "Gate_SRFF"},
+        "SRFF",
+        {
+            makeDigitalPin(QPointF(-40, -25), 1, "S", "Right", "input"),
+            makeDigitalPin(QPointF(-40, -10), 2, "R", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 5), 3, "CLK", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 20), 4, "SET", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 35), 5, "RESET", "Right", "input"),
+            makeDigitalPin(QPointF(40, -10), 6, "Q", "Left", "output"),
+            makeDigitalPin(QPointF(40, 10), 7, "QN", "Left", "output"),
+        },
+        90.0);
+
+    addSequentialLogic(
+        "D_Latch",
+        "D LAT",
+        "Level-sensitive D latch with asynchronous set/reset and complementary outputs",
+        {"D Latch", "DLATCH", "Gate_DLATCH"},
+        "DLATCH",
+        {
+            makeDigitalPin(QPointF(-40, -20), 1, "D", "Right", "input"),
+            makeDigitalPin(QPointF(-40, -5), 2, "EN", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 10), 3, "SET", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 25), 4, "RESET", "Right", "input"),
+            makeDigitalPin(QPointF(40, -10), 5, "Q", "Left", "output"),
+            makeDigitalPin(QPointF(40, 10), 6, "QN", "Left", "output"),
+        },
+        70.0);
+
+    addSequentialLogic(
+        "SR_Latch",
+        "SR LAT",
+        "Level-sensitive set-reset latch with enable, asynchronous set/reset, and complementary outputs",
+        {"SR Latch", "Set-Reset Latch", "SRLATCH", "Gate_SRLATCH"},
+        "SRLATCH",
+        {
+            makeDigitalPin(QPointF(-40, -25), 1, "S", "Right", "input"),
+            makeDigitalPin(QPointF(-40, -10), 2, "R", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 5), 3, "EN", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 20), 4, "SET", "Right", "input"),
+            makeDigitalPin(QPointF(-40, 35), 5, "RESET", "Right", "input"),
+            makeDigitalPin(QPointF(40, -10), 6, "Q", "Left", "output"),
+            makeDigitalPin(QPointF(40, 10), 7, "QN", "Left", "output"),
+        },
+        90.0);
 
     // === Behavioral Sources ===
     auto addBehSource = [&](const QString& name, bool isVoltage) {
@@ -1553,9 +1686,23 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
         QString cat = it.key();
         SymbolLibrary* lib = it.value();
         QString filePath = baseDir + "/" + cat + ".sclib";
-        
-        // Only generate the default libraries if they don't already exist
-        if (!QFile::exists(filePath)) {
+
+        if (QFile::exists(filePath)) {
+            SymbolLibrary existing(cat, true);
+            if (existing.load(filePath)) {
+                bool addedMissingSymbol = false;
+                const QList<SymbolDefinition> defaults = lib->allSymbols();
+                for (const SymbolDefinition& symbol : defaults) {
+                    if (!existing.findSymbol(symbol.name())) {
+                        existing.addSymbol(symbol);
+                        addedMissingSymbol = true;
+                    }
+                }
+                if (addedMissingSymbol) {
+                    existing.save(filePath);
+                }
+            }
+        } else {
             lib->save(filePath);
         }
         delete lib; // Clean up since loadUserLibraries will actually load them into memory
