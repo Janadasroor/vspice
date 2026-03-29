@@ -212,6 +212,62 @@ QList<QPointF> SymbolDefinition::connectionPoints() const {
     return points;
 }
 
+const SymbolPrimitive* SymbolDefinition::pinPrimitive(const QString& identifier) const {
+    const QString needle = identifier.trimmed();
+    if (needle.isEmpty()) return nullptr;
+
+    const QString upperNeedle = needle.toUpper();
+    for (const SymbolPrimitive& prim : m_primitives) {
+        if (prim.type != SymbolPrimitive::Pin) continue;
+
+        const QString number = QString::number(prim.data.value("number").toInt()).trimmed();
+        const QString name = prim.data.value("name").toString().trimmed();
+        if (number.compare(needle, Qt::CaseInsensitive) == 0 ||
+            name.compare(needle, Qt::CaseInsensitive) == 0 ||
+            name.toUpper() == upperNeedle) {
+            return &prim;
+        }
+    }
+
+    if (isDerived()) {
+        if (SymbolDefinition* parent = dynamic_cast<SymbolDefinition*>(SymbolLibraryManager::instance().findSymbol(m_parentName, m_parentLibrary))) {
+            return parent->pinPrimitive(identifier);
+        }
+    }
+
+    return nullptr;
+}
+
+QString SymbolDefinition::pinSignalDomain(const QString& identifier) const {
+    const SymbolPrimitive* pin = pinPrimitive(identifier);
+    if (!pin) return QString();
+
+    QString domain = pin->data.value("signalDomain").toString().trimmed();
+    if (domain.isEmpty()) {
+        domain = pin->data.value("nodeType").toString().trimmed();
+    }
+    return domain.toLower();
+}
+
+QString SymbolDefinition::pinSignalDirection(const QString& identifier) const {
+    const SymbolPrimitive* pin = pinPrimitive(identifier);
+    if (!pin) return QString();
+
+    QString direction = pin->data.value("signalDirection").toString().trimmed();
+    if (!direction.isEmpty()) {
+        return direction.toLower();
+    }
+
+    const QString electrical = pin->data.value("electricalType").toString().trimmed().toLower();
+    if (electrical == "input") return "input";
+    if (electrical == "output" || electrical == "poweroutput" || electrical == "opencollector" || electrical == "openemitter")
+        return "output";
+    if (electrical == "bidirectional" || electrical == "tristate")
+        return "bidirectional";
+
+    return QString();
+}
+
 QRectF SymbolDefinition::boundingRect() const {
     if (m_primitives.isEmpty()) return QRectF(-20, -20, 40, 40);
     

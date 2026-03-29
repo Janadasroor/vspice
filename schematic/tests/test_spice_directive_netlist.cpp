@@ -5,6 +5,9 @@
 #include "../items/schematic_spice_directive_item.h"
 #include "../../core/simulation_manager.h"
 #include "../../simulator/core/raw_data_parser.h"
+#include "../../simulator/mixedmode/LogicComponent.h"
+#include "../../simulator/mixedmode/NetlistManager.h"
+#include "../../symbols/models/symbol_definition.h"
 
 #include <QEventLoop>
 #include <QFileInfo>
@@ -32,6 +35,9 @@ private slots:
     void rewritesVoltageSourceInstanceExtras();
     void loadsBoostConverterLtspiceDirectiveInNgspice();
     void boostConverterFeedbackDoesNotRunAway();
+    void mixedModeManagerInsertsAdcAndDacBridges();
+    void logicComponentGeneratesVectorizedSubcircuit();
+    void symbolDefinitionResolvesExplicitPinMetadata();
 };
 
 void SpiceDirectiveNetlistTest::generatesWarningsAndHonorsManualDirectives() {
@@ -227,6 +233,7 @@ void SpiceDirectiveNetlistTest::warnsAboutLtspiceBehavioralAndTriggeredSourceOpt
         "BOPT out 0 V={V(a)} ic=1 tripdv=0.1 tripdt=1n laplace={1/(s+1)} window=1m nfft=1024 mtol=1e-3\n"
         "BIPAR out7 0 I=V(a) Rpar=1k\n"
         "BRPAR out8 0 R=V(b)+1 Rpar=2k\n"
+        "BTRIP out9 0 I=V(c) tripdv=0.7 tripdt=6n\n"
         "VTRIG out2 0 PULSE(0 1 0 1n 1n 5u 10u) Trigger=V(clk)>0.5 tripdv=0.2 tripdt=1n\n"
         "VPWL out3 0 PWL(0 0 1u 1 2u 0) Trigger=V(en)>0.5 tripdv=0.3 tripdt=2n\n"
         "VSIN out4 0 SINE(0 1 1k 0 0 0) Trigger=V(sen)>0.5 tripdv=0.4 tripdt=3n\n"
@@ -244,17 +251,22 @@ void SpiceDirectiveNetlistTest::warnsAboutLtspiceBehavioralAndTriggeredSourceOpt
     const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
 
     QVERIFY2(netlist.contains("LTspice B-source instance option ic= detected and passed through unchanged"), qPrintable(netlist));
-    QVERIFY2(netlist.contains("LTspice B-source step-rejection options tripdv=/tripdt= detected and passed through unchanged"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("LTspice B-source step-rejection options tripdv=/tripdt= detected; VioSpice will drop them if needed to keep ngspice loadable"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Dropped LTspice B-source tripdv=/tripdt= options from BOPT because this ngspice configuration rejects them on behavioral sources."), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Removed B-source step-rejection options from BOPT: tripdv=0.1 tripdt=1n"), qPrintable(netlist));
     QVERIFY2(netlist.contains("LTspice B-source Laplace options detected; VioSpice will drop them if needed to keep ngspice loadable"), qPrintable(netlist));
-    QVERIFY2(netlist.contains("Dropped LTspice B-source laplace= transform from BOPT out 0 V={V(a)} ic=1 tripdv=0.1 tripdt=1n laplace={1/(s+1)} window=1m nfft=1024 mtol=1e-3 because this ngspice configuration does not accept LTspice-style Laplace options on B-sources."), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Dropped LTspice B-source laplace= transform from BOPT out 0 V={V(a)} ic=1 laplace={1/(s+1)} window=1m nfft=1024 mtol=1e-3 because this ngspice configuration does not accept LTspice-style Laplace options on B-sources."), qPrintable(netlist));
     QVERIFY2(netlist.contains("Preserved the underlying behavioral source but removed laplace/window/nfft/mtol options; resulting behavior may differ from LTspice. Dropped Laplace expression: {1/(s+1)}"), qPrintable(netlist));
-    QVERIFY2(netlist.contains("BOPT out 0 V={{V(a)} ic=1 tripdv=0.1 tripdt=1n}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BOPT out 0 V={{V(a)} ic=1}"), qPrintable(netlist));
     QVERIFY2(netlist.contains("Expanded LTspice behavioral source Rpar= on BIPAR into explicit shunt resistor for ngspice."), qPrintable(netlist));
     QVERIFY2(netlist.contains("BIPAR out7 0 I=V(a)"), qPrintable(netlist));
     QVERIFY2(netlist.contains("R__RPAR_BIPAR out7 0 1k"), qPrintable(netlist));
     QVERIFY2(netlist.contains("Expanded LTspice behavioral source Rpar= on BRPAR into explicit shunt resistor for ngspice."), qPrintable(netlist));
     QVERIFY2(netlist.contains("BRPAR out8 0 R=V(b)+1"), qPrintable(netlist));
     QVERIFY2(netlist.contains("R__RPAR_BRPAR out8 0 2k"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Dropped LTspice B-source tripdv=/tripdt= options from BTRIP because this ngspice configuration rejects them on behavioral sources."), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Removed B-source step-rejection options from BTRIP: tripdv=0.7 tripdt=6n"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BTRIP out9 0 I=V(c)"), qPrintable(netlist));
     QVERIFY2(netlist.contains("LTspice PULSE Trigger= detected on VTRIG; VioSpice will approximate it by gating a hidden pulse source."), qPrintable(netlist));
     QVERIFY2(netlist.contains("Approximated LTspice PULSE Trigger= behavior on VTRIG by gating a hidden pulse source with the trigger expression."), qPrintable(netlist));
     QVERIFY2(netlist.contains("LTspice triggered source restart semantics are only partially emulated for VTRIG; the pulse is gated by the trigger but not restarted on each trigger event."), qPrintable(netlist));
@@ -569,6 +581,78 @@ void SpiceDirectiveNetlistTest::boostConverterFeedbackDoesNotRunAway() {
              qPrintable(QString("Unexpected tail-average pi_out: %1 V").arg(finalPiAvg)));
     QVERIFY2(std::abs(finalErrAvg) < 15.0,
              qPrintable(QString("Unexpected tail-average error voltage: %1 V").arg(finalErrAvg)));
+}
+
+void SpiceDirectiveNetlistTest::mixedModeManagerInsertsAdcAndDacBridges() {
+    NetlistManager manager;
+    manager.setTitle("* Mixed-mode bridge test");
+    manager.setNetTypeHint("DIN2", NodeType::DIGITAL_EVENT);
+
+    NetlistManager::ComponentEntry vin;
+    vin.componentId = "VIN";
+    vin.instanceLine = "VSRC VIN 0 PULSE(0 5 0 1n 1n 10n 20n)";
+    vin.pins.push_back({"VIN", "P", "VIN", NodeType::ANALOG, NetlistManager::PinDirection::OUTPUT});
+    vin.pins.push_back({"VIN", "N", "0", NodeType::ANALOG, NetlistManager::PinDirection::OUTPUT});
+    manager.addComponent(vin);
+
+    NetlistManager::ComponentEntry rload;
+    rload.componentId = "RLOAD";
+    rload.instanceLine = "RLOAD DOUT 0 1k";
+    rload.pins.push_back({"RLOAD", "1", "DOUT", NodeType::ANALOG, NetlistManager::PinDirection::INPUT});
+    rload.pins.push_back({"RLOAD", "2", "0", NodeType::ANALOG, NetlistManager::PinDirection::INPUT});
+    manager.addComponent(rload);
+
+    LogicComponent gate("U1", "d_and");
+    gate.addInput("A", "VIN", NodeType::DIGITAL_EVENT);
+    gate.addInput("B", "DIN2", NodeType::DIGITAL_EVENT);
+    gate.addOutput("Y", "DOUT", NodeType::DIGITAL_EVENT);
+    manager.addLogicComponent(gate);
+
+    const QString netlist = manager.generateNetlist().toString();
+
+    QVERIFY2(netlist.contains(".model __viospice_adc_bridge adc_bridge"), qPrintable(netlist));
+    QVERIFY2(netlist.contains(".model __viospice_dac_bridge dac_bridge"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("XMM_ADC") || netlist.contains("XBRADC"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("XMM_DAC") || netlist.contains("XBRDAC"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("__mm_U1_A_") || netlist.contains("__MM_ADC"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("__mm_RLOAD_1_") || netlist.contains("__MM_DAC"), qPrintable(netlist));
+}
+
+void SpiceDirectiveNetlistTest::logicComponentGeneratesVectorizedSubcircuit() {
+    LogicComponent gate("U_AND3", "d_and");
+    gate.addInput("A", "N1");
+    gate.addInput("B", "N2");
+    gate.addInput("C", "N3");
+    gate.addOutput("Y", "N4");
+
+    const QString subckt = gate.generateSubcircuit();
+    const NetlistManager::ComponentEntry entry = gate.toNetlistEntry();
+
+    QVERIFY2(subckt.contains(".subckt __logic_U_AND3 A B C Y"), qPrintable(subckt));
+    QVERIFY2(subckt.contains("[A B C] Y __mdl_U_AND3"), qPrintable(subckt));
+    QVERIFY2(subckt.contains(".model __mdl_U_AND3 d_and("), qPrintable(subckt));
+    QVERIFY2(entry.instanceLine.contains("XU_AND3 N1 N2 N3 N4 __logic_U_AND3"), qPrintable(entry.instanceLine));
+}
+
+void SpiceDirectiveNetlistTest::symbolDefinitionResolvesExplicitPinMetadata() {
+    Flux::Model::SymbolDefinition symbol("LogicWithMetadata");
+
+    Flux::Model::SymbolPrimitive inPin = Flux::Model::SymbolPrimitive::createPin(QPointF(0, 0), 1, "A");
+    inPin.data["signalDomain"] = "digital_event";
+    inPin.data["signalDirection"] = "input";
+    symbol.addPrimitive(inPin);
+
+    Flux::Model::SymbolPrimitive outPin = Flux::Model::SymbolPrimitive::createPin(QPointF(100, 0), 2, "Y");
+    outPin.data["signalDomain"] = "digital_event";
+    outPin.data["electricalType"] = "Output";
+    symbol.addPrimitive(outPin);
+
+    QVERIFY(symbol.pinPrimitive("1") != nullptr);
+    QVERIFY(symbol.pinPrimitive("A") != nullptr);
+    QCOMPARE(symbol.pinSignalDomain("1"), QString("digital_event"));
+    QCOMPARE(symbol.pinSignalDirection("1"), QString("input"));
+    QCOMPARE(symbol.pinSignalDirection("2"), QString("output"));
+    QCOMPARE(symbol.pinSignalDomain("Y"), QString("digital_event"));
 }
 
 QTEST_MAIN(SpiceDirectiveNetlistTest)

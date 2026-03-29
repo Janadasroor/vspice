@@ -20,6 +20,7 @@
 #include <cmath>
 #include "../../core/config_manager.h"
 #include "../../simulator/core/sim_value_parser.h"
+#include "../../simulator/mixedmode/NetlistManager.h"
 
 using Flux::Model::SymbolDefinition;
 
@@ -34,6 +35,80 @@ struct UserSpiceContentSummary {
     bool hasElementCards = false;
     bool hasLtspiceStartup = false;
 };
+
+bool isLikelyLogicInputPinName(const QString& rawPinName) {
+    const QString pin = rawPinName.trimmed().toLower();
+    if (pin.isEmpty()) return false;
+    if (pin.contains("out") || pin == "q" || pin == "qn" || pin == "qbar" || pin == "y" || pin == "z" || pin == "f")
+        return false;
+    return pin.contains("in") || pin == "a" || pin == "b" || pin == "c" || pin == "d" ||
+           pin == "e" || pin == "clk" || pin == "clock" || pin == "en" || pin == "enable" ||
+           pin == "rst" || pin == "reset" || pin == "set" || pin == "s" || pin == "r" ||
+           pin == "j" || pin == "k" || pin == "t";
+}
+
+bool isLikelyLogicOutputPinName(const QString& rawPinName) {
+    const QString pin = rawPinName.trimmed().toLower();
+    if (pin.isEmpty()) return false;
+    return pin.contains("out") || pin == "q" || pin == "qn" || pin == "qbar" ||
+           pin == "y" || pin == "z" || pin == "f" || pin == "sum" || pin == "carry";
+}
+
+QString sanitizeMixedModeToken(const QString& raw) {
+    QString out = raw.trimmed();
+    out.replace(QRegularExpression("[^A-Za-z0-9_]+"), "_");
+    out.remove(QRegularExpression("^_+"));
+    out.remove(QRegularExpression("_+$"));
+    return out.isEmpty() ? QStringLiteral("MM") : out;
+}
+
+QString mixedModeAdcBridgeLine(const QString& ref, const QString& pinName, const QString& analogNet, const QString& digitalNet) {
+    return QString("XMM_ADC_%1_%2 %3 %4 __viospice_adc_wrap")
+        .arg(sanitizeMixedModeToken(ref), sanitizeMixedModeToken(pinName), analogNet, digitalNet);
+}
+
+QString mixedModeDacBridgeLine(const QString& ref, const QString& pinName, const QString& digitalNet, const QString& analogNet) {
+    return QString("XMM_DAC_%1_%2 %3 %4 __viospice_dac_wrap")
+        .arg(sanitizeMixedModeToken(ref), sanitizeMixedModeToken(pinName), digitalNet, analogNet);
+}
+
+NetlistManager::PinDirection pinDirectionFromMetadata(const SymbolDefinition* sym, const QString& pinName, bool* hasExplicitMetadata = nullptr) {
+    if (hasExplicitMetadata) *hasExplicitMetadata = false;
+    if (!sym) return NetlistManager::PinDirection::INPUT;
+
+    const QString direction = sym->pinSignalDirection(pinName);
+    if (direction == "input") {
+        if (hasExplicitMetadata) *hasExplicitMetadata = true;
+        return NetlistManager::PinDirection::INPUT;
+    }
+    if (direction == "output") {
+        if (hasExplicitMetadata) *hasExplicitMetadata = true;
+        return NetlistManager::PinDirection::OUTPUT;
+    }
+    if (direction == "bidirectional") {
+        if (hasExplicitMetadata) *hasExplicitMetadata = true;
+        return NetlistManager::PinDirection::BIDIRECTIONAL;
+    }
+
+    return NetlistManager::PinDirection::INPUT;
+}
+
+NodeType pinDomainFromMetadata(const SymbolDefinition* sym, const QString& pinName, bool* hasExplicitMetadata = nullptr) {
+    if (hasExplicitMetadata) *hasExplicitMetadata = false;
+    if (!sym) return NodeType::ANALOG;
+
+    const QString domain = sym->pinSignalDomain(pinName);
+    if (domain == "digital" || domain == "digital_event" || domain == "event") {
+        if (hasExplicitMetadata) *hasExplicitMetadata = true;
+        return NodeType::DIGITAL_EVENT;
+    }
+    if (domain == "analog") {
+        if (hasExplicitMetadata) *hasExplicitMetadata = true;
+        return NodeType::ANALOG;
+    }
+
+    return NodeType::ANALOG;
+}
 
 QStringList splitTopLevelSpiceArgs(const QString& text) {
     QStringList args;
@@ -562,6 +637,40 @@ QString rewriteLtspiceSourceTripOptions(const QString& line, QStringList* warnin
     return out;
 }
 
+QString rewriteLtspiceBSourceTripOptions(const QString& line, QStringList* warnings = nullptr) {
+    static const QRegularExpression bSourceRe(
+        "^\\s*(B\\S+)\\s+(\\S+)\\s+(\\S+)\\s+([VIRP])\\s*=\\s*(.+)$",
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = bSourceRe.match(line);
+    if (!match.hasMatch()) return line;
+
+    const QString ref = match.captured(1).trimmed();
+    QString tail = match.captured(5).trimmed();
+
+    static const QRegularExpression tripdvRe("\\btripdv\\s*=\\s*([^\\s]+)", QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression tripdtRe("\\btripdt\\s*=\\s*([^\\s]+)", QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch tripdvMatch = tripdvRe.match(tail);
+    const QRegularExpressionMatch tripdtMatch = tripdtRe.match(tail);
+    if (!tripdvMatch.hasMatch() && !tripdtMatch.hasMatch()) return line;
+
+    const QString tripdv = tripdvMatch.hasMatch() ? tripdvMatch.captured(1).trimmed() : QString();
+    const QString tripdt = tripdtMatch.hasMatch() ? tripdtMatch.captured(1).trimmed() : QString();
+    tail.remove(tripdvRe);
+    tail.remove(tripdtRe);
+    tail = tail.simplified();
+
+    const QString out = QString("%1 %2 %3 %4=%5")
+                            .arg(ref, match.captured(2).trimmed(), match.captured(3).trimmed(), match.captured(4).trimmed(), tail);
+    if (warnings) {
+        warnings->append(QString("Dropped LTspice B-source tripdv=/tripdt= options from %1 because this ngspice configuration rejects them on behavioral sources.").arg(ref));
+        warnings->append(QString("Removed B-source step-rejection options from %1: tripdv=%2 tripdt=%3").arg(
+            ref,
+            tripdv.isEmpty() ? QString("<none>") : tripdv,
+            tripdt.isEmpty() ? QString("<none>") : tripdt));
+    }
+    return out;
+}
+
 void appendLtspiceBSourceOptionWarnings(const QString& line, QStringList* warnings) {
     if (!warnings) return;
 
@@ -576,7 +685,7 @@ void appendLtspiceBSourceOptionWarnings(const QString& line, QStringList* warnin
     }
     if (trimmed.contains(QRegularExpression("\\btripdv\\s*=", QRegularExpression::CaseInsensitiveOption)) ||
         trimmed.contains(QRegularExpression("\\btripdt\\s*=", QRegularExpression::CaseInsensitiveOption))) {
-        warnings->append(QString("LTspice B-source step-rejection options tripdv=/tripdt= detected and passed through unchanged: %1").arg(trimmed));
+        warnings->append(QString("LTspice B-source step-rejection options tripdv=/tripdt= detected; VioSpice will drop them if needed to keep ngspice loadable: %1").arg(trimmed));
     }
     if (trimmed.contains(QRegularExpression("\\blaplace\\s*=", QRegularExpression::CaseInsensitiveOption)) ||
         trimmed.contains(QRegularExpression("\\bwindow\\s*=", QRegularExpression::CaseInsensitiveOption)) ||
@@ -684,6 +793,7 @@ QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings =
     appendLtspiceBSourceOptionWarnings(out, warnings);
     appendLtspiceSourceOptionWarnings(out, warnings);
 
+    out = rewriteLtspiceBSourceTripOptions(out, warnings);
     out = rewriteLtspiceBSourceLaplaceOptions(out, warnings);
     out = rewriteLtspiceBehavioralSourceRpar(out, warnings);
     out = rewriteLtspiceSourceTripOptions(out, warnings);
@@ -1991,6 +2101,65 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
     QMap<QString, QString> powerNetVoltages;
     QStringList savedCurrentVectors;
     QSet<QString> emittedRefs;
+    QSet<QString> digitalDrivenNets;
+    NetlistManager::BridgeModels mixedModeBridgeModels;
+    auto maybeDigitalNet = [&](const QString& netName) {
+        const QString net = netName.trimmed().replace(' ', '_');
+        if (!net.isEmpty() && net != "0") digitalDrivenNets.insert(net);
+    };
+    for (const auto& comp : pkg.components) {
+        if (comp.excludeFromSim) continue;
+        const QString ref = comp.reference;
+        const bool isADevice = ref.startsWith("A", Qt::CaseInsensitive) ||
+                               comp.typeName.toLower().contains("gate") ||
+                               comp.typeName.toLower().contains("digital");
+        if (!isADevice) continue;
+
+        SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(comp.typeName);
+        const QMap<QString, QString> pins = componentPins.value(ref);
+        for (auto it = pins.constBegin(); it != pins.constEnd(); ++it) {
+            bool hasDomainMetadata = false;
+            const NodeType domain = pinDomainFromMetadata(sym, it.key(), &hasDomainMetadata);
+            bool hasDirectionMetadata = false;
+            const NetlistManager::PinDirection direction = pinDirectionFromMetadata(sym, it.key(), &hasDirectionMetadata);
+
+            if (hasDomainMetadata && domain == NodeType::DIGITAL_EVENT &&
+                hasDirectionMetadata &&
+                (direction == NetlistManager::PinDirection::OUTPUT || direction == NetlistManager::PinDirection::BIDIRECTIONAL)) {
+                maybeDigitalNet(it.value());
+                continue;
+            }
+
+            if (isLikelyLogicOutputPinName(it.key()) || !isLikelyLogicInputPinName(it.key())) {
+                maybeDigitalNet(it.value());
+            }
+        }
+    }
+
+    if (!digitalDrivenNets.isEmpty()) {
+        netlist += "* Mixed-mode XSPICE bridges\n";
+        netlist += QString(".model __viospice_adc_bridge adc_bridge(in_low=%1 in_high=%2 rise_delay=%3 fall_delay=%4)\n")
+                       .arg(QString::number(mixedModeBridgeModels.adcLow, 'g', 12),
+                            QString::number(mixedModeBridgeModels.adcHigh, 'g', 12),
+                            QString::number(mixedModeBridgeModels.adcRiseDelay, 'g', 12),
+                            QString::number(mixedModeBridgeModels.adcFallDelay, 'g', 12));
+        netlist += QString(".model __viospice_dac_bridge dac_bridge(out_low=%1 out_high=%2 out_undef=%3 input_load=%4 t_rise=%5 t_fall=%6)\n")
+                       .arg(QString::number(mixedModeBridgeModels.dacLow, 'g', 12),
+                            QString::number(mixedModeBridgeModels.dacHigh, 'g', 12),
+                            QString::number(mixedModeBridgeModels.dacUndef, 'g', 12),
+                            QString::number(mixedModeBridgeModels.dacInputLoad, 'g', 12),
+                            QString::number(mixedModeBridgeModels.dacRiseTime, 'g', 12),
+                            QString::number(mixedModeBridgeModels.dacFallTime, 'g', 12));
+        netlist += ".subckt __viospice_adc_wrap ANA DIG\n";
+        netlist += "* XSPICE adc_bridge: analog wire into event-driven digital logic.\n";
+        netlist += "A_ADC [ANA] [DIG] __viospice_adc_bridge\n";
+        netlist += ".ends __viospice_adc_wrap\n";
+        netlist += ".subckt __viospice_dac_wrap DIG ANA\n";
+        netlist += "* XSPICE dac_bridge: event-driven digital logic into analog wire.\n";
+        netlist += "A_DAC [DIG] [ANA] __viospice_dac_bridge\n";
+        netlist += ".ends __viospice_dac_wrap\n\n";
+    }
+
     for (const auto& comp : pkg.components) {
         if (comp.excludeFromSim) {
             netlist += "* Skipping " + comp.reference + " (Excluded from simulation)\n";
@@ -2290,11 +2459,27 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                 for (const QString& pk : sortedKeys) {
                     QString net = pins[pk].replace(" ", "_");
                     if (net.isEmpty()) net = "NC_" + ref;
-                    
-                    if (pk.toLower().contains("in") || pk.toLower().startsWith("a") || pk.toLower().startsWith("b")) 
+
+                    bool hasDomainMetadata = false;
+                    const NodeType domain = pinDomainFromMetadata(sym, pk, &hasDomainMetadata);
+                    bool hasDirectionMetadata = false;
+                    const NetlistManager::PinDirection direction = pinDirectionFromMetadata(sym, pk, &hasDirectionMetadata);
+                    const bool isExplicitDigitalInput = hasDomainMetadata && domain == NodeType::DIGITAL_EVENT &&
+                                                        hasDirectionMetadata && direction == NetlistManager::PinDirection::INPUT;
+                    const bool shouldTreatAsInput = isExplicitDigitalInput ||
+                                                    (!hasDirectionMetadata && isLikelyLogicInputPinName(pk));
+
+                    if (shouldTreatAsInput) {
+                        if (!digitalDrivenNets.contains(net)) {
+                            const QString bridgedNet = QString("__MM_ADC_%1_%2").arg(sanitizeMixedModeToken(ref), sanitizeMixedModeToken(pk));
+                            netlist += mixedModeAdcBridgeLine(ref, pk, net, bridgedNet) + "\n";
+                            runtimeWarnings.append(QString("Inserted adc_bridge on %1.%2 so analog net %3 can drive XSPICE digital input.").arg(ref, pk, net));
+                            net = bridgedNet;
+                        }
                         inputs.append(net);
-                    else 
+                    } else {
                         outputs.append(net);
+                    }
                 }
                 
                 if (!inputs.isEmpty()) {
@@ -2714,6 +2899,19 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         }
 
         QStringList emittedNodes = nodes;
+        if (!isADevice && !digitalDrivenNets.isEmpty()) {
+            for (int nodeIdx = 0; nodeIdx < emittedNodes.size(); ++nodeIdx) {
+                const QString node = emittedNodes.at(nodeIdx);
+                if (node.startsWith("[") && node.endsWith("]")) continue;
+                if (!digitalDrivenNets.contains(node)) continue;
+
+                const QString bridgedNode = QString("__MM_DAC_%1_%2").arg(sanitizeMixedModeToken(ref), nodeIdx + 1);
+                const QString pinLabel = QString::number(nodeIdx + 1);
+                netlist += mixedModeDacBridgeLine(ref, pinLabel, node, bridgedNode) + "\n";
+                runtimeWarnings.append(QString("Inserted dac_bridge on %1 pin %2 so XSPICE digital net %3 can drive an analog/SPICE node.").arg(ref, pinLabel, node));
+                emittedNodes[nodeIdx] = bridgedNode;
+            }
+        }
         if (line.startsWith("X", Qt::CaseInsensitive)) {
             const SimSubcircuit* subForCount = activeSub ? activeSub : nullptr;
             // Prefer the actual value token (model/subckt name) if already known.

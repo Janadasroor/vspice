@@ -112,6 +112,9 @@ public:
     
     // Connection points (derived from Pin primitives)
     QList<QPointF> connectionPoints() const;
+    const SymbolPrimitive* pinPrimitive(const QString& identifier) const;
+    QString pinSignalDomain(const QString& identifier) const;
+    QString pinSignalDirection(const QString& identifier) const;
     
     // Bounding rect
     QRectF boundingRect() const;
