@@ -122,13 +122,31 @@ QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings =
                 else rewrittenExpr += QString(" + V(%1)").arg(intNode);
 
                 QStringList rewrittenLines;
-                rewrittenLines << QString("%1 %2 0 I=(%3)*(%4)").arg(intDrvRef, intNode, coeff, innerExpr);
+                rewrittenLines << QString("%1 0 %2 I=(%3)*(%4)").arg(intDrvRef, intNode, coeff, innerExpr);
                 rewrittenLines << QString("%1 %2 0 1").arg(intCapRef, intNode);
                 rewrittenLines << QString("%1 %2 0 1G").arg(intLeakRef, intNode);
                 rewrittenLines << QString("%1 %2 %3 V=%4").arg(ref, nplus, nminus, rewrittenExpr);
                 out = rewrittenLines.join("\n");
                 if (warnings) {
                     warnings->append(QString("Expanded LTspice idt(...) in %1 into an explicit behavioral integrator for ngspice.").arg(ref));
+                }
+            }
+        }
+    }
+
+    {
+        static const QRegularExpression bExprRe(
+            "^\\s*(B\\S+\\s+\\S+\\s+\\S+\\s+)([VI])\\s*=\\s*(.+)$",
+            QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch bExprMatch = bExprRe.match(out);
+        if (bExprMatch.hasMatch()) {
+            const QString head = bExprMatch.captured(1);
+            const QString kind = bExprMatch.captured(2);
+            QString expr = bExprMatch.captured(3).trimmed();
+            if (!expr.startsWith('{') && !expr.endsWith('}')) {
+                out = QString("%1%2={%3}").arg(head, kind, expr);
+                if (warnings) {
+                    warnings->append(QString("Wrapped LTspice-style behavioral source expression in braces for ngspice: %1").arg(line.trimmed()));
                 }
             }
         }
@@ -224,9 +242,10 @@ QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings =
             if ((tstep == "0" || tstep == "0.0") && !tmax.isEmpty()) {
                 out = QString(".tran %1 %2").arg(tmax, tstop);
                 if (!tstart.isEmpty()) out += " " + tstart;
+                out += " " + tmax;
                 if (!tail.isEmpty()) out += " " + tail;
                 if (warnings) {
-                    warnings->append(QString("Rewrote .tran with zero print step to use tmax as tstep for ngspice: %1").arg(line.trimmed()));
+                    warnings->append(QString("Rewrote .tran with zero print step to preserve LTspice tmax behavior for ngspice: %1").arg(line.trimmed()));
                 }
             }
         }

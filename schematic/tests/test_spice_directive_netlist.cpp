@@ -223,12 +223,15 @@ void SpiceDirectiveNetlistTest::loadsBoostConverterLtspiceDirectiveInNgspice() {
     QVERIFY2(netlist.contains("Cout Cout__rser 0 220u"), qPrintable(netlist));
     QVERIFY2(netlist.contains("R__RSER_L1 in L1__rser {DCR}"), qPrintable(netlist));
     QVERIFY2(netlist.contains("L1 L1__rser sw1 10u"), qPrintable(netlist));
-    QVERIFY2(netlist.contains("B__INTDRV_B_pi B_pi__idt 0 I=({Ki})*(V(err))"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("B__INTDRV_B_pi 0 B_pi__idt I=({Ki})*(V(err))"), qPrintable(netlist));
     QVERIFY2(netlist.contains("C__INT_B_pi B_pi__idt 0 1"), qPrintable(netlist));
     QVERIFY2(netlist.contains("R__INTLEAK_B_pi B_pi__idt 0 1G"), qPrintable(netlist));
     QVERIFY2(netlist.contains("B_pi pi_out 0 V={Kp}*V(err) + V(B_pi__idt)"), qPrintable(netlist));
     QVERIFY2(netlist.contains(".model D_ideal D(Is=1e-14 Rs=10m Cjo=10p N=1)"), qPrintable(netlist));
-    QVERIFY2(netlist.contains(".tran 100n 5m 0 startup"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("B_err err 0 V={V(target_voltage)-V(out)}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("B_duty duty 0 V={max(0.05,min(0.90,V(pi_out)))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("B_pwm1 ctrl1 0 V={max(0,min(1,(V(duty)-V(saw1))*1000))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains(".tran 100n 5m 0 100n startup"), qPrintable(netlist));
     QVERIFY2(!netlist.contains("\n.end\n.end\n"), qPrintable(netlist));
 
     QTemporaryFile temp;
