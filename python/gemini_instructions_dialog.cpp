@@ -87,7 +87,7 @@ GeminiInstructionsDialog::GeminiInstructionsDialog(const QString& projectPath, Q
     }
 
     if (m_projectPath.isEmpty()) {
-        m_scopeCombo->setItemEnabled(1, false);
+        m_scopeCombo->removeItem(1);
     } else {
         m_scopeCombo->setCurrentIndex(1); // Default to project if available
     }

@@ -523,6 +523,45 @@ QString rewriteLtspiceBehavioralSourceRpar(const QString& line, QStringList* war
     return out;
 }
 
+QString rewriteLtspiceSourceTripOptions(const QString& line, QStringList* warnings = nullptr) {
+    static const QRegularExpression sourceRe(
+        "^\\s*([VI]\\S*)\\s+(\\S+)\\s+(\\S+)\\s+(.+)$",
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = sourceRe.match(line);
+    if (!match.hasMatch()) return line;
+
+    const QString ref = match.captured(1).trimmed();
+    QString rest = match.captured(4).trimmed();
+    if (!(rest.startsWith("PULSE", Qt::CaseInsensitive) || rest.startsWith("PWL", Qt::CaseInsensitive) ||
+          rest.startsWith("SINE", Qt::CaseInsensitive) || rest.startsWith("EXP", Qt::CaseInsensitive) ||
+          rest.startsWith("SFFM", Qt::CaseInsensitive))) {
+        return line;
+    }
+
+    static const QRegularExpression tripdvRe("\\btripdv\\s*=\\s*([^\\s]+)", QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression tripdtRe("\\btripdt\\s*=\\s*([^\\s]+)", QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch tripdvMatch = tripdvRe.match(rest);
+    const QRegularExpressionMatch tripdtMatch = tripdtRe.match(rest);
+    if (!tripdvMatch.hasMatch() && !tripdtMatch.hasMatch()) return line;
+
+    const QString tripdv = tripdvMatch.hasMatch() ? tripdvMatch.captured(1).trimmed() : QString();
+    const QString tripdt = tripdtMatch.hasMatch() ? tripdtMatch.captured(1).trimmed() : QString();
+    rest.remove(tripdvRe);
+    rest.remove(tripdtRe);
+    rest = rest.simplified();
+
+    const QString out = QString("%1 %2 %3 %4")
+                            .arg(ref, match.captured(2).trimmed(), match.captured(3).trimmed(), rest);
+    if (warnings) {
+        warnings->append(QString("Dropped LTspice source tripdv=/tripdt= options from %1 because this ngspice configuration rejects them on independent sources.").arg(ref));
+        warnings->append(QString("Removed step-rejection options from %1: tripdv=%2 tripdt=%3").arg(
+            ref,
+            tripdv.isEmpty() ? QString("<none>") : tripdv,
+            tripdt.isEmpty() ? QString("<none>") : tripdt));
+    }
+    return out;
+}
+
 void appendLtspiceBSourceOptionWarnings(const QString& line, QStringList* warnings) {
     if (!warnings) return;
 
@@ -579,7 +618,7 @@ void appendLtspiceSourceOptionWarnings(const QString& line, QStringList* warning
         }
     if (rest.contains(QRegularExpression("\\btripdv\\s*=", QRegularExpression::CaseInsensitiveOption)) ||
         rest.contains(QRegularExpression("\\btripdt\\s*=", QRegularExpression::CaseInsensitiveOption))) {
-        warnings->append(QString("LTspice source step-rejection options tripdv=/tripdt= detected on %1 and passed through unchanged: %2").arg(ref, line.trimmed()));
+        warnings->append(QString("LTspice source step-rejection options tripdv=/tripdt= detected on %1; VioSpice will drop them if needed to keep ngspice loadable: %2").arg(ref, line.trimmed()));
     }
 }
 
@@ -647,6 +686,7 @@ QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings =
 
     out = rewriteLtspiceBSourceLaplaceOptions(out, warnings);
     out = rewriteLtspiceBehavioralSourceRpar(out, warnings);
+    out = rewriteLtspiceSourceTripOptions(out, warnings);
     out = rewriteLtspiceTriggeredPulseSource(out, warnings);
     out = rewriteLtspiceTriggeredPwlSource(out, warnings);
     out = rewriteLtspiceTriggeredWaveSource(out, "SINE", warnings);
