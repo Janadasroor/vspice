@@ -468,6 +468,7 @@ void SpiceDirectiveDialog::updatePreview() {
     QStringList preview;
     preview << "* SPICE block preview";
     QStringList compatibilityFixes;
+    QStringList compatibilityDiff;
 
     const QStringList lines = collapseSpiceContinuationLines(text);
     for (const QString& rawLine : lines) {
@@ -485,6 +486,8 @@ void SpiceDirectiveDialog::updatePreview() {
         if (rewritten != line) {
             preview << "* compatibility fix: " + line;
             preview << rewritten;
+            compatibilityDiff << QString("- %1").arg(line);
+            compatibilityDiff << QString("+ %1").arg(rewritten);
             for (const QString& fix : lineFixes) {
                 compatibilityFixes << QString("- %1: %2").arg(line, fix);
             }
@@ -497,6 +500,9 @@ void SpiceDirectiveDialog::updatePreview() {
         preview << QString();
         preview << "* Compatibility fixes applied in preview";
         preview << compatibilityFixes;
+        preview << QString();
+        preview << "* Compatibility diff preview";
+        preview << compatibilityDiff;
     }
 
     m_previewEdit->setPlainText(preview.join('\n'));
