@@ -83,6 +83,7 @@ private slots:
     void onViewErrorDetailsClicked();
     void onVoiceClicked();
     void onCustomInstructionsClicked();
+    void onCopyPromptClicked();
 
 private:
     struct ErrorRecord {

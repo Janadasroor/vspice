@@ -1900,6 +1900,10 @@ UserSpiceContentSummary summarizeUserSpiceText(const QString& text, const QStrin
                 summary.warnings.append(QString("LTspice .wave detected in line %1; ngspice does not support LTspice WAV export directives.").arg(lineNo));
             }
 
+            if ((card == ".param" || card == ".func") && line.contains("file=", Qt::CaseInsensitive)) {
+                summary.warnings.append(QString("LTspice file= syntax detected in line %1; verify ngspice compatibility for file-driven expressions or sweeps.").arg(lineNo));
+            }
+
             continue;
         }
 
@@ -1911,6 +1915,12 @@ UserSpiceContentSummary summarizeUserSpiceText(const QString& text, const QStrin
         }
         if (line.contains("table(", Qt::CaseInsensitive)) {
             summary.warnings.append(QString("table(...) detected in line %1; VioSpice will approximate inline point-pair forms for ngspice, but file/include-style forms may still differ.").arg(lineNo));
+        }
+        if (line.contains("wavefile=", Qt::CaseInsensitive)) {
+            summary.warnings.append(QString("LTspice wavefile= source detected in line %1; ngspice compatibility for WAV-backed sources is not implemented in VioSpice.").arg(lineNo));
+        }
+        if (line.contains("chan=", Qt::CaseInsensitive) && line.contains("wavefile=", Qt::CaseInsensitive)) {
+            summary.warnings.append(QString("LTspice chan= option for wavefile-backed sources detected in line %1; verify channel-selection compatibility manually.").arg(lineNo));
         }
         const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
         if (parts.isEmpty()) continue;

@@ -407,6 +407,9 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
         menu.addSeparator();
         QAction* instructionsAct = menu.addAction(QIcon(":/icons/tool_pen.svg"), "Custom Instructions...");
         connect(instructionsAct, &QAction::triggered, this, &GeminiPanel::onCustomInstructionsClicked);
+        menu.addSeparator();
+        QAction* copyPromptAct = menu.addAction(QIcon(":/icons/tool_duplicate.svg"), "Copy System Prompt + Context");
+        connect(copyPromptAct, &QAction::triggered, this, &GeminiPanel::onCopyPromptClicked);
         menu.exec(moreButton->mapToGlobal(QPoint(0, moreButton->height())));
     });
 
@@ -2067,4 +2070,29 @@ void GeminiPanel::parseAndExecuteCommandModeInput(const QString& input) {
              appendSystemNote("<div style='color: #6e7681; font-size: 11px; margin: 5px 0;'>No valid tags or known commands found in Offline Mode. Use &lt;ACTION&gt;tags&lt;/ACTION&gt;.</div>");
         }
     }
+}
+
+void GeminiPanel::onCopyPromptClicked() {
+    QString instructions = gatherInstructions();
+    QString context;
+    if (m_contextProvider) {
+        context = m_contextProvider();
+    }
+
+    QString fullPrompt = "SYSTEM INSTRUCTIONS:\n" + instructions;
+    if (!context.isEmpty()) {
+        fullPrompt += "\n\nSCHEMATIC CONTEXT (JSON):\n" + context;
+    }
+    
+    // Add a few examples of tools for the browser AI to follow
+    fullPrompt += "\n\nTOOL EXECUTION FORMAT:\n"
+                  "If you want to run a tool, you MUST wrap it in <ACTION> tags.\n"
+                  "Examples:\n"
+                  "<ACTION>run_simulation()</ACTION>\n"
+                  "<ACTION>run_erc()</ACTION>\n"
+                  "<ACTION>toggle_panel(side=\"bottom\")</ACTION>\n"
+                  "<ACTION>zoom_to(ref=\"R1\")</ACTION>\n";
+
+    QApplication::clipboard()->setText(fullPrompt);
+    appendSystemNote("<div style='color: #238636; font-weight: bold; margin: 10px 0;'>[SYSTEM] Full Prompt and context copied to clipboard! You can now paste it into an external AI.</div>");
 }

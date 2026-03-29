@@ -387,6 +387,36 @@ struct WizardTemplateDef {
 };
 
 const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
+    auto makeSequentialTemplateJson = [](const QString& symbolName,
+                                         const QString& description,
+                                         const QString& spiceModel,
+                                         const QString& label,
+                                         const QList<SymbolPrimitive>& pins,
+                                         qreal bodyHeight) {
+        SymbolDefinition def(symbolName);
+        def.setDescription(description);
+        def.setCategory("Logic");
+        def.setReferencePrefix("U");
+        def.setSpiceModelName(spiceModel);
+        def.addPrimitive(SymbolPrimitive::createRect(QRectF(-25, -bodyHeight / 2.0, 50, bodyHeight), false));
+        SymbolPrimitive text = SymbolPrimitive::createText(label, QPointF(0, 0), 10, QColor(Qt::black));
+        text.data["hAlign"] = "center";
+        text.data["vAlign"] = "center";
+        def.addPrimitive(text);
+        for (const SymbolPrimitive& pin : pins) {
+            def.addPrimitive(pin);
+        }
+        return def.toJson();
+    };
+
+    auto makeDigitalPin = [](const QPointF& pos, int number, const QString& name,
+                             const QString& orientation, const QString& direction) {
+        SymbolPrimitive pin = SymbolPrimitive::createPin(pos, number, name, orientation, 15.0);
+        pin.data["signalDomain"] = "digital_event";
+        pin.data["signalDirection"] = direction;
+        return pin;
+    };
+
     static const QList<WizardTemplateDef> defs = {
         {"ic_8pins", "IC 8 Pins (DIP/SOIC)", "Dual-inline 8-pin IC frame", "ic_dual", "IC", "U", "IC8", 8, 10.0, 50.0, ""},
         {"ic_14pins", "IC 14 Pins (DIP/SOIC)", "Dual-inline 14-pin IC frame", "ic_dual", "IC", "U", "IC14", 14, 10.0, 60.0, ""},
@@ -403,6 +433,99 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
         {"xnor_2", "XNOR Gate (2-input)", "Digital 2-input XNOR gate", "logic", "Digital", "U", "XNOR2", 3, 10.0, 0.0, "xnor"},
         {"not_1", "NOT Gate (Inverter)", "Digital inverter", "logic", "Digital", "U", "NOT", 2, 10.0, 0.0, "not"},
         {"buf_1", "Buffer Gate", "Digital non-inverting buffer", "logic", "Digital", "U", "BUF", 2, 10.0, 0.0, "buf"},
+        {"d_flipflop", "D Flip-Flop", "Edge-triggered D flip-flop with set/reset and Q/QN outputs", "symbol", "Logic", "U", "D_FlipFlop", 6, 10.0, 0.0, "",
+            makeSequentialTemplateJson(
+                "D_FlipFlop",
+                "Edge-triggered D flip-flop with asynchronous set/reset and complementary outputs",
+                "DFF",
+                "D FF",
+                {
+                    makeDigitalPin(QPointF(-40, -20), 1, "D", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, -5), 2, "CLK", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 10), 3, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 25), 4, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(40, -10), 5, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(40, 10), 6, "QN", "Left", "output"),
+                },
+                70.0)},
+        {"jk_flipflop", "JK Flip-Flop", "Edge-triggered JK flip-flop with set/reset and Q/QN outputs", "symbol", "Logic", "U", "JK_FlipFlop", 7, 10.0, 0.0, "",
+            makeSequentialTemplateJson(
+                "JK_FlipFlop",
+                "Edge-triggered JK flip-flop with asynchronous set/reset and complementary outputs",
+                "JKFF",
+                "JK FF",
+                {
+                    makeDigitalPin(QPointF(-40, -25), 1, "J", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, -10), 2, "K", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 5), 3, "CLK", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 20), 4, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 35), 5, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(40, -10), 6, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(40, 10), 7, "QN", "Left", "output"),
+                },
+                90.0)},
+        {"t_flipflop", "T Flip-Flop", "Edge-triggered toggle flip-flop with set/reset and Q/QN outputs", "symbol", "Logic", "U", "T_FlipFlop", 6, 10.0, 0.0, "",
+            makeSequentialTemplateJson(
+                "T_FlipFlop",
+                "Edge-triggered toggle flip-flop with asynchronous set/reset and complementary outputs",
+                "TFF",
+                "T FF",
+                {
+                    makeDigitalPin(QPointF(-40, -20), 1, "T", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, -5), 2, "CLK", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 10), 3, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 25), 4, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(40, -10), 5, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(40, 10), 6, "QN", "Left", "output"),
+                },
+                70.0)},
+        {"sr_flipflop", "SR Flip-Flop", "Edge-triggered set-reset flip-flop with set/reset and Q/QN outputs", "symbol", "Logic", "U", "SR_FlipFlop", 7, 10.0, 0.0, "",
+            makeSequentialTemplateJson(
+                "SR_FlipFlop",
+                "Edge-triggered set-reset flip-flop with asynchronous set/reset and complementary outputs",
+                "SRFF",
+                "SR FF",
+                {
+                    makeDigitalPin(QPointF(-40, -25), 1, "S", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, -10), 2, "R", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 5), 3, "CLK", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 20), 4, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 35), 5, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(40, -10), 6, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(40, 10), 7, "QN", "Left", "output"),
+                },
+                90.0)},
+        {"d_latch", "D Latch", "Level-sensitive D latch with enable, set/reset, and Q/QN outputs", "symbol", "Logic", "U", "D_Latch", 6, 10.0, 0.0, "",
+            makeSequentialTemplateJson(
+                "D_Latch",
+                "Level-sensitive D latch with asynchronous set/reset and complementary outputs",
+                "DLATCH",
+                "D LAT",
+                {
+                    makeDigitalPin(QPointF(-40, -20), 1, "D", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, -5), 2, "EN", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 10), 3, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 25), 4, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(40, -10), 5, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(40, 10), 6, "QN", "Left", "output"),
+                },
+                70.0)},
+        {"sr_latch", "SR Latch", "Level-sensitive SR latch with enable, set/reset, and Q/QN outputs", "symbol", "Logic", "U", "SR_Latch", 7, 10.0, 0.0, "",
+            makeSequentialTemplateJson(
+                "SR_Latch",
+                "Level-sensitive set-reset latch with enable, asynchronous set/reset, and complementary outputs",
+                "SRLATCH",
+                "SR LAT",
+                {
+                    makeDigitalPin(QPointF(-40, -25), 1, "S", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, -10), 2, "R", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 5), 3, "EN", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 20), 4, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-40, 35), 5, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(40, -10), 6, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(40, 10), 7, "QN", "Left", "output"),
+                },
+                90.0)},
     };
     return defs;
 }

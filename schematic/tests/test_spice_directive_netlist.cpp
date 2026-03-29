@@ -35,6 +35,7 @@ private slots:
     void approximatesLtspiceTableFunction();
     void warnsAboutLtspiceStepFourAndWaveDirectives();
     void warnsAboutLtspiceFuncDynamicScoping();
+    void warnsAboutLtspiceWavefileSources();
     void warnsAboutLtspiceBehavioralAndTriggeredSourceOptions();
     void warnsAboutLtspiceMeasForms();
     void rewritesVoltageSourceInstanceExtras();
@@ -338,6 +339,29 @@ void SpiceDirectiveNetlistTest::warnsAboutLtspiceFuncDynamicScoping() {
     const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
 
     QVERIFY2(netlist.contains("LTspice .func detected in line 2; user-defined functions may rely on LTspice dynamic scoping, so verify ngspice compatibility when referenced inside subcircuits or with local .param overrides."), qPrintable(netlist));
+}
+
+void SpiceDirectiveNetlistTest::warnsAboutLtspiceWavefileSources() {
+    QGraphicsScene scene;
+
+    auto* directive = new SchematicSpiceDirectiveItem(
+        "V1 in 0 wavefile=\"input.wav\" chan=1\n"
+        "I1 out 0 wavefile=\"drive.wav\" chan=0\n"
+        ".tran 1u 1m",
+        QPointF(0, 0));
+    scene.addItem(directive);
+
+    SpiceNetlistGenerator::SimulationParams params;
+    params.type = SpiceNetlistGenerator::Transient;
+    params.step = "1u";
+    params.stop = "1m";
+
+    const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
+
+    QVERIFY2(netlist.contains("LTspice wavefile= source detected in line 1; ngspice compatibility for WAV-backed sources is not implemented in VioSpice."), qPrintable(netlist));
+    QVERIFY2(netlist.contains("LTspice chan= option for wavefile-backed sources detected in line 1; verify channel-selection compatibility manually."), qPrintable(netlist));
+    QVERIFY2(netlist.contains("LTspice wavefile= source detected in line 2; ngspice compatibility for WAV-backed sources is not implemented in VioSpice."), qPrintable(netlist));
+    QVERIFY2(netlist.contains("LTspice chan= option for wavefile-backed sources detected in line 2; verify channel-selection compatibility manually."), qPrintable(netlist));
 }
 
 void SpiceDirectiveNetlistTest::warnsAboutLtspiceBehavioralAndTriggeredSourceOptions() {
