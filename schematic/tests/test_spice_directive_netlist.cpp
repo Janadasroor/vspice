@@ -31,6 +31,7 @@ private slots:
     void rewritesIdtWithInitialConditionAndReset();
     void rewritesLtspiceBehavioralHelperFunctions();
     void approximatesUnsupportedBehavioralTimeFunctions();
+    void approximatesLtspiceTableFunction();
     void warnsAboutLtspiceBehavioralAndTriggeredSourceOptions();
     void warnsAboutLtspiceMeasForms();
     void rewritesVoltageSourceInstanceExtras();
@@ -250,6 +251,27 @@ void SpiceDirectiveNetlistTest::approximatesUnsupportedBehavioralTimeFunctions()
     QVERIFY2(netlist.contains("BABS out2 0 V={(V(b))}"), qPrintable(netlist));
     QVERIFY2(netlist.contains("Approximated LTspice delay(...) by passing through its input expression because this ngspice configuration does not support delay(...)."), qPrintable(netlist));
     QVERIFY2(netlist.contains("Approximated LTspice absdelay(...) by passing through its input expression because this ngspice configuration does not support absdelay(...)."), qPrintable(netlist));
+}
+
+void SpiceDirectiveNetlistTest::approximatesLtspiceTableFunction() {
+    QGraphicsScene scene;
+
+    auto* directive = new SchematicSpiceDirectiveItem(
+        "BTAB out1 0 V={table(V(a), 0, 0, 1, 5, 2, 10)}\n"
+        ".tran 1u 1m",
+        QPointF(0, 0));
+    scene.addItem(directive);
+
+    SpiceNetlistGenerator::SimulationParams params;
+    params.type = SpiceNetlistGenerator::Transient;
+    params.step = "1u";
+    params.stop = "1m";
+
+    const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
+
+    QVERIFY2(netlist.contains("BTAB out1 0 V={(((0)*(u((0)-(V(a)))) + ((5)*(u((V(a))-(0)) + (10)*(1-(u((V(a))-(0))))))*(1-(u((0)-(V(a)))))))}") ||
+             netlist.contains("BTAB out1 0 V={"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Approximated LTspice table(...) with nested conditional interpolation for ngspice compatibility"), qPrintable(netlist));
 }
 
 void SpiceDirectiveNetlistTest::warnsAboutLtspiceBehavioralAndTriggeredSourceOptions() {
@@ -642,6 +664,7 @@ void SpiceDirectiveNetlistTest::mixedModeManagerInsertsAdcAndDacBridges() {
     QVERIFY2(netlist.contains("XMM_DAC") || netlist.contains("XBRDAC"), qPrintable(netlist));
     QVERIFY2(netlist.contains("__mm_U1_A_") || netlist.contains("__MM_ADC"), qPrintable(netlist));
     QVERIFY2(netlist.contains("__mm_RLOAD_1_") || netlist.contains("__MM_DAC"), qPrintable(netlist));
+    QVERIFY2(!netlist.contains("%2"), qPrintable(netlist));
 }
 
 void SpiceDirectiveNetlistTest::logicComponentGeneratesVectorizedSubcircuit() {

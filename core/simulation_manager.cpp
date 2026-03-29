@@ -191,21 +191,29 @@ bool SimulationManager::loadNetlistInternal(const QString& netlist, bool keepSto
         loaded = (rc == 0 && !m_lastLoadFailed);
         if (!loaded) {
             emit outputReceived(QString("Ngspice: failed to load circuit via ngSpice_Circ (rc=%1), falling back to source.").arg(rc));
+            if (m_lastLoadFailed) {
+                if (errorOut) *errorOut = "Ngspice rejected the netlist during parse/model load.";
+                if (!keepStorage) { m_circStorage.clear(); m_circPtrs.clear(); }
+                return false;
+            }
         }
     }
 
     if (!loaded) {
         QTemporaryFile temp(QDir::tempPath() + "/viospice_netlist_XXXXXX.cir");
+        temp.setAutoRemove(false);
         QString sourcePath = netlist;
         if (temp.open()) {
             QTextStream out(&temp);
             for (const QString& line : lines) out << line << "\n";
             out.flush();
+            temp.close();
             sourcePath = temp.fileName();
         }
         m_lastLoadFailed = false;
         QString cmd = "source \"" + sourcePath + "\"";
         const int rc = ngSpice_Command(cmd.toLatin1().data());
+        QFile::remove(sourcePath);
         if (rc != 0) {
             emit outputReceived(QString("Ngspice: source command failed (rc=%1).").arg(rc));
             if (errorOut) *errorOut = "Failed to load netlist into ngspice.";

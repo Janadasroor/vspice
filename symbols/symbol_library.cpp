@@ -1410,7 +1410,7 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
         gate.setCategory("Logic");
         gate.setReferencePrefix("U");
         
-        const bool bubbleOutput = (type == "NAND" || type == "NOR");
+        const bool bubbleOutput = (type == "NAND" || type == "NOR" || type == "XNOR");
 
         if (type == "AND" || type == "NAND") {
             gate.addPrimitive(SymbolPrimitive::createArc(QRectF(-10, -20, 40, 40), -90, 180));
@@ -1425,7 +1425,7 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
                 QPointF(-30, 20), QPointF(-5, 22), QPointF(12, 12), QPointF(30, 0)));
             gate.addPrimitive(SymbolPrimitive::createBezier(
                 QPointF(-30, -20), QPointF(-12, -10), QPointF(-12, 10), QPointF(-30, 20)));
-        } else if (type == "XOR") {
+        } else if (type == "XOR" || type == "XNOR") {
             gate.addPrimitive(SymbolPrimitive::createBezier(
                 QPointF(-30, -20), QPointF(-5, -22), QPointF(12, -12), QPointF(30, 0)));
             gate.addPrimitive(SymbolPrimitive::createBezier(
@@ -1435,6 +1435,11 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
             // XOR extra front arc
             gate.addPrimitive(SymbolPrimitive::createBezier(
                 QPointF(-35, -20), QPointF(-17, -10), QPointF(-17, 10), QPointF(-35, 20)));
+        } else if (type == "BUF") {
+            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, -15), QPointF(-20, 15)));
+            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, -15), QPointF(10, 0)));
+            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, 15), QPointF(10, 0)));
+            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(10, 0), QPointF(30, 0)));
         } else if (type == "NOT") {
             // Draw triangle using lines for robust rendering across old/new polygon loaders.
             gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, -15), QPointF(-20, 15)));
@@ -1448,29 +1453,32 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
             gate.addPrimitive(SymbolPrimitive::createCircle(QPointF(35, 0), 5, false));
         }
         
-        const qreal inAY = (type == "NOT") ? 0.0 : -10.0;
+        const bool singleInputGate = (type == "NOT" || type == "BUF");
+        const qreal inAY = singleInputGate ? 0.0 : -10.0;
         SymbolPrimitive inA = SymbolPrimitive::createPin(QPointF(-45, inAY), 1, "A");
         inA.data["orientation"] = "Right";
-        if (type == "OR" || type == "NOR" || type == "XOR") inA.data["length"] = 15.0;
+        if (type == "OR" || type == "NOR" || type == "XOR" || type == "XNOR") inA.data["length"] = 15.0;
         gate.addPrimitive(inA);
-        if (type != "NOT") {
+        if (!singleInputGate) {
             SymbolPrimitive inB = SymbolPrimitive::createPin(QPointF(-45, 10), 2, "B");
             inB.data["orientation"] = "Right";
-            if (type == "OR" || type == "NOR" || type == "XOR") inB.data["length"] = 15.0;
+            if (type == "OR" || type == "NOR" || type == "XOR" || type == "XNOR") inB.data["length"] = 15.0;
             gate.addPrimitive(inB);
         }
         const qreal outPinX = bubbleOutput ? 55.0 : 45.0;
         SymbolPrimitive outY = SymbolPrimitive::createPin(QPointF(outPinX, 0), 3, "Y");
         outY.data["orientation"] = "Left";
-        outY.data["length"] = (type == "NOT") ? 30.0 : 15.0;
+        outY.data["length"] = singleInputGate ? 30.0 : 15.0;
         gate.addPrimitive(outY);
         addSym(gate);
     };
     addGate("Gate_AND", "AND");
     addGate("Gate_OR", "OR");
     addGate("Gate_XOR", "XOR");
+    addGate("Gate_XNOR", "XNOR");
     addGate("Gate_NAND", "NAND");
     addGate("Gate_NOR", "NOR");
+    addGate("Gate_BUF", "BUF");
     addGate("Gate_NOT", "NOT");
 
     // === Behavioral Sources ===

@@ -28,6 +28,15 @@
 - **CMake 3.16+**
 - **C++20 Compiler** (GCC 10+, Clang 12+, or MSVC 2019+)
 
+### Simulation Engine Setup
+
+Before building VIOSpice, ensure that the custom **ngspice-shared** library is installed to your system:
+
+```bash
+cd path/to/ngspice/release
+sudo make install
+```
+
 ### Installation
 
 1. **Clone the repository**:

@@ -62,6 +62,14 @@ QString sanitizeMixedModeToken(const QString& raw) {
     return out.isEmpty() ? QStringLiteral("MM") : out;
 }
 
+QString pinNameForHeuristics(const SymbolDefinition* sym, const QString& pinIdentifier) {
+    if (!sym) return pinIdentifier;
+    const auto* pin = sym->pinPrimitive(pinIdentifier);
+    if (!pin) return pinIdentifier;
+    const QString name = pin->data.value("name").toString().trimmed();
+    return name.isEmpty() ? pinIdentifier : name;
+}
+
 QString mixedModeAdcBridgeLine(const QString& ref, const QString& pinName, const QString& analogNet, const QString& digitalNet) {
     return QString("XMM_ADC_%1_%2 %3 %4 __viospice_adc_wrap")
         .arg(sanitizeMixedModeToken(ref), sanitizeMixedModeToken(pinName), analogNet, digitalNet);
@@ -626,6 +634,48 @@ QString rewriteUnsupportedLtspiceBehavioralTimeFunctions(const QString& line, QS
     return out;
 }
 
+QString rewriteUnsupportedLtspiceTableFunction(const QString& line, QStringList* warnings = nullptr) {
+    QString out = line;
+    bool changed = false;
+
+    while (true) {
+        const int tableIndex = out.indexOf(QRegularExpression("\\btable\\s*\\(", QRegularExpression::CaseInsensitiveOption));
+        if (tableIndex < 0) break;
+        const int openIndex = out.indexOf('(', tableIndex);
+        const int closeIndex = findMatchingParen(out, openIndex);
+        if (openIndex < 0 || closeIndex < 0) break;
+
+        const QString inner = out.mid(openIndex + 1, closeIndex - openIndex - 1);
+        const QStringList args = splitTopLevelSpiceArgs(inner);
+        if (args.size() < 3) break;
+
+        const QString xExpr = args.at(0).trimmed();
+        QString replacement;
+        if ((args.size() - 1) % 2 == 0) {
+            QString expr = args.last().trimmed();
+            for (int i = args.size() - 3; i >= 1; i -= 2) {
+                const QString xk = args.at(i).trimmed();
+                const QString yk = args.at(i + 1).trimmed();
+                expr = QString("if((%1)<=(%2),(%3),(%4))").arg(xExpr, xk, yk, expr);
+            }
+            replacement = expr;
+        } else {
+            replacement = xExpr;
+            if (warnings) {
+                warnings->append(QString("LTspice table(...) include/file form is not supported; approximated by passing through the lookup input expression in: %1").arg(line.trimmed()));
+            }
+        }
+
+        out.replace(tableIndex, closeIndex - tableIndex + 1, replacement);
+        changed = true;
+    }
+
+    if (changed && warnings) {
+        warnings->append(QString("Approximated LTspice table(...) with nested conditional interpolation for ngspice compatibility in: %1").arg(line.trimmed()));
+    }
+    return out;
+}
+
 QString rewriteLtspiceBSourceLaplaceOptions(const QString& line, QStringList* warnings = nullptr) {
     static const QRegularExpression bSourceRe(
         "^\\s*(B\\S+)\\s+\\S+\\s+\\S+\\s+(?:V|I|R|P)\\s*=.*$",
@@ -1052,6 +1102,13 @@ QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings =
 
     if ((out.contains("delay(", Qt::CaseInsensitive) || out.contains("absdelay(", Qt::CaseInsensitive)) && out.contains("={", Qt::CaseInsensitive)) {
         out = rewriteUnsupportedLtspiceBehavioralTimeFunctions(out, warnings);
+    }
+
+    if (out.contains("table(", Qt::CaseInsensitive) && out.contains("={", Qt::CaseInsensitive)) {
+        out = rewriteUnsupportedLtspiceTableFunction(out, warnings);
+        if (out.contains("if(", Qt::CaseInsensitive)) {
+            out = rewriteLtspiceBehavioralIf(out, warnings);
+        }
     }
 
     if (out.contains(" V={", Qt::CaseInsensitive)) {
@@ -2217,6 +2274,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(comp.typeName);
         const QMap<QString, QString> pins = componentPins.value(ref);
         for (auto it = pins.constBegin(); it != pins.constEnd(); ++it) {
+            const QString heuristicPinName = pinNameForHeuristics(sym, it.key());
             bool hasDomainMetadata = false;
             const NodeType domain = pinDomainFromMetadata(sym, it.key(), &hasDomainMetadata);
             bool hasDirectionMetadata = false;
@@ -2229,7 +2287,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                 continue;
             }
 
-            if (isLikelyLogicOutputPinName(it.key()) || !isLikelyLogicInputPinName(it.key())) {
+            if (isLikelyLogicOutputPinName(heuristicPinName)) {
                 maybeDigitalNet(it.value());
             }
         }
@@ -2552,12 +2610,16 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
             }
 
             // XSPICE A-device vector grouping: [in1 in2 ...] out
+            // For the built-in digital gates we target here, inputs may be vectorized
+            // but the output must remain scalar. Emitting [out] triggers
+            // "Scalar connection expected" errors in ngspice.
             if (isADevice) {
                 QStringList inputs;
                 QStringList outputs;
                 for (const QString& pk : sortedKeys) {
                     QString net = pins[pk].replace(" ", "_");
                     if (net.isEmpty()) net = "NC_" + ref;
+                    const QString heuristicPinName = pinNameForHeuristics(sym, pk);
 
                     bool hasDomainMetadata = false;
                     const NodeType domain = pinDomainFromMetadata(sym, pk, &hasDomainMetadata);
@@ -2566,7 +2628,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                     const bool isExplicitDigitalInput = hasDomainMetadata && domain == NodeType::DIGITAL_EVENT &&
                                                         hasDirectionMetadata && direction == NetlistManager::PinDirection::INPUT;
                     const bool shouldTreatAsInput = isExplicitDigitalInput ||
-                                                    (!hasDirectionMetadata && isLikelyLogicInputPinName(pk));
+                                                    (!hasDirectionMetadata && isLikelyLogicInputPinName(heuristicPinName));
 
                     if (shouldTreatAsInput) {
                         if (!digitalDrivenNets.contains(net)) {
@@ -2581,10 +2643,23 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                     }
                 }
                 
+                // Fallback: If no inputs identified for an A-device with multiple pins, 
+                // assume the last sorted pin is the output (common for generic logic symbols).
+                if (inputs.isEmpty() && outputs.size() >= 2) {
+                    inputs = outputs;
+                    const QString last = inputs.takeLast();
+                    outputs.clear();
+                    outputs.append(last);
+                }
+
                 if (!inputs.isEmpty()) {
                     nodes.append("[" + inputs.join(" ") + "]");
                 }
-                nodes.append(outputs);
+                if (!outputs.isEmpty()) {
+                    for (const QString& outputNet : outputs) {
+                        nodes.append(outputNet);
+                    }
+                }
             } else {
                 for (const QString& pk : sortedKeys) {
                     QString net = pins[pk];
@@ -3004,7 +3079,9 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                 if (node.startsWith("[") && node.endsWith("]")) continue;
                 if (!digitalDrivenNets.contains(node)) continue;
 
-                const QString bridgedNode = QString("__MM_DAC_%1_%2").arg(sanitizeMixedModeToken(ref), nodeIdx + 1);
+                const QString bridgedNode = QString("__MM_DAC_%1_%2")
+                                               .arg(sanitizeMixedModeToken(ref))
+                                               .arg(nodeIdx + 1);
                 const QString pinLabel = QString::number(nodeIdx + 1);
                 netlist += mixedModeDacBridgeLine(ref, pinLabel, node, bridgedNode) + "\n";
                 runtimeWarnings.append(QString("Inserted dac_bridge on %1 pin %2 so XSPICE digital net %3 can drive an analog/SPICE node.").arg(ref, pinLabel, node));
