@@ -62,6 +62,9 @@ signals:
     void itemsHighlighted(const QStringList& references);
     void snippetGenerated(const QString& jsonSnippet);
     void netlistGenerated(const QString& netlistText);
+    void runSimulationRequested();
+    void runERCRequested();
+    void togglePanelRequested(const QString& panelName);
 
 private slots:
     void onSendClicked();
@@ -143,6 +146,7 @@ private:
     QTextEdit* m_errorSummaryView = nullptr;
     QPlainTextEdit* m_errorRawView = nullptr;
     QToolButton* m_errorRawToggle = nullptr;
+    QCheckBox* m_commandModeCheck = nullptr;
 
     // Private Process for this panel instance
     QProcess* m_process = nullptr;
@@ -195,6 +199,7 @@ private:
     void appendSnippetActionButton(const QString& snippetJson);
     void appendNetlistActionButton(const QString& netlistText);
     void processAgentStdoutChunk(const QString& chunkText);
+    void parseAndExecuteCommandModeInput(const QString& input);
     void updateSendEnabled();
     void clearSuggestionButtons();
     void addSuggestionButton(const QString& label, const QString& command);

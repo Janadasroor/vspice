@@ -72,6 +72,57 @@ QString mixedModeDacBridgeLine(const QString& ref, const QString& pinName, const
         .arg(sanitizeMixedModeToken(ref), sanitizeMixedModeToken(pinName), digitalNet, analogNet);
 }
 
+QString normalizeXspiceModelAlias(const QString& rawToken, const QString& typeName) {
+    const QString token = rawToken.trimmed().toLower();
+    const QString type = typeName.trimmed().toLower();
+
+    auto matches = [&](std::initializer_list<const char*> vals) {
+        for (const char* v : vals) {
+            const QString q = QString::fromLatin1(v);
+            if (token == q || type == q) return true;
+        }
+        return false;
+    };
+
+    if (matches({"d_and", "and", "gate_and", "and_gate"})) return "d_and";
+    if (matches({"d_nand", "nand", "gate_nand", "nand_gate"})) return "d_nand";
+    if (matches({"d_or", "or", "gate_or", "or_gate"})) return "d_or";
+    if (matches({"d_nor", "nor", "gate_nor", "nor_gate"})) return "d_nor";
+    if (matches({"d_xor", "xor", "gate_xor", "xor_gate"})) return "d_xor";
+    if (matches({"d_xnor", "xnor", "gate_xnor", "xnor_gate"})) return "d_xnor";
+    if (matches({"d_buffer", "buffer", "buf", "gate_buf", "gate_buffer"})) return "d_buffer";
+    if (matches({"d_inverter", "inverter", "inv", "not", "gate_not", "not_gate"})) return "d_inverter";
+    if (matches({"d_dff", "dff", "flipflop", "flip_flop", "d_flipflop", "dflop", "dflop"})) return "d_dff";
+    if (matches({"d_jkff", "jkff", "jk_flipflop", "jkflop"})) return "d_jkff";
+    if (matches({"d_tff", "tff", "toggle_flipflop", "toggleflop"})) return "d_tff";
+    if (matches({"d_srff", "srff", "sr_flipflop", "set_reset_flipflop"})) return "d_srff";
+    if (matches({"d_dlatch", "dlatch", "d_latch"})) return "d_dlatch";
+    if (matches({"d_srlatch", "srlatch", "sr_latch", "set_reset_latch"})) return "d_srlatch";
+    if (matches({"d_tristate", "tristate", "tri_state"})) return "d_tristate";
+
+    if (token.startsWith("d_")) return token;
+    return QString();
+}
+
+QString defaultXspiceModelLine(const QString& ref, const QString& codeModel) {
+    const QString modelName = QString("__XSPICE_%1").arg(sanitizeMixedModeToken(ref));
+
+    if (codeModel == "d_and" || codeModel == "d_nand" || codeModel == "d_or" ||
+        codeModel == "d_nor" || codeModel == "d_xor" || codeModel == "d_xnor" ||
+        codeModel == "d_buffer" || codeModel == "d_inverter" || codeModel == "d_tristate") {
+        return QString(".model %1 %2(rise_delay=1n fall_delay=1n input_load=1p)")
+            .arg(modelName, codeModel);
+    }
+
+    if (codeModel == "d_dff" || codeModel == "d_jkff" || codeModel == "d_tff" ||
+        codeModel == "d_srff" || codeModel == "d_dlatch" || codeModel == "d_srlatch") {
+        return QString(".model %1 %2(rise_delay=1n fall_delay=1n)")
+            .arg(modelName, codeModel);
+    }
+
+    return QString(".model %1 %2").arg(modelName, codeModel);
+}
+
 NetlistManager::PinDirection pinDirectionFromMetadata(const SymbolDefinition* sym, const QString& pinName, bool* hasExplicitMetadata = nullptr) {
     if (hasExplicitMetadata) *hasExplicitMetadata = false;
     if (!sym) return NetlistManager::PinDirection::INPUT;
@@ -2964,8 +3015,9 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         // Add value
         if (value.isEmpty()) {
             if (isADevice) {
-                // LTspice digital symbols (Prefix=A) require a model token such as
-                // AND/OR/XOR/BUF/SCHMITT/DFLOP/SRFLOP/COUNTER/PHASEDET.
+                // LTspice digital symbols and generic logic symbols frequently store
+                // aliases like AND, gate_and, DFF, BUF. XSPICE requires a .model
+                // instance whose type is the real code model, e.g. d_and or d_dff.
                 value = comp.paramExpressions.value("ltspice.SpiceModel").trimmed();
                 if (value.isEmpty()) value = comp.paramExpressions.value("ltspice.MODEL").trimmed();
                 if (value.isEmpty()) value = comp.paramExpressions.value("ltspice.Model").trimmed();
@@ -2975,12 +3027,19 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                 }
                 if (value.isEmpty()) {
                     const QString tl = comp.typeName.trimmed().toLower();
-                    if (tl.contains("xor")) value = "XOR";
+                    if (tl.contains("xnor")) value = "XNOR";
+                    else if (tl.contains("xor")) value = "XOR";
                     else if (tl.contains("nand")) value = "NAND";
                     else if (tl.contains("nor")) value = "NOR";
                     else if (tl.contains("and")) value = "AND";
                     else if (tl.contains("or")) value = "OR";
-                    else if (tl.contains("inv") || tl.contains("not") || tl.contains("buf")) value = "BUF";
+                    else if (tl.contains("inv") || tl.contains("not")) value = "INV";
+                    else if (tl.contains("buf")) value = "BUF";
+                    else if (tl.contains("jk")) value = "JKFF";
+                    else if (tl.contains("sr") && tl.contains("latch")) value = "SRLATCH";
+                    else if (tl.contains("sr")) value = "SRFF";
+                    else if (tl.contains("dlatch") || tl.contains("d_latch")) value = "DLATCH";
+                    else if (tl.contains("dff") || tl.contains("flip")) value = "DFF";
                     else value = "AND";
                 }
             } else
@@ -3047,6 +3106,28 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                 .arg(value, bjtType);
             switchModelsAdded.insert(value.toLower());
         }
+
+        if (isADevice) {
+            const QString codeModel = normalizeXspiceModelAlias(value, comp.typeName);
+            if (codeModel.isEmpty()) {
+                runtimeWarnings.append(QString("Unknown XSPICE gate model '%1' on %2; defaulted to d_and.").arg(value, ref));
+                value = QString("__XSPICE_%1").arg(sanitizeMixedModeToken(ref));
+                const QString modelLine = defaultXspiceModelLine(ref, "d_and");
+                if (!switchModelsAdded.contains(value.toLower())) {
+                    netlist += modelLine + "\n";
+                    switchModelsAdded.insert(value.toLower());
+                }
+            } else {
+                const QString modelName = QString("__XSPICE_%1").arg(sanitizeMixedModeToken(ref));
+                const QString modelLine = defaultXspiceModelLine(ref, codeModel);
+                value = modelName;
+                if (!switchModelsAdded.contains(modelName.toLower())) {
+                    netlist += modelLine + "\n";
+                    switchModelsAdded.insert(modelName.toLower());
+                }
+            }
+        }
+
         line += " " + value;
         if (!value.endsWith("\n")) line += "\n";
         
