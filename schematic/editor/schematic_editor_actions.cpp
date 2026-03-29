@@ -48,6 +48,8 @@
 #include "../dialogs/signal_generator_properties_dialog.h"
 #include "../dialogs/led_properties_dialog.h"
 #include "../dialogs/switch_properties_dialog.h"
+#include "../items/tuning_slider_symbol_item.h"
+#include "../dialogs/tuning_slider_properties_dialog.h"
 #include "../dialogs/voltage_controlled_switch_dialog.h"
 #include "../dialogs/csw_properties_dialog.h"
 #include "../dialogs/vcvs_properties_dialog.h"
@@ -828,7 +830,21 @@ void SchematicEditor::onItemDoubleClicked(SchematicItem* item) {
         // Support both specialized OscilloscopeItem and InstrumentProbeItem(Oscilloscope)
         openOscilloscopeWindow(item);
         return;
-    } else if (item->itemTypeName().contains("LogicAnalyzer", Qt::CaseInsensitive) || 
+    } else if (item->itemTypeName() == "TuningSlider") {
+        if (auto* slider = dynamic_cast<TuningSliderSymbolItem*>(item)) {
+            TuningSliderPropertiesDialog dlg(slider, this);
+            if (dlg.exec() == QDialog::Accepted) {
+                QJsonObject newState = slider->toJson();
+                newState["reference"] = dlg.reference();
+                newState["min"] = dlg.minValue();
+                newState["max"] = dlg.maxValue();
+                newState["current"] = dlg.currentValue();
+                m_undoStack->push(new BulkChangePropertyCommand(m_scene, slider, newState));
+            }
+            return;
+        }
+    } else if (item->itemTypeName().contains("LogicAnalyzer", Qt::CaseInsensitive) ||
+ 
                item->itemTypeName().contains("Logic Analyzer", Qt::CaseInsensitive)) {
         
         QString id = item->id().toString();

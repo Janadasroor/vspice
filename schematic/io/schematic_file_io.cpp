@@ -19,6 +19,7 @@
 #include "schematic_sheet_item.h"
 #include "hierarchical_port_item.h"
 #include "../items/voltage_source_item.h"
+#include "../items/tuning_slider_symbol_item.h"
 
 #include <QFile>
 #include <QJsonDocument>

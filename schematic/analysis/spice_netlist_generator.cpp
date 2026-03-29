@@ -6,6 +6,7 @@
 #include "../../symbols/models/symbol_definition.h"
 #include "../../simulator/bridge/model_library_manager.h"
 #include "../items/schematic_spice_directive_item.h"
+#include "../items/tuning_slider_symbol_item.h"
 #include <QGraphicsScene>
 #include <QSet>
 #include <QMap>
@@ -2104,6 +2105,16 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
     // 0. Append SPICE Directives from schematic at the TOP 
     // This ensures .params and .model are defined before use
     netlist += "* Custom SPICE Directives\n";
+    
+    // --- Tuning Slider Parameters ---
+    for (QGraphicsItem* item : scene->items()) {
+        if (auto* slider = dynamic_cast<TuningSliderSymbolItem*>(item)) {
+            QString ref = slider->reference().trimmed();
+            if (!ref.isEmpty()) {
+                netlist += QString(".param %1 = %2\n").arg(ref).arg(slider->currentValue());
+            }
+        }
+    }
     QSet<QString> switchModelsAdded;
     QSet<QString> userDeclaredModelFiles;
     QSet<QString> userElementRefs;

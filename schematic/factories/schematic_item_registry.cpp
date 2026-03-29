@@ -31,6 +31,7 @@
 #include "smart_signal_item.h"
 #include "instrument_probe_item.h"
 #include "schematic_spice_directive_item.h"
+#include "tuning_slider_symbol_item.h"
 
 using Flux::Model::SymbolDefinition;
 
@@ -469,6 +470,12 @@ void SchematicItemRegistry::registerBuiltInItems() {
 
     factory.registerItemType("Spice Directive", [](QPointF pos, const QJsonObject&, QGraphicsItem* parent) -> SchematicItem* {
         return new SchematicSpiceDirectiveItem("", pos, parent);
+    });
+
+    factory.registerItemType("Tuning Slider", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        auto* item = new TuningSliderSymbolItem(pos, parent);
+        if (!properties.isEmpty()) item->fromJson(properties);
+        return item;
     });
 
     factory.registerItemType("Switch", [](QPointF pos, const QJsonObject&, QGraphicsItem* parent) -> SchematicItem* {

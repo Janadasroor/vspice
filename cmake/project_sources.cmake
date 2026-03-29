@@ -143,6 +143,8 @@ set(SCHEMATIC_SOURCES
     schematic/dialogs/signal_generator_properties_dialog.h
     schematic/dialogs/logic_analyzer_properties_dialog.cpp
     schematic/dialogs/logic_analyzer_properties_dialog.h
+    schematic/dialogs/tuning_slider_properties_dialog.cpp
+    schematic/dialogs/tuning_slider_properties_dialog.h
     schematic/dialogs/led_properties_dialog.cpp
     schematic/dialogs/led_properties_dialog.h
     schematic/dialogs/switch_properties_dialog.cpp
@@ -251,13 +253,17 @@ set(SCHEMATIC_SOURCES
     schematic/items/blinking_led_item.cpp
     schematic/items/smart_signal_item.h
     schematic/items/smart_signal_item.cpp
+    schematic/items/simulation_overlay_item.h
     schematic/items/signal_generator_item.cpp
     schematic/items/signal_generator_item.h
     schematic/items/logic_analyzer_item.cpp
     schematic/items/logic_analyzer_item.h
     schematic/items/oscilloscope_item.cpp
+    schematic/items/oscilloscope_item.h
     schematic/items/tuning_slider_item.cpp
     schematic/items/tuning_slider_item.h
+    schematic/items/tuning_slider_symbol_item.cpp
+    schematic/items/tuning_slider_symbol_item.h
     schematic/items/instrument_probe_item.cpp
     schematic/items/instrument_probe_item.h
     schematic/items/schematic_page_item.cpp
