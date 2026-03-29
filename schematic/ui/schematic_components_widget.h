@@ -11,7 +11,7 @@
 #include <QLineEdit>
 #include <QLabel>
 
-class SymbolPreviewPopup;
+#include "../../symbols/ui/symbol_preview_widget.h"
 
 class SchematicComponentsWidget : public QWidget {
     Q_OBJECT
@@ -50,7 +50,7 @@ private:
     QSortFilterProxyModel *m_proxyModel;
 
     SymbolDefinition m_selectedSymbol;
-    SymbolPreviewPopup* m_previewPopup;
+    SymbolPreviewWidget* m_previewPopup;
 
 private slots:
     void onItemHovered(const QModelIndex& index);

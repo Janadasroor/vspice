@@ -77,6 +77,10 @@ set(SYMBOLS_SOURCES
     symbols/kicad_symbol_importer.h
     symbols/ltspice_symbol_importer.cpp
     symbols/ltspice_symbol_importer.h
+    symbols/ui/symbol_preview_widget.cpp
+    symbols/ui/symbol_preview_widget.h
+    symbols/ui/ai_datasheet_import_dialog.cpp
+    symbols/ui/ai_datasheet_import_dialog.h
 )
 
 # =============================================================================

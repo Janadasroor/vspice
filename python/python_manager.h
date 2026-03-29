@@ -14,12 +14,11 @@ class PythonManager : public QObject {
 public:
     static PythonManager& instance();
 
-    /**
-     * @brief Executes a python script located in the python/scripts directory.
-     * @param scriptName Name of the script (e.g., "gemini_query.py")
-     * @param args Arguments to pass to the script
-     */
     void runScript(const QString& scriptName, const QStringList& args = {});
+
+    static QString getPythonExecutable();
+    static QProcessEnvironment getConfiguredEnvironment();
+    static QString getScriptsDir();
 
 signals:
     /**

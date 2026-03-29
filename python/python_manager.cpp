@@ -13,7 +13,7 @@ PythonManager::PythonManager(QObject* parent) : QObject(parent) {
 }
 
 void PythonManager::runScript(const QString& scriptName, const QStringList& args) {
-    QString fullPath = QDir(getScriptsPath()).absoluteFilePath(scriptName);
+    QString fullPath = QDir(getScriptsDir()).absoluteFilePath(scriptName);
     
     if (!QFile::exists(fullPath)) {
         emit scriptError(tr("Script not found: %1").arg(fullPath));
@@ -21,18 +21,7 @@ void PythonManager::runScript(const QString& scriptName, const QStringList& args
     }
 
     QProcess* process = new QProcess(this);
-    
-    // Inject API Key from configuration
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    QString apiKey = ConfigManager::instance().geminiApiKey();
-    if (!apiKey.isEmpty()) {
-        env.insert("GEMINI_API_KEY", apiKey);
-    }
-    QString octoKey = ConfigManager::instance().octopartApiKey();
-    if (!octoKey.isEmpty()) {
-        env.insert("OCTOPART_API_KEY", octoKey);
-    }
-    process->setProcessEnvironment(env);
+    process->setProcessEnvironment(getConfiguredEnvironment());
     
     connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
         QByteArray data = process->readAllStandardOutput();
@@ -54,18 +43,7 @@ void PythonManager::runScript(const QString& scriptName, const QStringList& args
         process->deleteLater();
     });
 
-    // Use venv python if available, otherwise fallback to system python3
-    QString scriptsDir = getScriptsPath();
-    // Path: viospice/python/scripts -> ../venv/bin/python -> viospice/python/venv/bin/python
-    QString venvPython = QDir(scriptsDir).absoluteFilePath("../venv/bin/python");
-    QString pythonExec = "python3";
-    
-    if (QFile::exists(venvPython)) {
-        pythonExec = venvPython;
-        qDebug() << "Using virtual environment python:" << pythonExec;
-    } else {
-        qDebug() << "Virtual environment not found at" << venvPython << ", using system python3";
-    }
+    QString pythonExec = getPythonExecutable();
     
     QStringList allArgs;
     allArgs << fullPath << args;
@@ -79,8 +57,30 @@ void PythonManager::runScript(const QString& scriptName, const QStringList& args
     }
 }
 
-QString PythonManager::getScriptsPath() const {
-    // In dev environment, look relative to project root
-    // In production, this would be in app bundle/install dir
+QString PythonManager::getScriptsDir() {
     return QCoreApplication::applicationDirPath() + "/../python/scripts";
+}
+
+QString PythonManager::getPythonExecutable() {
+    QString scriptsDir = getScriptsDir();
+    QString venvPython = QDir(scriptsDir).absoluteFilePath("../venv/bin/python");
+    if (QFile::exists(venvPython)) {
+        return venvPython;
+    }
+    return "python3";
+}
+
+QProcessEnvironment PythonManager::getConfiguredEnvironment() {
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QString geminiKey = ConfigManager::instance().geminiApiKey();
+    if (!geminiKey.isEmpty()) {
+        env.insert("GEMINI_API_KEY", geminiKey);
+        // Also insert GOOGLE_API_KEY as some newer libs expect that
+        env.insert("GOOGLE_API_KEY", geminiKey);
+    }
+    QString octopartKey = ConfigManager::instance().octopartApiKey();
+    if (!octopartKey.isEmpty()) {
+        env.insert("OCTOPART_API_KEY", octopartKey);
+    }
+    return env;
 }

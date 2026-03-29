@@ -81,5 +81,6 @@ opencode.json
 ui-map/*
 ui-ux/*
 tests/DATA/*
+tests/docs/*
 viospicelib/*
 .log

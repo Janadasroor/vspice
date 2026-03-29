@@ -29,7 +29,10 @@
 #include "symbol_commands.h"
 #include "pin_table_dialog.h"
 #include "pin_modes_dialog.h"
+#include "ui/ai_datasheet_import_dialog.h"
+#include "../schematic/dialogs/subcircuit_picker_dialog.h"
 #include "../core/text_resolver.h"
+#include "../simulator/bridge/model_library_manager.h"
 #include "../../core/ui/text_properties_dialog.h"
 
 #include <QGraphicsDropShadowEffect>
@@ -292,6 +295,31 @@ QString detectModelNameFromFile(const QString& filePath, const QString& prefix) 
     if (!foundSubckt.isEmpty()) return foundSubckt;
     if (!foundModel.isEmpty()) return foundModel;
     return QString();
+}
+
+QPair<QString, QString> classifyModelBindingPath(const QString& absolutePath, const QString& projectKey) {
+    const QString cleanPath = QDir::cleanPath(QDir::fromNativeSeparators(absolutePath));
+    if (cleanPath.isEmpty()) return {QString("none"), QString()};
+
+    if (!projectKey.trimmed().isEmpty()) {
+        const QString cleanProject = QDir::cleanPath(QDir::fromNativeSeparators(projectKey));
+        const QString relativeProjectPath = QDir(cleanProject).relativeFilePath(cleanPath);
+        if (!relativeProjectPath.startsWith("../") && relativeProjectPath != "..") {
+            return {QString("project"), QDir::fromNativeSeparators(relativeProjectPath)};
+        }
+    }
+
+    const QStringList roots = ConfigManager::instance().libraryRoots();
+    for (const QString& root : roots) {
+        if (root.trimmed().isEmpty()) continue;
+        const QString cleanRoot = QDir::cleanPath(QDir::fromNativeSeparators(root));
+        const QString relativeRootPath = QDir(cleanRoot).relativeFilePath(cleanPath);
+        if (!relativeRootPath.startsWith("../") && relativeRootPath != "..") {
+            return {QString("library"), QDir::fromNativeSeparators(relativeRootPath)};
+        }
+    }
+
+    return {QString("absolute"), cleanPath};
 }
 }
 #include <QTableWidget>
@@ -1610,6 +1638,7 @@ void SymbolEditor::setSymbolDefinition(const SymbolDefinition& def) {
 }
 
 void SymbolEditor::applySymbolDefinition(const SymbolDefinition& def) {
+    if (m_livePreview) m_livePreview->setSymbol(def);
     // 1. Capture current selection indices
     QList<int> selectedIndices;
     for (QGraphicsItem* item : m_scene->selectedItems()) {
@@ -1722,6 +1751,87 @@ SymbolDefinition SymbolEditor::symbolDefinition() const {
     return def;
 }
 
+QStringList SymbolEditor::currentSymbolPinNames() const {
+    QStringList pinNames;
+    QList<const SymbolPrimitive*> pinPrimitives;
+    for (const SymbolPrimitive& prim : m_symbol.primitives()) {
+        if (prim.type == SymbolPrimitive::Pin) pinPrimitives.append(&prim);
+    }
+
+    std::sort(pinPrimitives.begin(), pinPrimitives.end(), [](const SymbolPrimitive* a, const SymbolPrimitive* b) {
+        return a->data.value("number").toInt() < b->data.value("number").toInt();
+    });
+
+    for (const SymbolPrimitive* prim : pinPrimitives) {
+        pinNames << prim->data.value("name").toString().trimmed();
+    }
+    return pinNames;
+}
+
+void SymbolEditor::openSubcircuitPicker() {
+    const QString currentModel = m_modelNameEdit ? m_modelNameEdit->text().trimmed() : QString();
+    SubcircuitPickerDialog dlg(currentModel, currentSymbolPinNames(), this);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    const QString selected = dlg.selectedModel().trimmed();
+    if (selected.isEmpty()) return;
+
+    if (m_modelNameEdit) m_modelNameEdit->setText(selected);
+    if (m_modelSourceCombo && m_modelPathEdit) {
+        const QString libraryPath = ModelLibraryManager::instance().findLibraryPath(selected).trimmed();
+        if (!libraryPath.isEmpty()) {
+            const auto binding = classifyModelBindingPath(libraryPath, m_projectKey);
+            const int sourceIndex = m_modelSourceCombo->findData(binding.first);
+            if (sourceIndex >= 0) m_modelSourceCombo->setCurrentIndex(sourceIndex);
+            m_modelPathEdit->setText(binding.second);
+        }
+    }
+
+    if (dlg.applySmartMapRequested() || dlg.applyByOrderRequested()) {
+        const QStringList subcktPins = dlg.applySmartMapRequested()
+            ? dlg.selectedSuggestedMapping()
+            : dlg.selectedSubcktPins();
+
+        QMap<int, QString> mapping;
+        QList<const SymbolPrimitive*> pinPrimitives;
+        for (const SymbolPrimitive& prim : m_symbol.primitives()) {
+            if (prim.type == SymbolPrimitive::Pin) pinPrimitives.append(&prim);
+        }
+
+        std::sort(pinPrimitives.begin(), pinPrimitives.end(), [](const SymbolPrimitive* a, const SymbolPrimitive* b) {
+            return a->data.value("number").toInt() < b->data.value("number").toInt();
+        });
+
+        for (int i = 0; i < pinPrimitives.size(); ++i) {
+            const int pinNumber = pinPrimitives.at(i)->data.value("number").toInt();
+            const QString pinName = pinPrimitives.at(i)->data.value("name").toString().trimmed();
+            const QString mappedPin = (i < subcktPins.size()) ? subcktPins.at(i).trimmed() : QString();
+            mapping.insert(pinNumber, mappedPin.isEmpty() ? pinName : mappedPin);
+        }
+
+        m_symbol.setSpiceNodeMapping(mapping);
+        updateSubcktMappingTable();
+    }
+
+    updateCodePreview();
+}
+
+void SymbolEditor::onAIDatasheetImport() {
+    AIDatasheetImportDialog dlg(this);
+    if (dlg.exec() == QDialog::Accepted) {
+        const auto pins = dlg.generatedPins();
+        if (!pins.isEmpty()) {
+            const SymbolDefinition oldDef = m_symbol;
+            for (const auto& pin : pins) {
+                m_symbol.addPrimitive(pin);
+            }
+            // Mark as modified and refresh preview/view
+            applySymbolDefinition(m_symbol);
+            m_undoStack->push(new UpdateSymbolCommand(this, oldDef, m_symbol, tr("AI Pin Generation")));
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  SymbolEditor – UI Setup
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1813,7 +1923,11 @@ void SymbolEditor::setupUI() {
     modelPathLayout->addWidget(m_modelPathEdit);
     modelPathLayout->addWidget(modelBrowse);
     modelForm->addRow("Model File:", modelPathLayout);
-    modelForm->addRow("Model Name:", m_modelNameEdit);
+    QHBoxLayout* modelNameLayout = new QHBoxLayout();
+    QPushButton* pickSubckt = new QPushButton("Pick...");
+    modelNameLayout->addWidget(m_modelNameEdit);
+    modelNameLayout->addWidget(pickSubckt);
+    modelForm->addRow("Model Name:", modelNameLayout);
     infoLayout->addWidget(modelGroup);
 
     connect(modelBrowse, &QPushButton::clicked, this, [this]() {
@@ -1823,6 +1937,8 @@ void SymbolEditor::setupUI() {
             tryAutoDetectModelName();
         }
     });
+
+    connect(pickSubckt, &QPushButton::clicked, this, &SymbolEditor::openSubcircuitPicker);
 
     auto updateModelPathState = [this]() {
         const QString src = m_modelSourceCombo->currentData().toString();
@@ -1935,6 +2051,10 @@ void SymbolEditor::setupUI() {
     connect(m_aiPanel, &GeminiPanel::symbolJsonGenerated, this, &SymbolEditor::onAiSymbolGenerated);
     aiLayout->addWidget(m_aiPanel);
     m_propsTabWidget->addTab(aiWidget, "Gemini AI");
+    
+    // Tab 4: Live Preview
+    m_livePreview = new SymbolPreviewWidget();
+    m_propsTabWidget->addTab(m_livePreview, "Live Preview");
     
     m_propsDock->setWidget(m_propsTabWidget);
     addDockWidget(Qt::RightDockWidgetArea, m_propsDock);
@@ -2563,6 +2683,10 @@ void SymbolEditor::createMenuBar() {
     editMenu->addAction("Select &All", this, [this](){ 
         for (auto* it : m_scene->items()) it->setSelected(true); 
     }, QKeySequence::SelectAll);
+
+    // --- AI Menu ---
+    QMenu* aiMenu = mb->addMenu("&AI");
+    aiMenu->addAction(getThemeIcon(":/icons/tool_gear.svg"), "Generate Pins from Datasheet Text...", this, &SymbolEditor::onAIDatasheetImport);
 
     // --- View Menu (The core request) ---
     QMenu* viewMenu = mb->addMenu("&View");
@@ -5844,6 +5968,7 @@ void SymbolEditor::updatePropertiesPanel() {
 }
 
 void SymbolEditor::onPropertyChanged(const QString& name, const QVariant& value) {
+    if (m_livePreview) m_livePreview->setSymbol(m_symbol);
     QList<QGraphicsItem*> selected = m_scene->selectedItems();
 
     if (selected.size() == 1) {

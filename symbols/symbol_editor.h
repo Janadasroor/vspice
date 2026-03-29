@@ -20,6 +20,7 @@
 #include "models/symbol_definition.h"
 #include "symbol_editor_view.h"
 #include "../python/gemini_panel.h"
+#include "ui/symbol_preview_widget.h"
 
 using Flux::Model::SymbolDefinition;
 using Flux::Model::SymbolPrimitive;
@@ -69,6 +70,7 @@ private slots:
      void onBezierEditPointDragged(QPointF newPos);
      void updateBezierEditPreview();
     void onNewSymbol();
+    void onAIDatasheetImport();
     void onCloneSymbol(class QTreeWidgetItem* item, int column);
     void onRotateCW();
     void onRotateCCW();
@@ -158,6 +160,8 @@ private:
     void updatePinTable();
     void updateSubcktMappingTable();
     QWidget* createSymbolMetadataWidget();
+    void openSubcircuitPicker();
+    QStringList currentSymbolPinNames() const;
      void populateLibraryTree();
       void updateCodePreview();
       void updatePinPreview(QPointF pos);
@@ -280,6 +284,7 @@ protected:
     QGraphicsView* m_libPreviewView = nullptr;
     QGraphicsScene* m_libPreviewScene = nullptr;
     class GeminiPanel* m_aiPanel = nullptr;
+    SymbolPreviewWidget* m_livePreview = nullptr;
     
     // Bulk Pin Edits
     QComboBox* m_pinBulkOrientation = nullptr;

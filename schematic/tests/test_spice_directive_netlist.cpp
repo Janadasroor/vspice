@@ -13,6 +13,9 @@
 #include <QTimer>
 #include <QTextStream>
 
+#include <algorithm>
+#include <cmath>
+
 class SpiceDirectiveNetlistTest : public QObject {
     Q_OBJECT
 
@@ -22,6 +25,8 @@ private slots:
     void rewritesSimpleLtspiceIfExpressions();
     void rewritesIfWithTrueAndFalseBranches();
     void rewritesLtspiceBooleanOperators();
+    void rewritesIdtWithInitialConditionAndReset();
+    void rewritesLtspiceBehavioralHelperFunctions();
     void warnsAboutLtspiceMeasForms();
     void loadsBoostConverterLtspiceDirectiveInNgspice();
     void boostConverterFeedbackDoesNotRunAway();
@@ -152,6 +157,61 @@ void SpiceDirectiveNetlistTest::rewritesLtspiceBooleanOperators() {
     QVERIFY2(netlist.contains("table(...)"), qPrintable(netlist));
 }
 
+void SpiceDirectiveNetlistTest::rewritesIdtWithInitialConditionAndReset() {
+    QGraphicsScene scene;
+
+    auto* directive = new SchematicSpiceDirectiveItem(
+        "BPI pi 0 V={Kp}*V(err)+{Ki}*idt(V(err), 1.25, V(rst))\n"
+        "BSDT ps 0 V=sdt(V(err), 0.5)\n"
+        ".tran 1u 1m",
+        QPointF(0, 0));
+    scene.addItem(directive);
+
+    SpiceNetlistGenerator::SimulationParams params;
+    params.type = SpiceNetlistGenerator::Transient;
+    params.step = "1u";
+    params.stop = "1m";
+
+    const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
+
+    QVERIFY2(netlist.contains("B__INTDRV_BPI 0 BPI__idt I={(1-(u((V(rst))-(0.5))))*(({Ki})*(V(err)))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("B__INTRESET_BPI 0 BPI__idt I={(u((V(rst))-(0.5)))*(1e6)*((1.25)-V(BPI__idt))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains(".ic V(BPI__idt)=1.25"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BPI pi 0 V={{Kp}*V(err) + V(BPI__idt)}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("B__INTDRV_BSDT 0 BSDT__idt I={(1)*(V(err))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains(".ic V(BSDT__idt)=0.5"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BSDT ps 0 V={V(BSDT__idt)}"), qPrintable(netlist));
+}
+
+void SpiceDirectiveNetlistTest::rewritesLtspiceBehavioralHelperFunctions() {
+    QGraphicsScene scene;
+
+    auto* directive = new SchematicSpiceDirectiveItem(
+        "BBUF out1 0 V=buf(V(a))\n"
+        "BINV out2 0 V=inv(V(b))\n"
+        "BUR out3 0 V=uramp(V(c)-1)\n"
+        "BLIM out4 0 V=limit(V(x), -1, 2)\n"
+        "BMOD out5 0 V=idtmod(V(err), 0, 1, 0)\n"
+        ".tran 1u 1m",
+        QPointF(0, 0));
+    scene.addItem(directive);
+
+    SpiceNetlistGenerator::SimulationParams params;
+    params.type = SpiceNetlistGenerator::Transient;
+    params.step = "1u";
+    params.stop = "1m";
+
+    const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
+
+    QVERIFY2(netlist.contains("BBUF out1 0 V={u((V(a))-(0.5))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BINV out2 0 V={(1-u((V(b))-(0.5)))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BUR out3 0 V={((V(c)-1)*u(V(c)-1))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BLIM out4 0 V={min(max((V(x)),min((-1),(2))),max((-1),(2)))}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("BMOD out5 0 V={idtmod(V(err), 0, 1, 0)}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Rewrote LTspice behavioral helper functions"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("idtmod(...) detected and passed through unchanged"), qPrintable(netlist));
+}
+
 void SpiceDirectiveNetlistTest::warnsAboutLtspiceMeasForms() {
     QGraphicsScene scene;
 
@@ -237,7 +297,13 @@ void SpiceDirectiveNetlistTest::loadsBoostConverterLtspiceDirectiveInNgspice() {
     QVERIFY2(netlist.contains("B_err err 0 V={V(target_voltage)-V(out)}"), qPrintable(netlist));
     QVERIFY2(netlist.contains("B_duty duty 0 V={max(0.05,min(0.90,V(pi_out)))}"), qPrintable(netlist));
     QVERIFY2(netlist.contains("B_pwm1 ctrl1 0 V={max(0,min(1,(V(duty)-V(saw1))*1000))}"), qPrintable(netlist));
-    QVERIFY2(netlist.contains(".tran 100n 5m 0 100n uic"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("Vin in 0 PWL(0 0 20u {V_in})"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("V__STARTUPSRC_V_ref V_ref__startup 0 PWL(0 12 1m 24)"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("B__STARTUPBUF_V_ref target_voltage 0 V={(min(1,max(0,time/20u)))*V(V_ref__startup,0)}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("V__STARTUPSRC_V_saw1 V_saw1__startup 0 PULSE(0 1 0 {Tperiod - 20n} 10n 10n {Tperiod})"), qPrintable(netlist));
+    QVERIFY2(netlist.contains("B__STARTUPBUF_V_saw1 saw1 0 V={(min(1,max(0,time/20u)))*V(V_saw1__startup,0)}"), qPrintable(netlist));
+    QVERIFY2(netlist.contains(".tran 100n 5m 0 100n"), qPrintable(netlist));
+    QVERIFY2(!netlist.contains(".tran 100n 5m 0 100n uic"), qPrintable(netlist));
     // Check that 'startup' is NOT in any active command line
     QVERIFY2(!netlist.contains(QRegularExpression("^\\.tran.*\\bstartup\\b", QRegularExpression::CaseInsensitiveOption | QRegularExpression::MultilineOption)), qPrintable(netlist));
     QVERIFY2(!netlist.contains("\n.end\n.end\n"), qPrintable(netlist));
@@ -324,18 +390,69 @@ void SpiceDirectiveNetlistTest::boostConverterFeedbackDoesNotRunAway() {
     RawData data;
     QString parseError;
     QVERIFY2(RawDataParser::loadRawAscii(rawPath, &data, &parseError), qPrintable(parseError));
-    int outIndex = -1;
-    for (int i = 0; i < data.varNames.size(); ++i) {
-        if (data.varNames.at(i).compare("v(out)", Qt::CaseInsensitive) == 0) {
-            outIndex = i;
-            break;
-        }
-    }
-    QVERIFY2(outIndex >= 1, qPrintable(data.varNames.join(", ")));
-    QVERIFY2(!data.y[outIndex - 1].isEmpty(), "No V(out) samples in RAW data.");
 
-    const double finalVout = data.y[outIndex - 1].last();
+    const auto signalIndex = [&](const QString& name) {
+        for (int i = 0; i < data.varNames.size(); ++i) {
+            if (data.varNames.at(i).compare(name, Qt::CaseInsensitive) == 0) return i;
+        }
+        return -1;
+    };
+    const auto tailAverage = [](const QVector<double>& values, int tailCount = 500) {
+        const int count = std::min(tailCount, static_cast<int>(values.size()));
+        double sum = 0.0;
+        for (int i = values.size() - count; i < values.size(); ++i) sum += values.at(i);
+        return count > 0 ? sum / static_cast<double>(count) : 0.0;
+    };
+    const auto tailMin = [](const QVector<double>& values, int tailCount = 500) {
+        const int count = std::min(tailCount, static_cast<int>(values.size()));
+        double minVal = values.at(values.size() - count);
+        for (int i = values.size() - count + 1; i < values.size(); ++i) minVal = std::min(minVal, values.at(i));
+        return minVal;
+    };
+    const auto tailMax = [](const QVector<double>& values, int tailCount = 500) {
+        const int count = std::min(tailCount, static_cast<int>(values.size()));
+        double maxVal = values.at(values.size() - count);
+        for (int i = values.size() - count + 1; i < values.size(); ++i) maxVal = std::max(maxVal, values.at(i));
+        return maxVal;
+    };
+
+    const int outIndex = signalIndex("v(out)");
+    const int piIndex = signalIndex("v(pi_out)");
+    const int dutyIndex = signalIndex("v(duty)");
+    const int errIndex = signalIndex("v(err)");
+    QVERIFY2(outIndex >= 1, qPrintable(QString("Missing signal v(out). Available: %1").arg(data.varNames.join(", "))));
+    QVERIFY2(piIndex >= 1, qPrintable(QString("Missing signal v(pi_out). Available: %1").arg(data.varNames.join(", "))));
+    QVERIFY2(dutyIndex >= 1, qPrintable(QString("Missing signal v(duty). Available: %1").arg(data.varNames.join(", "))));
+    QVERIFY2(errIndex >= 1, qPrintable(QString("Missing signal v(err). Available: %1").arg(data.varNames.join(", "))));
+
+    const QVector<double>& outValues = data.y[outIndex - 1];
+    const QVector<double>& piValues = data.y[piIndex - 1];
+    const QVector<double>& dutyValues = data.y[dutyIndex - 1];
+    const QVector<double>& errValues = data.y[errIndex - 1];
+    QVERIFY2(!outValues.isEmpty(), "No samples for v(out)");
+    QVERIFY2(!piValues.isEmpty(), "No samples for v(pi_out)");
+    QVERIFY2(!dutyValues.isEmpty(), "No samples for v(duty)");
+    QVERIFY2(!errValues.isEmpty(), "No samples for v(err)");
+
+    const double finalVout = outValues.last();
+    const double finalVoutAvg = tailAverage(outValues);
+    const double finalPiAvg = tailAverage(piValues);
+    const double finalDutyAvg = tailAverage(dutyValues);
+    const double finalErrAvg = tailAverage(errValues);
+    const double dutyTailMin = tailMin(dutyValues);
+    const double dutyTailMax = tailMax(dutyValues);
+
     QVERIFY2(finalVout < 100.0, qPrintable(QString("V(out) runaway: %1 V").arg(finalVout)));
+    QVERIFY2(finalVoutAvg > 10.0 && finalVoutAvg < 30.0,
+             qPrintable(QString("Tail-average V(out) out of expected range: %1 V").arg(finalVoutAvg)));
+    QVERIFY2(dutyTailMin >= 0.049 && dutyTailMax <= 0.91,
+             qPrintable(QString("Duty tail escaped clamp range: min=%1 max=%2").arg(dutyTailMin).arg(dutyTailMax)));
+    QVERIFY2(finalDutyAvg >= 0.049 && finalDutyAvg <= 0.20,
+             qPrintable(QString("Unexpected tail-average duty: %1").arg(finalDutyAvg)));
+    QVERIFY2(finalPiAvg < 0.2 && finalPiAvg > -30.0,
+             qPrintable(QString("Unexpected tail-average pi_out: %1 V").arg(finalPiAvg)));
+    QVERIFY2(std::abs(finalErrAvg) < 15.0,
+             qPrintable(QString("Unexpected tail-average error voltage: %1 V").arg(finalErrAvg)));
 }
 
 QTEST_MAIN(SpiceDirectiveNetlistTest)

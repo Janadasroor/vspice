@@ -20,6 +20,24 @@
   - [ ] Support more cards: `.param`, `.func`, `.ic`, `.nodeset`, `.options`, `.save`, `.probe`
   - [ ] Preserve LTspice comment and whitespace quirks more closely
   - [ ] Improve `.asc` import/export for directive blocks
+  - [ ] Rewrite more behavioral functions for ngspice compatibility
+    - [ ] `buf(x)`
+    - [ ] `inv(x)`
+    - [ ] `uramp(x)`
+    - [ ] `limit(x,y,z)`
+    - [ ] `idtmod(x[,ic[,m[,o]]])`
+  - [ ] Preserve or warn on LTspice B-source instance options
+    - [ ] `ic=`
+    - [ ] `tripdv=` / `tripdt=`
+    - [ ] `laplace=` / `window=` / `nfft=` / `mtol=`
+  - [ ] Improve source compatibility for LTspice restart semantics
+    - [ ] Warn on `Trigger=` for `PULSE`, `PWL`, `SINE`, `EXP`, `SFFM`
+    - [ ] Preserve `tripdv=` / `tripdt=` where possible
+  - [ ] Expand `.meas` compatibility coverage
+    - [ ] `DERIV`
+    - [ ] `TRIG` / `TARG`
+    - [ ] `RISE` / `FALL` / `CROSS` / `LAST`
+    - [ ] `AVG` / `MAX` / `MIN` / `PP` / `RMS` / `INTEG`
 
 - [ ] Improve schematic/manual-netlist coexistence
   - [ ] Add clear precedence rules for generated vs manual SPICE
