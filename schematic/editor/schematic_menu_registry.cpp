@@ -13,6 +13,8 @@
 #include "../items/hierarchical_port_item.h"
 #include "../items/led_item.h"
 #include "../items/blinking_led_item.h"
+#include "../items/tuning_slider_item.h"
+#include "../ui/simulation_panel.h"
 #include "../analysis/net_manager.h"
 #include "../tools/schematic_net_label_tool.h"
 #include "../../core/theme_manager.h"
@@ -146,6 +148,32 @@ void SchematicMenuRegistry::initializeDefaultActions() {
     registerGlobalAction(zoomSel);
 
     registerGlobalAction(ContextAction::separator(20));
+
+    // --- Tuning Actions ---
+    ContextAction addSlider;
+    addSlider.label = "Add Tuning Slider";
+    addSlider.priority = 15;
+    addSlider.isVisible = [](const auto& items) {
+        if (items.size() != 1) return false;
+        auto type = items.first()->itemType();
+        return (type == SchematicItem::ResistorType || 
+                type == SchematicItem::CapacitorType || 
+                type == SchematicItem::InductorType || 
+                type == SchematicItem::VoltageSourceType);
+    };
+    addSlider.isEnabled = [](const auto&) {
+        auto* editor = qobject_cast<SchematicEditor*>(QApplication::activeWindow());
+        if (editor && editor->getSimulationPanel()) {
+            return editor->getSimulationPanel()->isRealTimeMode();
+        }
+        return false;
+    };
+    addSlider.handler = [](SchematicView* view, const auto& items) {
+        if (items.isEmpty()) return;
+        auto* slider = new TuningSliderItem(items.first());
+        view->scene()->addItem(slider);
+    };
+    registerGlobalAction(addSlider);
 
     ContextAction selectAll;
     selectAll.label = "Select All";

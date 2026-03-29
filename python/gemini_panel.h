@@ -65,6 +65,7 @@ private slots:
     void onBridgeSendMessage(const QString& text);
     void onBridgeStopRequest();
     void onBridgeRefreshModelsRequest();
+    void onBridgeCloseRequest();
 
 private:
     QGraphicsScene* m_scene;
@@ -75,35 +76,11 @@ private:
     QQuickWidget* m_quickWidget = nullptr;
     GeminiBridge* m_bridge = nullptr;
 
-    // Pulse animation (handled in QML now, but timer can stay for logic if needed)
-    QTimer* m_thinkingPulseTimer;
+    // Internal Logic Timers
+    QTimer* m_thinkingPulseTimer = nullptr;
     int m_pulseStep = 0;
 
-    // Private Process for this panel instance
-    QProcess* m_process = nullptr;
-    QProcess* m_modelFetchProcess = nullptr;
-    QString m_modelFetchStdErr;
-    QString m_responseBuffer;
-    QString m_thinkingBuffer;
-    QString m_errorBuffer;
-    QString m_leftover;
-    QString m_lastGeneratedCode;
-    bool m_isWorking = false;
-    QString m_mode = "schematic";
-    QString m_projectFilePath;
-    QString m_currentChatTitle;
-    QString m_lastSubmittedPrompt;
-    qint64 m_lastSubmitEpochMs = 0;
-    
-    QList<QVariantMap> m_history;
-    std::function<QString()> m_contextProvider;
-
-    void refreshModelList();
-    void reportError(const QString& title, const QString& detailsText, bool openDialog);
-    
-    void syncHistoryToBridge();
-
-    // Private Process for this panel instance
+    // Backend Process Mangement
     QProcess* m_process = nullptr;
     QProcess* m_modelFetchProcess = nullptr;
     QString m_modelFetchStdErr;
@@ -122,47 +99,42 @@ private:
     qint64 m_lastSubmitEpochMs = 0;
     
     QList<QVariantMap> m_history;
-    QList<ChatMessage> m_chatMessages;
     std::function<QString()> m_contextProvider;
 
+    // Synchronization and Logic
+    void syncHistoryToBridge();
     void refreshModelList();
-    void showErrorBanner(const QString& summaryText, const QString& detailsText = QString());
-    void hideErrorBanner();
-    void showErrorDialog(const QString& title, const QString& detailsText);
     void reportError(const QString& title, const QString& detailsText, bool openDialog);
-    void appendErrorHistory(const QString& title, const QString& detailsText);
+    void appendSystemNote(const QString& text);
+    void appendSystemAction(const QString& title, const QString& details, const QString& icon = QString());
+    
+    void handleActionTag(const QString& actionText);
+    void handleSuggestionTag(const QString& suggestionText);
+    void processAgentStdoutChunk(const QString& chunkText);
+    void parseAndExecuteCommandModeInput(const QString& input);
+
+    // Error History and Dialogs
+    struct ErrorRecord {
+        QString timestamp;
+        QString title;
+        QString details;
+    };
+    QDialog* m_errorDialog = nullptr;
+    QList<ErrorRecord> m_errorHistory;
+    class QListWidget* m_errorHistoryList = nullptr;
+    class QTextBrowser* m_errorSummaryView = nullptr;
+    class QPlainTextEdit* m_errorRawView = nullptr;
+    class QToolButton* m_errorRawToggle = nullptr;
+
     void ensureErrorDialog();
     void populateErrorDialogHistory();
     void selectErrorHistoryRow(int row);
-    void showToolCallBanner(const QString& actionText = QString());
-    void hideToolCallBanner();
-    void appendChatMessage(const ChatMessage& message);
-    QString chatMessageToHtml(const ChatMessage& message) const;
-    void renderChatMessage(const ChatMessage& message);
-    void resizeChatCards();
-    void rerenderChatFromModel();
-    void appendUserMessageCard(const QString& text, const QString& headerHtml = QString());
-    void appendModelMarkdownCard(const QString& markdownText);
-    void appendSystemNote(const QString& html);
-    void appendSystemAction(const QString& title, const QString& details, const QString& icon = QString());
-    void scrollChatToBottom();
-    void beginAssistantRunUi();
-    void finishAssistantRunUi(int exitCode);
-    void handleActionTag(const QString& actionText);
-    void handleSuggestionTag(const QString& suggestionText);
-    void appendSnippetActionButton(const QString& snippetJson);
-    void appendNetlistActionButton(const QString& netlistText);
-    void processAgentStdoutChunk(const QString& chunkText);
-    void parseAndExecuteCommandModeInput(const QString& input);
-    void updateSendEnabled();
-    void clearSuggestionButtons();
-    void addSuggestionButton(const QString& label, const QString& command);
-    void triggerSuggestionCommand(const QString& command);
+    void appendErrorHistory(const QString& title, const QString& detailsText);
+    void showErrorDialog(const QString& title, const QString& detailsText);
+    void showErrorBanner(const QString& summaryText, const QString& detailsText = QString());
+    void hideErrorBanner();
 
-    QSet<QString> m_suggestionKeys;
-    QPoint m_dragStartPosition;
     QString gatherInstructions() const;
-    QString m_pressedAnchor;
 };
 
 #endif // GEMINI_PANEL_H

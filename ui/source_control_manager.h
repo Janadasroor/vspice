@@ -48,6 +48,8 @@ public slots:
     void discardChanges(const QString& path);
     void addRemote(const QString& name, const QString& url);
 
+    QString getFileContent(const QString& revision, const QString& path);
+
 signals:
     void repoChanged(bool isRepo);
     void statusUpdated();

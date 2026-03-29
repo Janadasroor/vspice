@@ -37,6 +37,7 @@ private slots:
     void onInitRepoClicked();
     void onCloneRepoClicked();
     void onFileDoubleClicked(QListWidgetItem* item);
+    void onVisualDiffRequested(const QString& path);
     void onFileContextMenu(const QPoint& pos);
     void onFilterChanged(const QString& text);
     void onWorkspaceChanged(int index);

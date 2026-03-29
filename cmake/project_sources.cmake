@@ -135,6 +135,8 @@ set(SCHEMATIC_SOURCES
     schematic/dialogs/passive_model_picker_dialog.h
     schematic/dialogs/schematic_text_properties_dialog.cpp
     schematic/dialogs/schematic_text_properties_dialog.h
+    schematic/dialogs/schematic_diff_dialog.cpp
+    schematic/dialogs/schematic_diff_dialog.h
     schematic/dialogs/sheet_properties_dialog.cpp
     schematic/dialogs/sheet_properties_dialog.h
     schematic/dialogs/signal_generator_properties_dialog.cpp
@@ -254,6 +256,8 @@ set(SCHEMATIC_SOURCES
     schematic/items/logic_analyzer_item.cpp
     schematic/items/logic_analyzer_item.h
     schematic/items/oscilloscope_item.cpp
+    schematic/items/tuning_slider_item.cpp
+    schematic/items/tuning_slider_item.h
     schematic/items/instrument_probe_item.cpp
     schematic/items/instrument_probe_item.h
     schematic/items/schematic_page_item.cpp
@@ -358,6 +362,8 @@ set(SCHEMATIC_SOURCES
     schematic/analysis/net_manager.h
     schematic/analysis/fft_analyzer.cpp
     schematic/analysis/fft_analyzer.h
+    schematic/analysis/schematic_diff_engine.cpp
+    schematic/analysis/schematic_diff_engine.h
     
     # UI Dialogs
     schematic/ui/bom_dialog.cpp
@@ -407,6 +413,8 @@ set(SCHEMATIC_SOURCES
     schematic/ui/oscilloscope_window.h
     schematic/ui/virtual_instruments.cpp
     schematic/ui/virtual_instruments.h
+    schematic/ui/schematic_diff_viewer.cpp
+    schematic/ui/schematic_diff_viewer.h
     schematic/analysis/schematic_annotator.cpp
     schematic/analysis/schematic_annotator.h
     

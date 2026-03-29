@@ -384,9 +384,9 @@ void SchematicEditor::createToolBar() {
     menuRedoAct->setShortcut(QKeySequence());  // Toolbar owns Ctrl+Shift+Z shortcut
     editMenu->addAction(menuRedoAct);
     editMenu->addSeparator();
-    editMenu->addAction(getThemeIcon(":/icons/tool_cut.svg"), "Cut", QKeySequence::Cut, this, &SchematicEditor::onCut);
-    editMenu->addAction(getThemeIcon(":/icons/tool_copy.svg"), "Copy", QKeySequence::Copy, this, &SchematicEditor::onCopy);
-    editMenu->addAction(getThemeIcon(":/icons/tool_paste.svg"), "Paste", QKeySequence::Paste, this, &SchematicEditor::onPaste);
+    editMenu->addAction(getThemeIcon(":/icons/tool_scissors.svg"), "Cut", QKeySequence::Cut, this, &SchematicEditor::onCut);
+    editMenu->addAction(getThemeIcon(":/icons/tool_duplicate.svg"), "Copy", QKeySequence::Copy, this, &SchematicEditor::onCopy);
+    editMenu->addAction(getThemeIcon(":/icons/tool_generic.svg"), "Paste", QKeySequence::Paste, this, &SchematicEditor::onPaste);
     editMenu->addSeparator();
     QAction* deleteAction = editMenu->addAction(getThemeIcon(":/icons/tool_delete.svg"), "Delete", this, &SchematicEditor::onDelete);
     deleteAction->setShortcut(QKeySequence());

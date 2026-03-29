@@ -1,4 +1,7 @@
 #include "source_control_panel.h"
+#include "schematic/dialogs/schematic_diff_dialog.h"
+#include <QJsonDocument>
+#include <QJsonObject>
 #include "diff_viewer_dialog.h"
 #include "branch_dialog.h"
 #include "theme_manager.h"
@@ -634,6 +637,34 @@ void SourceControlPanel::onFileDoubleClicked(QListWidgetItem* item) {
     dlg.exec();
 }
 
+void SourceControlPanel::onVisualDiffRequested(const QString& path) {
+    // 1. Get current worktree content
+    QString fullPath = m_mgr.projectDir() + "/" + path;
+    QFile f(fullPath);
+    if (!f.open(QIODevice::ReadOnly)) return;
+    QByteArray dataB = f.readAll();
+    f.close();
+
+    // 2. Get HEAD content
+    QString contentA = m_mgr.getFileContent("HEAD", path);
+    if (contentA.isEmpty()) {
+        QMessageBox::information(this, "Visual Diff", "Could not retrieve HEAD version. Is this a new file?");
+        return;
+    }
+
+    QJsonObject jsonA = QJsonDocument::fromJson(contentA.toUtf8()).object();
+    QJsonObject jsonB = QJsonDocument::fromJson(dataB).object();
+
+    if (jsonA.isEmpty() || jsonB.isEmpty()) {
+        QMessageBox::warning(this, "Visual Diff", "Failed to parse schematic JSON for comparison.");
+        return;
+    }
+
+    SchematicDiffDialog dlg(this);
+    dlg.compare(jsonA, jsonB, "HEAD VERSION", "WORKING COPY");
+    dlg.exec();
+}
+
 void SourceControlPanel::onFileContextMenu(const QPoint& pos) {
     QListWidgetItem* item = m_fileList->itemAt(pos);
     if (!item) return;
@@ -662,6 +693,13 @@ void SourceControlPanel::onFileContextMenu(const QPoint& pos) {
     connect(diffAct, &QAction::triggered, this, [this, item]() {
         onFileDoubleClicked(item);
     });
+
+    if (path.endsWith(".sch")) {
+        QAction* visualDiffAct = menu.addAction("Visual Schematic Diff");
+        connect(visualDiffAct, &QAction::triggered, this, [this, path]() {
+            onVisualDiffRequested(path);
+        });
+    }
 
     QAction* openAct = menu.addAction("Open File");
     connect(openAct, &QAction::triggered, this, [this, path]() {

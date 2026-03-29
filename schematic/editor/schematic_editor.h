@@ -62,6 +62,8 @@ public:
     void openOscilloscopeWindow(class SchematicItem* item);
     void closeTab(int index);
     
+    class SimulationPanel* getSimulationPanel() const { return m_simulationPanel; }
+
     void onClearSimulationOverlays();
     void onClearAllProbeMarkers();
     void removeProbeMarkerBySignalName(const QString& signalName);

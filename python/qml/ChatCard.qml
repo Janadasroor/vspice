@@ -32,14 +32,15 @@ Item {
         border.color: isUser ? "transparent" : "#334155"
         border.width: 1
 
-        // Shadow effect (Subtle for glass look)
-        layer.enabled: true
-        layer.effect: DropShadow {
-            transparentBorder: true
-            horizontalOffset: 0
-            verticalOffset: 4
-            radius: 8
-            color: "rgba(0, 0, 0, 0.3)"
+        // Subtle shadow using a nested rectangle instead of DropShadow to avoid dependencies
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -1
+            radius: parent.radius + 1
+            color: "transparent"
+            border.color: "#1a000000" // 10% alpha black
+            border.width: 1
+            z: -1
         }
 
         ColumnLayout {

@@ -7,6 +7,7 @@
 #include "../../schematic/analysis/spice_netlist_generator.h"
 #include "../core/sim_value_parser.h"
 #include <QDebug>
+#include <QFile>
 #include <QTimer>
 #include <QtConcurrent>
 #include <QFutureWatcher>
@@ -21,11 +22,15 @@ struct StepSpec {
         Param,
         Temp,
         Source,
+        ModelParam,
         Unsupported
     };
 
     Kind kind = Kind::Unsupported;
     QString target;
+    QString modelType;
+    QString modelName;
+    QString modelParam;
     QString rawLine;
     QStringList values;
     QString error;
@@ -61,6 +66,54 @@ QString stripCommentPrefix(const QString& line) {
         trimmed = trimmed.trimmed();
     }
     return trimmed;
+}
+
+QString stripOuterQuotes(const QString& text) {
+    if (text.size() >= 2 && ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith('\'') && text.endsWith('\'')))) {
+        return text.mid(1, text.size() - 2);
+    }
+    return text;
+}
+
+QStringList tokenizeStepFileLine(const QString& line) {
+    QString normalized = line;
+    normalized.replace(',', ' ');
+    return tokenizePreservingQuotes(normalized);
+}
+
+bool loadStepValuesFromFile(const QString& fileToken, QStringList* values, QString* error) {
+    if (!values) return false;
+
+    const QString fileName = stripOuterQuotes(fileToken.trimmed());
+    const QString filePath = QDir::current().absoluteFilePath(fileName);
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (error) *error = QString("Unable to open .step file '%1'.").arg(fileName);
+        return false;
+    }
+
+    while (!file.atEnd()) {
+        QString line = QString::fromUtf8(file.readLine()).trimmed();
+        if (line.isEmpty() || line.startsWith('*') || line.startsWith(';') || line.startsWith('#')) continue;
+        const int semicolon = line.indexOf(';');
+        if (semicolon >= 0) line = line.left(semicolon).trimmed();
+        if (line.isEmpty()) continue;
+        const QStringList lineTokens = tokenizeStepFileLine(line);
+        for (const QString& token : lineTokens) {
+            const QString trimmed = token.trimmed();
+            if (!trimmed.isEmpty()) values->append(trimmed);
+        }
+    }
+
+    if (values->isEmpty()) {
+        if (error) *error = QString("No sweep values found in .step file '%1'.").arg(fileName);
+        return false;
+    }
+    if (values->size() > 512) {
+        if (error) *error = QString("Refusing to expand .step file '%1' with more than 512 points.").arg(fileName);
+        return false;
+    }
+    return true;
 }
 
 bool buildLinearRange(const QString& startText, const QString& stopText, const QString& stepText, QStringList* values, QString* error) {
@@ -140,9 +193,26 @@ StepSpec parseStepLine(const QString& rawLine) {
         spec.target = tokens.value(idx++);
     } else {
         spec.target = tokens.value(idx++);
-        if (spec.target.compare("temp", Qt::CaseInsensitive) == 0) spec.kind = StepSpec::Kind::Temp;
-        else if (QRegularExpression("^[VI]\\S*$", QRegularExpression::CaseInsensitiveOption).match(spec.target).hasMatch()) spec.kind = StepSpec::Kind::Source;
-        else spec.kind = StepSpec::Kind::Unsupported;
+        if (spec.target.compare("temp", Qt::CaseInsensitive) == 0) {
+            spec.kind = StepSpec::Kind::Temp;
+        } else if (QRegularExpression("^[VI]\\S*$", QRegularExpression::CaseInsensitiveOption).match(spec.target).hasMatch()) {
+            spec.kind = StepSpec::Kind::Source;
+        } else if (idx < tokens.size()) {
+            const QRegularExpression modelParamRe("^([^()]+)\\(([^()]+)\\)$");
+            const QRegularExpressionMatch modelMatch = modelParamRe.match(tokens.value(idx));
+            if (modelMatch.hasMatch()) {
+                spec.kind = StepSpec::Kind::ModelParam;
+                spec.modelType = spec.target;
+                spec.modelName = modelMatch.captured(1).trimmed();
+                spec.modelParam = modelMatch.captured(2).trimmed();
+                spec.target = QString("%1(%2)").arg(spec.modelName, spec.modelParam);
+                ++idx;
+            } else {
+                spec.kind = StepSpec::Kind::Unsupported;
+            }
+        } else {
+            spec.kind = StepSpec::Kind::Unsupported;
+        }
     }
 
     if (spec.kind == StepSpec::Kind::Unsupported) {
@@ -161,7 +231,11 @@ StepSpec parseStepLine(const QString& rawLine) {
         return spec;
     }
     if (next.startsWith("file=", Qt::CaseInsensitive)) {
-        spec.error = "LTspice .step file= form is not supported by the VioSpice sweep runner yet.";
+        QString error;
+        const QString fileToken = next.mid(5).trimmed();
+        if (fileToken.isEmpty() || !loadStepValuesFromFile(fileToken, &spec.values, &error)) {
+            spec.error = error.isEmpty() ? "Invalid .step file= syntax." : error;
+        }
         return spec;
     }
     if (tokens.size() < idx + 3) {
@@ -241,6 +315,66 @@ bool replaceSimpleSourceValue(QString* netlist, const QString& ref, const QStrin
     return false;
 }
 
+bool replaceOrInjectModelParam(QString* netlist, const StepSpec& spec, const QString& value, QString* error) {
+    if (!netlist) return false;
+
+    QStringList lines = netlist->split('\n');
+    const QRegularExpression modelRe(
+        QString("^\\s*\\.model\\s+(%1)\\s+(%2)\\s*\\((.*)\\)\\s*$")
+            .arg(QRegularExpression::escape(spec.modelName), QRegularExpression::escape(spec.modelType)),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression assignRe(
+        QString("\\b%1\\s*=\\s*(\\{[^}]+\\}|[^\\s,)]+)")
+            .arg(QRegularExpression::escape(spec.modelParam)),
+        QRegularExpression::CaseInsensitiveOption);
+
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString firstLine = lines.at(i);
+        if (!firstLine.trimmed().startsWith(".model", Qt::CaseInsensitive)) continue;
+
+        QStringList cardLines;
+        cardLines << firstLine;
+        int lastLine = i;
+        while (lastLine + 1 < lines.size() && lines.at(lastLine + 1).trimmed().startsWith('+')) {
+            ++lastLine;
+            cardLines << lines.at(lastLine);
+        }
+
+        QString combined = cardLines.takeFirst().trimmed();
+        for (const QString& continuation : cardLines) {
+            QString part = continuation.trimmed();
+            if (part.startsWith('+')) part.remove(0, 1);
+            combined += " ";
+            combined += part.trimmed();
+        }
+
+        const QRegularExpressionMatch modelMatch = modelRe.match(combined);
+        if (!modelMatch.hasMatch()) continue;
+
+        QString body = modelMatch.captured(3).trimmed();
+        if (body.contains(assignRe)) {
+            body.replace(assignRe, QString("%1=%2").arg(spec.modelParam, value));
+        } else if (body.isEmpty()) {
+            body = QString("%1=%2").arg(spec.modelParam, value);
+        } else {
+            body += QString(" %1=%2").arg(spec.modelParam, value);
+        }
+
+        lines[i] = QString(".model %1 %2(%3)").arg(spec.modelName, spec.modelType, body);
+        for (int removeAt = lastLine; removeAt > i; --removeAt) {
+            lines.removeAt(removeAt);
+        }
+        *netlist = lines.join('\n');
+        return true;
+    }
+
+    if (error) {
+        *error = QString("Could not find .model %1 %2(...) while stepping %3.")
+                     .arg(spec.modelName, spec.modelType, spec.target);
+    }
+    return false;
+}
+
 bool applyStepValue(QString* netlist, const StepSpec& spec, const QString& value, QString* error) {
     switch (spec.kind) {
     case StepSpec::Kind::Param:
@@ -251,6 +385,8 @@ bool applyStepValue(QString* netlist, const StepSpec& spec, const QString& value
         if (replaceSimpleSourceValue(netlist, spec.target, value)) return true;
         if (error) *error = QString("Only simple independent source stepping is currently supported for %1.").arg(spec.target);
         return false;
+    case StepSpec::Kind::ModelParam:
+        return replaceOrInjectModelParam(netlist, spec, value, error);
     default:
         if (error) *error = spec.error;
         return false;
@@ -385,6 +521,27 @@ void SimManager::runNetlistText(const QString& netlistContent) {
     }
     emit simulationStarted();
     emit logMessage("Running ngspice netlist...");
+    SimAnalysisConfig config;
+    config.type = SimAnalysisType::Transient;
+    m_lastConfig = config;
+
+    QString stepError;
+    m_pendingStepRuns = buildStepRuns(netlistContent, &stepError);
+    m_stepSweepResults = SimResults();
+    m_activeStepLabel.clear();
+    m_completedStepRuns = 0;
+    if (!stepError.isEmpty()) {
+        emit logMessage(QString("LTspice .step emulation error: %1").arg(stepError));
+        emit errorOccurred(stepError);
+        emit simulationFinished(SimResults());
+        return;
+    }
+    if (!m_pendingStepRuns.isEmpty()) {
+        emit logMessage(QString("Running LTspice .step sweep emulation with %1 run(s).").arg(m_pendingStepRuns.size()));
+        startNextStepSweepRun();
+        return;
+    }
+
     startNgspiceWithNetlist(netlistContent);
 }
 
@@ -562,9 +719,10 @@ void SimManager::startNgspiceWithNetlist(const QString& netlistContent) {
                 emit simulationFinished(SimResults());
             }
             
+            const bool continueStepSweep = result.first && (!m_activeStepLabel.isEmpty() || !m_pendingStepRuns.isEmpty());
             if (safeTempFile) safeTempFile->deleteLater();
             cleanupSimulation();
-            if (result.first && (!m_activeStepLabel.isEmpty() || !m_pendingStepRuns.isEmpty())) {
+            if (continueStepSweep) {
                 QTimer::singleShot(0, this, &SimManager::startNextStepSweepRun);
             }
         });

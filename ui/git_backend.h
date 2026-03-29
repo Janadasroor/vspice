@@ -83,6 +83,9 @@ public:
     // --- Log ---
     QVector<GitCommit> log(int count = 20) const;
 
+    // --- Content ---
+    QString getFileContent(const QString& revision, const QString& path) const;
+
     // --- Discard ---
     bool discardChanges(const QString& path);
 

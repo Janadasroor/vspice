@@ -348,12 +348,11 @@ QString PCBTheme::toolbarStylesheet() const {
         "}"
         "QToolButton:checked {"
         "   background-color: %3;"
-        "   border: 1px solid %5;"
+        "   border: 1px solid %4;"
         "}"
     ).arg(m_windowBackground.name())
      .arg(m_panelBorder.name())
      .arg(btnHover)
-     .arg(isDark ? "#27272a" : "#eff6ff")
      .arg(m_accentColor.name());
 }
 

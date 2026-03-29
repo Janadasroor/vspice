@@ -14,6 +14,7 @@ class GeminiBridge : public QObject {
     Q_PROPERTY(QString currentMode READ currentMode WRITE setCurrentMode NOTIFY currentModeChanged)
     Q_PROPERTY(bool isWorking READ isWorking NOTIFY isWorkingChanged)
     Q_PROPERTY(QString thinkingText READ thinkingText NOTIFY thinkingTextChanged)
+    Q_PROPERTY(QString conversationTitle READ conversationTitle NOTIFY conversationTitleChanged)
     
     // Theme properties for QML
     Q_PROPERTY(QString textColor READ textColor NOTIFY themeChanged)
@@ -31,6 +32,7 @@ public:
     QString currentMode() const { return m_currentMode; }
     bool isWorking() const { return m_isWorking; }
     QString thinkingText() const { return m_thinkingText; }
+    QString conversationTitle() const { return m_conversationTitle; }
 
     // Theme getters
     QString textColor() const;
@@ -46,6 +48,7 @@ public:
     Q_INVOKABLE void clearHistory();
     Q_INVOKABLE void stopRun();
     Q_INVOKABLE void refreshModels();
+    Q_INVOKABLE void closePanel();
 
 signals:
     void messagesChanged();
@@ -54,17 +57,22 @@ signals:
     void currentModeChanged();
     void isWorkingChanged();
     void thinkingTextChanged();
+    void conversationTitleChanged();
     void themeChanged();
     
-    // Internal signal to trigger the actual C++ logic in GeminiPanel
-    void requestSendMessage(const QString& text);
-    void requestStop();
-    void requestRefreshModels();
+    // Internal signals to trigger logic in GeminiPanel
+    void sendMessageRequested(const QString& text);
+    void stopRequested();
+    void refreshModelsRequested();
+    void clearHistoryRequested();
+    void closeRequested();
 
 public slots:
     void updateMessages(const QVariantList& msgs);
-    void updateStatus(bool working, const QString& thinking = "");
-    void updateModels(const QStringList& models);
+    void setWorking(bool working, const QString& thinking = "");
+    void updateStatus(const QString& status);
+    void updateAvailableModels(const QStringList& models);
+    void updateTitle(const QString& title);
     void notifyThemeChanged() { emit themeChanged(); }
 
 private:
@@ -74,6 +82,7 @@ private:
     QString m_currentMode = "ask";
     bool m_isWorking = false;
     QString m_thinkingText;
+    QString m_conversationTitle = "VIORA AI";
 };
 
 #endif // GEMINI_BRIDGE_H

@@ -231,3 +231,8 @@ void SourceControlManager::addRemote(const QString& name, const QString& url) {
         return m_backend.addRemote(name, url);
     });
 }
+
+QString SourceControlManager::getFileContent(const QString& revision, const QString& path) {
+    QMutexLocker locker(&m_backendMutex);
+    return m_backend.getFileContent(revision, path);
+}

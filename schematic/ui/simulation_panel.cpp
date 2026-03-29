@@ -1962,9 +1962,13 @@ SimulationPanel::AnalysisConfig SimulationPanel::getAnalysisConfig() const {
     }
     
     cfg.commandText = m_commandLine ? m_commandLine->text() : QString();
-
     return cfg;
 }
+
+bool SimulationPanel::isRealTimeMode() const {
+    return m_analysisType && m_analysisType->currentIndex() == 6;
+}
+
 
 void SimulationPanel::onRunSimulation() {
     m_logOutput->clear();

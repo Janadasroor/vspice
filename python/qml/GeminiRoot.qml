@@ -8,12 +8,20 @@ Rectangle {
     height: 600
     color: "#0a0f18" // Deep base background
 
+    // Top Navigation/Header
+    PanelHeader {
+        id: header
+        anchors.top: parent.top
+        z: 10
+    }
+
     // Main Chat History
     ListView {
         id: chatListView
         width: parent.width
-        anchors.top: parent.top
+        anchors.top: header.bottom
         anchors.bottom: composer.top
+        anchors.topMargin: 10
         anchors.bottomMargin: 10
         spacing: 15
         clip: true

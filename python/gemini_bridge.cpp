@@ -52,20 +52,19 @@ void GeminiBridge::setCurrentMode(const QString& mode) {
 }
 
 void GeminiBridge::sendMessage(const QString& text) {
-    emit requestSendMessage(text);
+    emit sendMessageRequested(text);
 }
 
 void GeminiBridge::clearHistory() {
-    m_messages.clear();
-    emit messagesChanged();
+    emit clearHistoryRequested();
 }
 
 void GeminiBridge::stopRun() {
-    emit requestStop();
+    emit stopRequested();
 }
 
 void GeminiBridge::refreshModels() {
-    emit requestRefreshModels();
+    emit refreshModelsRequested();
 }
 
 void GeminiBridge::updateMessages(const QVariantList& msgs) {
@@ -73,14 +72,36 @@ void GeminiBridge::updateMessages(const QVariantList& msgs) {
     emit messagesChanged();
 }
 
-void GeminiBridge::updateStatus(bool working, const QString& thinking) {
-    m_isWorking = working;
-    m_thinkingText = thinking;
-    emit isWorkingChanged();
-    emit thinkingTextChanged();
+void GeminiBridge::setWorking(bool working, const QString& thinking) {
+    if (m_isWorking != working || m_thinkingText != thinking) {
+        m_isWorking = working;
+        m_thinkingText = thinking;
+        emit isWorkingChanged();
+        emit thinkingTextChanged();
+    }
 }
 
-void GeminiBridge::updateModels(const QStringList& models) {
-    m_availableModels = models;
-    emit availableModelsChanged();
+void GeminiBridge::updateStatus(const QString& status) {
+    if (m_thinkingText != status) {
+        m_thinkingText = status;
+        emit thinkingTextChanged();
+    }
+}
+
+void GeminiBridge::updateAvailableModels(const QStringList& models) {
+    if (m_availableModels != models) {
+        m_availableModels = models;
+        emit availableModelsChanged();
+    }
+}
+
+void GeminiBridge::updateTitle(const QString& title) {
+    if (m_conversationTitle != title) {
+        m_conversationTitle = title;
+        emit conversationTitleChanged();
+    }
+}
+
+void GeminiBridge::closePanel() {
+    emit closeRequested();
 }

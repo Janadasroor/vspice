@@ -247,6 +247,12 @@ QVector<GitCommit> GitBackend::log(int count) const {
     return commits;
 }
 
+QString GitBackend::getFileContent(const QString& revision, const QString& path) const {
+    auto r = run({"show", QString("%1:%2").arg(revision, path)});
+    if (r.exitCode == 0) return r.stdoutData;
+    return QString();
+}
+
 bool GitBackend::discardChanges(const QString& path) {
     auto r = run({"checkout", "--", path});
     return r.exitCode == 0;

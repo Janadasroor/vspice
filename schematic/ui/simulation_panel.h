@@ -64,6 +64,7 @@ public:
     QWidget* getOscilloscopeContainer() const;
     bool hasResults() const { return m_hasLastResults; }
     void showDetailedLog();
+    bool isRealTimeMode() const;
 
     struct TabOscilloscopeState {
         SimResults lastResults;

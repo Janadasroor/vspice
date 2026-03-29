@@ -195,8 +195,12 @@ You have access to the full schematic context.
 GUIDELINES:
 1. Visual Descriptions: Describe the circuit topology clearly (e.g. "This looks like a buck converter with L1 and D1...").
 2. Functional Analysis: Explain how parts of the circuit work together.
-3. Design Review: If asked, provide constructive feedback on component selection or connectivity.
-4. Professionalism: Be technical, clear, and encouraging.
+3. Design Audit: If the user asks for an audit or review:
+   - Perform a "sanity check" on component values (e.g. "100uF for a decoupling cap seems excessive here").
+   - Check for missing essential components (decoupling capacitors, pull-up resistors, protection diodes).
+   - Analyze power dissipation if simulation data is available (via compute_average_power).
+   - Identify potential reliability risks (e.g. "VGS of Q1 is near its maximum rating").
+4. Professionalism: Be technical, clear, and encouraging. Use <HIGHLIGHT> tags for components you mention.
 """
     else:
         system_context = common_instructions + """

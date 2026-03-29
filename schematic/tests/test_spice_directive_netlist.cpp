@@ -42,6 +42,9 @@ private slots:
     void rewritesVoltageSourceInstanceExtras();
     void loadsBoostConverterLtspiceDirectiveInNgspice();
     void emulatesLtspiceStepParamList();
+    void emulatesLtspiceStepParamFileList();
+    void emulatesLtspiceStepModelParameterList();
+    void emulatesLtspiceStepModelParameterOnContinuedModelCard();
     void boostConverterFeedbackDoesNotRunAway();
     void mixedModeManagerInsertsAdcAndDacBridges();
     void logicComponentGeneratesVectorizedSubcircuit();
@@ -612,11 +615,12 @@ void SpiceDirectiveNetlistTest::emulatesLtspiceStepParamList() {
     QString error;
     bool finished = false;
     auto& sim = SimManager::instance();
-    QObject::connect(&sim, &SimManager::simulationFinished, &sim, [&](const SimResults& r) {
+    QObject guard;
+    QObject::connect(&sim, &SimManager::simulationFinished, &guard, [&](const SimResults& r) {
         results = r;
         finished = true;
     });
-    QObject::connect(&sim, &SimManager::errorOccurred, &sim, [&](const QString& msg) { error = msg; });
+    QObject::connect(&sim, &SimManager::errorOccurred, &guard, [&](const QString& msg) { error = msg; });
 
     sim.runNetlistText(netlist);
     QEventLoop loop;
@@ -640,6 +644,185 @@ void SpiceDirectiveNetlistTest::emulatesLtspiceStepParamList() {
     QVERIFY2(saw1k, "Missing waveform set for RLOAD=1k sweep case.");
     QVERIFY2(saw2k, "Missing waveform set for RLOAD=2k sweep case.");
     QVERIFY2(!results.diagnostics.empty(), "Expected step sweep diagnostics.");
+}
+
+void SpiceDirectiveNetlistTest::emulatesLtspiceStepParamFileList() {
+    if (!SimulationManager::instance().isAvailable()) {
+        QSKIP("Ngspice is not available in this build.");
+    }
+
+    QTemporaryFile valuesFile;
+    valuesFile.setAutoRemove(true);
+    QVERIFY2(valuesFile.open(), "Failed to create .step values file.");
+    QTextStream out(&valuesFile);
+    out << "* LTspice .step values\n";
+    out << "1k, 2k\n";
+    out << "; trailing comment\n";
+    out.flush();
+    valuesFile.close();
+
+    const QString netlist =
+        "* stepped param file list\n"
+        ".param RLOAD=1k\n"
+        "V1 in 0 DC 1\n"
+        "R1 in out {RLOAD}\n"
+        "C1 out 0 1u\n"
+        ".tran 0.1m 2m\n" +
+        QString("* .step param RLOAD file=\"%1\"\n").arg(valuesFile.fileName()) +
+        "* LTspice .step omitted: this ngspice configuration reports .step as unimplemented\n"
+        ".end\n";
+
+    SimResults results;
+    QString error;
+    bool finished = false;
+    auto& sim = SimManager::instance();
+    QObject guard;
+    QObject::connect(&sim, &SimManager::simulationFinished, &guard, [&](const SimResults& r) {
+        results = r;
+        finished = true;
+    });
+    QObject::connect(&sim, &SimManager::errorOccurred, &guard, [&](const QString& msg) { error = msg; });
+
+    sim.runNetlistText(netlist);
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&sim, &SimManager::simulationFinished, &loop, &QEventLoop::quit);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    timer.start(30000);
+    loop.exec();
+
+    QVERIFY2(finished, qPrintable(error));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    bool saw1k = false;
+    bool saw2k = false;
+    for (const auto& wave : results.waveforms) {
+        const QString name = QString::fromStdString(wave.name);
+        if (name.contains("RLOAD=1k")) saw1k = true;
+        if (name.contains("RLOAD=2k")) saw2k = true;
+    }
+    QVERIFY2(saw1k, "Missing waveform set for RLOAD=1k file sweep case.");
+    QVERIFY2(saw2k, "Missing waveform set for RLOAD=2k file sweep case.");
+}
+
+void SpiceDirectiveNetlistTest::emulatesLtspiceStepModelParameterList() {
+    if (!SimulationManager::instance().isAvailable()) {
+        QSKIP("Ngspice is not available in this build.");
+    }
+
+    const QString netlist =
+        "* stepped model parameter\n"
+        ".model QDRV NPN(Bf=50 Vaf=100)\n"
+        "VCC vcc 0 5\n"
+        "IB 0 base DC 10u\n"
+        "RC vcc collector 1k\n"
+        "Q1 collector base 0 QDRV\n"
+        ".op\n"
+        "* .step NPN QDRV(Bf) LIST 50 200\n"
+        "* LTspice .step omitted: this ngspice configuration reports .step as unimplemented\n"
+        ".end\n";
+
+    SimResults results;
+    QString error;
+    bool finished = false;
+    auto& sim = SimManager::instance();
+    QObject guard;
+    QObject::connect(&sim, &SimManager::simulationFinished, &guard, [&](const SimResults& r) {
+        results = r;
+        finished = true;
+    });
+    QObject::connect(&sim, &SimManager::errorOccurred, &guard, [&](const QString& msg) { error = msg; });
+
+    sim.runNetlistText(netlist);
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&sim, &SimManager::simulationFinished, &loop, &QEventLoop::quit);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    timer.start(30000);
+    loop.exec();
+
+    QVERIFY2(finished, qPrintable(error));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    bool saw50 = false;
+    bool saw200 = false;
+    double vc50 = 0.0;
+    double vc200 = 0.0;
+    for (const auto& wave : results.waveforms) {
+        const QString name = QString::fromStdString(wave.name);
+        if (!name.contains("collector", Qt::CaseInsensitive) || wave.yData.empty()) continue;
+        if (name.contains("QDRV(Bf)=50")) {
+            saw50 = true;
+            vc50 = wave.yData.front();
+        }
+        if (name.contains("QDRV(Bf)=200")) {
+            saw200 = true;
+            vc200 = wave.yData.front();
+        }
+    }
+
+    QVERIFY2(saw50, "Missing operating-point result for QDRV(Bf)=50 sweep case.");
+    QVERIFY2(saw200, "Missing operating-point result for QDRV(Bf)=200 sweep case.");
+    QVERIFY2(std::abs(vc50 - vc200) > 0.05,
+             qPrintable(QString("Expected collector voltage to change across model-parameter step, got %1 V and %2 V.")
+                            .arg(vc50)
+                            .arg(vc200)));
+}
+
+void SpiceDirectiveNetlistTest::emulatesLtspiceStepModelParameterOnContinuedModelCard() {
+    if (!SimulationManager::instance().isAvailable()) {
+        QSKIP("Ngspice is not available in this build.");
+    }
+
+    const QString netlist =
+        "* stepped continued model parameter\n"
+        ".model QDRV NPN(Bf=50\n"
+        "+ Vaf=100)\n"
+        "VCC vcc 0 5\n"
+        "IB 0 base DC 10u\n"
+        "RC vcc collector 1k\n"
+        "Q1 collector base 0 QDRV\n"
+        ".op\n"
+        "* .step NPN QDRV(Bf) LIST 50 200\n"
+        "* LTspice .step omitted: this ngspice configuration reports .step as unimplemented\n"
+        ".end\n";
+
+    SimResults results;
+    QString error;
+    bool finished = false;
+    auto& sim = SimManager::instance();
+    QObject guard;
+    QObject::connect(&sim, &SimManager::simulationFinished, &guard, [&](const SimResults& r) {
+        results = r;
+        finished = true;
+    });
+    QObject::connect(&sim, &SimManager::errorOccurred, &guard, [&](const QString& msg) { error = msg; });
+
+    sim.runNetlistText(netlist);
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&sim, &SimManager::simulationFinished, &loop, &QEventLoop::quit);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    timer.start(30000);
+    loop.exec();
+
+    QVERIFY2(finished, qPrintable(error));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    bool saw50 = false;
+    bool saw200 = false;
+    for (const auto& wave : results.waveforms) {
+        const QString name = QString::fromStdString(wave.name);
+        if (!name.contains("collector", Qt::CaseInsensitive)) continue;
+        if (name.contains("QDRV(Bf)=50")) saw50 = true;
+        if (name.contains("QDRV(Bf)=200")) saw200 = true;
+    }
+
+    QVERIFY2(saw50, "Missing waveform set for QDRV(Bf)=50 on continued .model card.");
+    QVERIFY2(saw200, "Missing waveform set for QDRV(Bf)=200 on continued .model card.");
 }
 
 void SpiceDirectiveNetlistTest::boostConverterFeedbackDoesNotRunAway() {

@@ -84,70 +84,195 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
+            Layout.preferredHeight: 32
             spacing: 8
 
-            // Left side controls
-            Button {
-                text: "REFRESH"
-                onClicked: geminiBridge.refreshModels()
-                flat: true
-                font.pixelSize: 10
-                font.bold: true
-                contentItem: Text {
-                    text: parent.text
-                    color: "#94a3b8"
-                    font: parent.font
-                    horizontalAlignment: Text.AlignHCenter
-                }
-            }
+            // Left side controls: Utility Buttons
+            Row {
+                id: utilityRow
+                spacing: 8
+                Layout.alignment: Qt.AlignVCenter
 
-            ComboBox {
-                model: geminiBridge.availableModels
-                currentIndex: model.indexOf(geminiBridge.currentModel)
-                onActivated: (index) => geminiBridge.currentModel = model[index]
-                Layout.preferredWidth: 120
-                flat: true
-                // Custom styling for the glassy combo
+                // Refresh Button
+                Button {
+                    id: refreshBtn
+                    text: "↻"
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Refresh Models"
+                    onClicked: geminiBridge.refreshModels()
+                    font.pixelSize: 14
+                    font.bold: true
+                    
+                    background: Rectangle {
+                        implicitWidth: 28
+                        implicitHeight: 24
+                        color: parent.hovered ? "#1affffff" : "transparent"
+                        radius: 6
+                        border.color: parent.hovered ? "#475569" : "transparent"
+                    }
+                    
+                    contentItem: Text {
+                        text: parent.text
+                        color: parent.hovered ? "white" : "#94a3b8"
+                        font: parent.font
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+
+                // Model Selector
+                ComboBox {
+                    id: modelSelector
+                    model: geminiBridge.availableModels
+                    currentIndex: model.indexOf(geminiBridge.currentModel)
+                    onActivated: (index) => geminiBridge.currentModel = model[index]
+                    Layout.preferredWidth: 100
+                    
+                    contentItem: Text {
+                        leftPadding: 6
+                        rightPadding: 18
+                        text: modelSelector.currentText || "Select Model..."
+                        font.pixelSize: 10
+                        font.bold: true
+                        color: "#e2e8f0"
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
+                    
+                    background: Rectangle {
+                        implicitWidth: 100
+                        implicitHeight: 24
+                        color: "#801e293b" // 50% alpha dark
+                        border.color: modelSelector.hovered ? "#475569" : "#334155"
+                        border.width: 1
+                        radius: 6
+                    }
+
+                    delegate: ItemDelegate {
+                        width: modelSelector.width
+                        padding: 8
+                        contentItem: Text {
+                            text: modelData
+                            color: hovered ? "white" : "#94a3b8"
+                            font.pixelSize: 10
+                            font.bold: true
+                            elide: Text.ElideRight
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            color: highlighted ? "#2563eb" : (hovered ? "#1e293b" : "transparent")
+                        }
+                    }
+
+                    popup: Popup {
+                        y: -height - 4
+                        width: modelSelector.width
+                        implicitHeight: contentItem.implicitHeight
+                        padding: 1
+                        
+                        contentItem: ListView {
+                            clip: true
+                            implicitHeight: contentHeight
+                            model: modelSelector.popup.visible ? modelSelector.delegateModel : null
+                            ScrollIndicator.vertical: ScrollIndicator { }
+                        }
+                        
+                        background: Rectangle {
+                            color: "#1e293b"
+                            border.color: "#334155"
+                            radius: 8
+                        }
+                    }
+                }
+
+                // Design Audit Button
+                Button {
+                    id: auditBtn
+                    text: "AUDIT"
+                    visible: !geminiBridge.isWorking
+                    onClicked: composerRoot.sendMessage("Please provide a comprehensive design audit of this circuit, focusing on component selection, power dissipation, and potential reliability issues.")
+                    font.pixelSize: 9
+                    font.bold: true
+                    
+                    background: Rectangle {
+                        implicitWidth: 50
+                        implicitHeight: 24
+                        color: parent.hovered ? "#263b82f6" : "transparent"
+                        radius: 6
+                        border.color: "#3b82f6"
+                        border.width: 1
+                    }
+                    
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#3b82f6"
+                        font: parent.font
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
             }
 
             Item { Layout.fillWidth: true }
 
-            // Action buttons
-            Button {
-                id: stopBtn
-                text: "STOP"
-                visible: geminiBridge.isWorking
-                onClicked: composerRoot.stopRun()
-                background: Rectangle {
-                    radius: 8
-                    color: "#ef4444"
-                }
-                contentItem: Text {
-                    text: parent.text
-                    color: "white"
-                    font.pixelSize: 10
-                    font.bold: true
-                }
-            }
+            // Right side: Action Buttons
+            Row {
+                id: actionRow
+                spacing: 6
+                Layout.alignment: Qt.AlignVCenter
 
-            Button {
-                id: sendBtn
-                text: "SEND"
-                visible: !geminiBridge.isWorking
-                enabled: inputField.text.trim() !== ""
-                onClicked: {
-                    composerRoot.sendMessage(inputField.text.trim())
-                    inputField.text = ""
-                }
-                background: Rectangle {
-                    radius: 8
-                    color: parent.enabled ? "#2563eb" : "#1e293b"
-                }
-                contentItem: Text {
-                    text: parent.text
-                    color: parent.enabled ? "white" : "#475569"
+                // Stop Button
+                Button {
+                    id: stopBtn
+                    text: "STOP"
+                    visible: geminiBridge.isWorking
+                    onClicked: composerRoot.stopRun()
                     font.pixelSize: 10
                     font.bold: true
+                    
+                    background: Rectangle {
+                        implicitWidth: 54
+                        implicitHeight: 28
+                        radius: 8
+                        color: parent.hovered ? "#ef4444" : "#dc2626"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "white"
+                        font: parent.font
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+
+                // Send Button
+                Button {
+                    id: sendBtn
+                    text: "SEND"
+                    visible: !geminiBridge.isWorking
+                    enabled: inputField.text.trim() !== ""
+                    onClicked: {
+                        if (inputField.text.trim() !== "") {
+                            composerRoot.sendMessage(inputField.text.trim())
+                            inputField.text = ""
+                        }
+                    }
+                    font.pixelSize: 10
+                    font.bold: true
+                    
+                    background: Rectangle {
+                        implicitWidth: 54
+                        implicitHeight: 28
+                        radius: 8
+                        color: parent.enabled ? (parent.hovered ? "#3b82f6" : "#2563eb") : "#1e293b"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: parent.enabled ? "white" : "#475569"
+                        font: parent.font
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
                 }
             }
         }
