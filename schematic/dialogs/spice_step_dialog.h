@@ -4,6 +4,7 @@
 #include <QDialog>
 #include <QRegularExpression>
 #include <QString>
+#include <QStringList>
 
 class QComboBox;
 class QDialogButtonBox;
@@ -11,6 +12,7 @@ class QLineEdit;
 class QLabel;
 class QStackedWidget;
 class QWidget;
+class QComboBox;
 
 class SpiceStepDialog : public QDialog {
     Q_OBJECT
@@ -26,6 +28,8 @@ private slots:
     void applyCommandText();
     void browseStepFile();
     void applyPreset(const QString& presetId);
+    void onDimensionCountChanged();
+    void onEditingLevelChanged();
 
 private:
     enum class TargetKind {
@@ -49,7 +53,14 @@ private:
     TargetKind currentTargetKind() const;
     SweepMode currentSweepMode() const;
     QString validationMessage() const;
+    QString buildSingleLevelCommand() const;
+    bool parseSingleLevelCommand(const QString& text);
+    void loadLevelIntoUi(int levelIndex);
+    void syncCurrentLevelFromUi();
+    int currentLevelIndex() const;
 
+    QComboBox* m_dimensionCountCombo = nullptr;
+    QComboBox* m_editLevelCombo = nullptr;
     QComboBox* m_targetKindCombo = nullptr;
     QStackedWidget* m_targetStack = nullptr;
     QLineEdit* m_paramNameEdit = nullptr;
@@ -79,6 +90,7 @@ private:
     QLineEdit* m_commandEdit = nullptr;
     QLabel* m_validationLabel = nullptr;
     QDialogButtonBox* m_buttonBox = nullptr;
+    QStringList m_levelCommands;
     bool m_syncingCommand = false;
 };
 

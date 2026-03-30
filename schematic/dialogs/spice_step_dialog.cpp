@@ -60,6 +60,14 @@ SpiceStepDialog::SpiceStepDialog(const QString& initialCommand, QWidget* parent)
     mainLayout->addWidget(presetFrame);
 
     auto* form = new QFormLayout();
+    m_dimensionCountCombo = new QComboBox(this);
+    m_dimensionCountCombo->addItems({"1", "2", "3"});
+    form->addRow("Sweep Levels:", m_dimensionCountCombo);
+
+    m_editLevelCombo = new QComboBox(this);
+    m_editLevelCombo->addItems({"Level 1", "Level 2", "Level 3"});
+    form->addRow("Editing Level:", m_editLevelCombo);
+
     m_targetKindCombo = new QComboBox(this);
     m_targetKindCombo->addItems({"Parameter", "Temperature", "Independent Source", "Model Parameter"});
     form->addRow("Sweep Target:", m_targetKindCombo);
@@ -216,6 +224,8 @@ SpiceStepDialog::SpiceStepDialog(const QString& initialCommand, QWidget* parent)
         if (validationMessage().isEmpty() && !m_commandEdit->text().trimmed().isEmpty()) accept();
     });
     connect(m_buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    connect(m_dimensionCountCombo, &QComboBox::currentTextChanged, this, &SpiceStepDialog::onDimensionCountChanged);
+    connect(m_editLevelCombo, &QComboBox::currentTextChanged, this, &SpiceStepDialog::onEditingLevelChanged);
     connect(m_targetKindCombo, &QComboBox::currentTextChanged, this, &SpiceStepDialog::updateUiState);
     connect(m_sweepModeCombo, &QComboBox::currentTextChanged, this, &SpiceStepDialog::updateUiState);
     connect(browseButton, &QPushButton::clicked, this, &SpiceStepDialog::browseStepFile);
@@ -227,6 +237,7 @@ SpiceStepDialog::SpiceStepDialog(const QString& initialCommand, QWidget* parent)
     }
     connect(m_commandEdit, &QLineEdit::editingFinished, this, &SpiceStepDialog::applyCommandText);
 
+    m_levelCommands = QStringList({QString(), QString(), QString()});
     m_commandEdit->setText(initialCommand.trimmed());
     applyCommandText();
     updateUiState();
@@ -242,6 +253,10 @@ QString SpiceStepDialog::quotedFilePath(const QString& path) {
     if (out.isEmpty()) return out;
     if (out.startsWith('"') && out.endsWith('"')) return out;
     return QString("\"%1\"").arg(out);
+}
+
+int SpiceStepDialog::currentLevelIndex() const {
+    return m_editLevelCombo ? m_editLevelCombo->currentIndex() : 0;
 }
 
 SpiceStepDialog::TargetKind SpiceStepDialog::currentTargetKind() const {
@@ -354,65 +369,40 @@ QString SpiceStepDialog::validationMessage() const {
     return QString();
 }
 
-void SpiceStepDialog::updateUiState() {
-    if (m_targetStack) m_targetStack->setCurrentIndex(m_targetKindCombo->currentIndex());
-    m_modeStack->setCurrentIndex(m_sweepModeCombo->currentIndex());
-    updatePreview();
-}
-
-void SpiceStepDialog::updatePreview() {
-    if (m_syncingCommand) return;
-    m_syncingCommand = true;
-
+QString SpiceStepDialog::buildSingleLevelCommand() const {
     const QString prefix = targetPrefix().trimmed();
-    QString cmd;
+    if (prefix.isEmpty()) return QString();
+
     switch (currentSweepMode()) {
     case SweepMode::List:
-        cmd = QString(".step %1 list %2").arg(prefix, m_listValuesEdit->text().trimmed());
-        break;
+        return QString(".step %1 list %2").arg(prefix, m_listValuesEdit->text().trimmed()).trimmed();
     case SweepMode::Decade:
-        cmd = QString(".step dec %1 %2 %3 %4")
-                  .arg(prefix, m_logPointsEdit->text().trimmed(), m_logStartEdit->text().trimmed(), m_logStopEdit->text().trimmed());
-        break;
+        return QString(".step dec %1 %2 %3 %4")
+            .arg(prefix, m_logPointsEdit->text().trimmed(), m_logStartEdit->text().trimmed(), m_logStopEdit->text().trimmed()).trimmed();
     case SweepMode::Octave:
-        cmd = QString(".step oct %1 %2 %3 %4")
-                  .arg(prefix, m_octPointsEdit->text().trimmed(), m_octStartEdit->text().trimmed(), m_octStopEdit->text().trimmed());
-        break;
+        return QString(".step oct %1 %2 %3 %4")
+            .arg(prefix, m_octPointsEdit->text().trimmed(), m_octStartEdit->text().trimmed(), m_octStopEdit->text().trimmed()).trimmed();
     case SweepMode::File:
-        cmd = QString(".step %1 file=%2").arg(prefix, quotedFilePath(m_filePathEdit->text()));
-        break;
+        return QString(".step %1 file=%2").arg(prefix, quotedFilePath(m_filePathEdit->text())).trimmed();
     case SweepMode::LinearRange:
     default:
-        cmd = QString(".step %1 %2 %3 %4")
-                  .arg(prefix, m_linearStartEdit->text().trimmed(), m_linearStopEdit->text().trimmed(), m_linearStepEdit->text().trimmed());
-        break;
+        return QString(".step %1 %2 %3 %4")
+            .arg(prefix, m_linearStartEdit->text().trimmed(), m_linearStopEdit->text().trimmed(), m_linearStepEdit->text().trimmed()).trimmed();
     }
-
-    m_commandEdit->setText(cmd.trimmed());
-    const QString validation = validationMessage();
-    if (m_validationLabel) {
-        m_validationLabel->setText(validation.isEmpty()
-            ? QString("Supported by VioSpice LTspice emulation. The generated directive is ready to use.")
-            : validation);
-        m_validationLabel->setStyleSheet(validation.isEmpty()
-            ? "color: #10b981; font-size: 11px;"
-            : "color: #f59e0b; font-size: 11px;");
-    }
-    if (m_buttonBox && m_buttonBox->button(QDialogButtonBox::Ok)) {
-        m_buttonBox->button(QDialogButtonBox::Ok)->setEnabled(validation.isEmpty() && !cmd.trimmed().isEmpty());
-    }
-    m_syncingCommand = false;
 }
 
-void SpiceStepDialog::applyCommandText() {
-    if (m_syncingCommand) return;
-    const QString text = m_commandEdit->text().trimmed();
-    if (!text.startsWith(".step", Qt::CaseInsensitive)) return;
+void SpiceStepDialog::syncCurrentLevelFromUi() {
+    const int idx = currentLevelIndex();
+    if (idx < 0 || idx >= m_levelCommands.size()) return;
+    m_levelCommands[idx] = buildSingleLevelCommand();
+}
+
+bool SpiceStepDialog::parseSingleLevelCommand(const QString& text) {
+    if (!text.startsWith(".step", Qt::CaseInsensitive)) return false;
 
     const QStringList tokens = text.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-    if (tokens.size() < 3) return;
+    if (tokens.size() < 3) return false;
 
-    m_syncingCommand = true;
     int pos = 1;
     const QString sweepToken = tokens.value(pos).toLower();
     if (sweepToken == "dec") {
@@ -478,6 +468,92 @@ void SpiceStepDialog::applyCommandText() {
         m_linearStepEdit->setText(tokens.value(pos + 2));
     }
 
+    return true;
+}
+
+void SpiceStepDialog::loadLevelIntoUi(int levelIndex) {
+    if (levelIndex < 0 || levelIndex >= m_levelCommands.size()) return;
+    const QString text = m_levelCommands[levelIndex].trimmed();
+    if (text.isEmpty()) return;
+    parseSingleLevelCommand(text);
+}
+
+void SpiceStepDialog::onDimensionCountChanged() {
+    if (m_syncingCommand) return;
+    syncCurrentLevelFromUi();
+    const int count = m_dimensionCountCombo ? (m_dimensionCountCombo->currentIndex() + 1) : 1;
+    if (m_editLevelCombo) {
+        for (int i = 0; i < m_editLevelCombo->count(); ++i) {
+            m_editLevelCombo->setItemData(i, i < count ? QVariant() : 0, Qt::UserRole - 1);
+        }
+        m_editLevelCombo->setCurrentIndex(qMin(currentLevelIndex(), count - 1));
+    }
+    updatePreview();
+}
+
+void SpiceStepDialog::onEditingLevelChanged() {
+    if (m_syncingCommand) return;
+    m_syncingCommand = true;
+    loadLevelIntoUi(currentLevelIndex());
+    m_syncingCommand = false;
+    updateUiState();
+}
+
+void SpiceStepDialog::updateUiState() {
+    if (m_targetStack) m_targetStack->setCurrentIndex(m_targetKindCombo->currentIndex());
+    m_modeStack->setCurrentIndex(m_sweepModeCombo->currentIndex());
+    updatePreview();
+}
+
+void SpiceStepDialog::updatePreview() {
+    if (m_syncingCommand) return;
+    m_syncingCommand = true;
+
+    syncCurrentLevelFromUi();
+    const int count = m_dimensionCountCombo ? (m_dimensionCountCombo->currentIndex() + 1) : 1;
+    QStringList commands;
+    for (int i = 0; i < count && i < m_levelCommands.size(); ++i) {
+        const QString line = m_levelCommands[i].trimmed();
+        if (!line.isEmpty()) commands << line;
+    }
+
+    const QString cmd = commands.join("\n");
+    m_commandEdit->setText(cmd);
+    const QString validation = validationMessage();
+    if (m_validationLabel) {
+        m_validationLabel->setText(validation.isEmpty()
+            ? QString("Supported by VioSpice LTspice emulation. The generated directive is ready to use.")
+            : validation);
+        m_validationLabel->setStyleSheet(validation.isEmpty()
+            ? "color: #10b981; font-size: 11px;"
+            : "color: #f59e0b; font-size: 11px;");
+    }
+    if (m_buttonBox && m_buttonBox->button(QDialogButtonBox::Ok)) {
+        m_buttonBox->button(QDialogButtonBox::Ok)->setEnabled(validation.isEmpty() && !cmd.trimmed().isEmpty());
+    }
+    m_syncingCommand = false;
+}
+
+void SpiceStepDialog::applyCommandText() {
+    if (m_syncingCommand) return;
+    const QString text = m_commandEdit->text().trimmed();
+    if (text.isEmpty()) return;
+
+    const QStringList lines = text.split('\n', Qt::SkipEmptyParts);
+    QStringList stepLines;
+    for (const QString& raw : lines) {
+        const QString line = raw.trimmed();
+        if (line.startsWith(".step", Qt::CaseInsensitive)) stepLines << line;
+    }
+    if (stepLines.isEmpty()) return;
+
+    m_syncingCommand = true;
+    m_levelCommands = QStringList({QString(), QString(), QString()});
+    const int count = qMin(stepLines.size(), 3);
+    for (int i = 0; i < count; ++i) m_levelCommands[i] = stepLines[i];
+    if (m_dimensionCountCombo) m_dimensionCountCombo->setCurrentIndex(count - 1);
+    if (m_editLevelCombo) m_editLevelCombo->setCurrentIndex(0);
+    loadLevelIntoUi(0);
     m_syncingCommand = false;
     updateUiState();
     updatePreview();
