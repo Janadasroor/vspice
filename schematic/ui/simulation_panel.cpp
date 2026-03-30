@@ -160,6 +160,19 @@ std::string measAnalysisToken(SimAnalysisType type) {
     default: return "";
     }
 }
+
+QString formatMeasuredNumber(double value) {
+    return QString::number(value, 'g', 12);
+}
+
+void appendMeasurementLogBlock(QTextEdit* logOutput, const std::map<std::string, double>& measurements) {
+    if (!logOutput || measurements.empty()) return;
+    logOutput->append("\n--- Measurements (.meas/.mean) ---");
+    for (const auto& [name, value] : measurements) {
+        logOutput->append(QString("%1 = %2")
+            .arg(QString::fromStdString(name), formatMeasuredNumber(value)));
+    }
+}
 }
 
 SimulationPanel::SimulationPanel(QGraphicsScene* scene, NetManager* netManager, const QString& projectDir, QWidget* parent)
@@ -1522,7 +1535,7 @@ void SimulationPanel::setupUI() {
     });
 
     m_measurementsTable = new QTableWidget(0, 6);
-    m_measurementsTable->setHorizontalHeaderLabels({"Signal", "Vpp/Ipp", "Avg", "RMS", "Freq", "Delta(A-B)"});
+    m_measurementsTable->setHorizontalHeaderLabels({"Name", "Primary/Result", "Avg", "RMS", "Freq", "Delta(A-B)"});
     m_measurementsTable->horizontalHeader()->setStretchLastSection(true);
     m_measurementsTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_measurementsTable->verticalHeader()->hide();
@@ -2254,6 +2267,14 @@ void SimulationPanel::onSimResultsReady(const SimResults& results) {
         m_waveformViewer->beginBatchUpdate();
     }
 
+    for (const auto& diag : effectiveResults.diagnostics) {
+        const QString line = QString::fromStdString(diag);
+        m_logOutput->append(line);
+        appendIssueItem(line);
+    }
+
+    appendMeasurementLogBlock(m_logOutput, effectiveResults.measurements);
+
     plotBuiltinResults(effectiveResults);
     evaluateMeasStatements(effectiveResults);
 
@@ -2269,6 +2290,8 @@ void SimulationPanel::showDetailedLog() {
 }
 
 void SimulationPanel::evaluateMeasStatements(const SimResults& results) {
+    if (!results.measurements.empty()) return;
+
     const auto& statements = m_currentNetlist.measStatements();
     if (statements.empty()) return;
 
@@ -2282,7 +2305,7 @@ void SimulationPanel::evaluateMeasStatements(const SimResults& results) {
     for (const auto& mr : measResults) {
         const QString name = QString::fromStdString(mr.name);
         if (mr.valid) {
-            m_logOutput->append(QString("%1 = %2").arg(name, QString::number(mr.value, 'g', 12)));
+            m_logOutput->append(QString("%1 = %2").arg(name, formatMeasuredNumber(mr.value)));
         } else {
             m_logOutput->append(QString("%1 : ERROR (%2)")
                 .arg(name, QString::fromStdString(mr.error)));
@@ -2844,6 +2867,28 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
         for(auto* s : m_spectrumChart->series()) s->attachAxis(axisMag);
     }
 
+    if (m_measurementsTable && !results.measurements.empty()) {
+        const int separatorRow = m_measurementsTable->rowCount();
+        m_measurementsTable->insertRow(separatorRow);
+        for (int col = 0; col < m_measurementsTable->columnCount(); ++col) {
+            auto* item = new QTableWidgetItem(col == 0 ? ".meas results" : QString());
+            item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
+            item->setForeground(QColor("#fbbf24"));
+            m_measurementsTable->setItem(separatorRow, col, item);
+        }
+
+        for (const auto& [name, value] : results.measurements) {
+            const int row = m_measurementsTable->rowCount();
+            m_measurementsTable->insertRow(row);
+            m_measurementsTable->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(name)));
+            m_measurementsTable->setItem(row, 1, new QTableWidgetItem(formatMeasuredNumber(value)));
+            m_measurementsTable->setItem(row, 2, new QTableWidgetItem("-"));
+            m_measurementsTable->setItem(row, 3, new QTableWidgetItem("-"));
+            m_measurementsTable->setItem(row, 4, new QTableWidgetItem("-"));
+            m_measurementsTable->setItem(row, 5, new QTableWidgetItem("-"));
+        }
+    }
+
     if (m_waveformViewer) {
         m_waveformViewer->zoomFit();
     }
@@ -3032,6 +3077,16 @@ bool SimulationPanel::exportResultsJsonFile(const QString& path) const {
         o["x"] = x; o["y"] = y; waves.append(o);
     }
     root["waveforms"] = waves;
+    QJsonObject measurements;
+    for (const auto& [name, value] : m_lastResults.measurements) {
+        measurements[QString::fromStdString(name)] = value;
+    }
+    root["measurements"] = measurements;
+    QJsonArray diagnostics;
+    for (const auto& diag : m_lastResults.diagnostics) {
+        diagnostics.append(QString::fromStdString(diag));
+    }
+    root["diagnostics"] = diagnostics;
     QFile f(path); if (!f.open(QIODevice::WriteOnly)) return false;
     f.write(QJsonDocument(root).toJson()); return true;
 }
@@ -3041,6 +3096,18 @@ bool SimulationPanel::exportResultsReportFile(const QString& path) const {
     QFile f(path); if (!f.open(QIODevice::WriteOnly)) return false;
     QTextStream out(&f); out << "# Simulation Report\n\n";
     for (const auto& w : m_lastResults.waveforms) out << "- " << QString::fromStdString(w.name) << ": " << w.xData.size() << " points\n";
+    if (!m_lastResults.measurements.empty()) {
+        out << "\n## Measurements\n\n";
+        for (const auto& [name, value] : m_lastResults.measurements) {
+            out << "- " << QString::fromStdString(name) << ": " << formatMeasuredNumber(value) << "\n";
+        }
+    }
+    if (!m_lastResults.diagnostics.empty()) {
+        out << "\n## Diagnostics\n\n";
+        for (const auto& diag : m_lastResults.diagnostics) {
+            out << "- " << QString::fromStdString(diag) << "\n";
+        }
+    }
     return true;
 }
 

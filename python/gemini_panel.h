@@ -66,6 +66,7 @@ private slots:
     void onBridgeStopRequest();
     void onBridgeRefreshModelsRequest();
     void onBridgeCloseRequest();
+    void onBridgeShowHistoryRequest();
 
 private:
     QGraphicsScene* m_scene;

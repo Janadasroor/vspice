@@ -49,6 +49,7 @@ public:
     Q_INVOKABLE void stopRun();
     Q_INVOKABLE void refreshModels();
     Q_INVOKABLE void closePanel();
+    Q_INVOKABLE void showHistory();
 
 signals:
     void messagesChanged();
@@ -66,6 +67,7 @@ signals:
     void refreshModelsRequested();
     void clearHistoryRequested();
     void closeRequested();
+    void showHistoryRequested();
 
 public slots:
     void updateMessages(const QVariantList& msgs);

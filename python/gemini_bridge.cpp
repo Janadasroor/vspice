@@ -108,3 +108,7 @@ void GeminiBridge::updateTitle(const QString& title) {
 void GeminiBridge::closePanel() {
     emit closeRequested();
 }
+
+void GeminiBridge::showHistory() {
+    emit showHistoryRequested();
+}

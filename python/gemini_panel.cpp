@@ -32,6 +32,8 @@
 #include <QPlainTextEdit>
 #include <QToolButton>
 #include <QFileInfo>
+#include <QMenu>
+#include <QAction>
 
 namespace {
 QString compactErrorSummary(const QString& raw, int maxLen = 180) {
@@ -92,6 +94,7 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     connect(m_bridge, &GeminiBridge::refreshModelsRequested, this, &GeminiPanel::onBridgeRefreshModelsRequest);
     connect(m_bridge, &GeminiBridge::clearHistoryRequested, this, &GeminiPanel::clearHistory);
     connect(m_bridge, &GeminiBridge::closeRequested, this, &GeminiPanel::onBridgeCloseRequest);
+    connect(m_bridge, &GeminiBridge::showHistoryRequested, this, &GeminiPanel::onBridgeShowHistoryRequest);
 
     m_bridge->updateTitle("VIORA AI");
 
@@ -393,9 +396,103 @@ QString GeminiPanel::gatherInstructions() const {
     return combined;
 }
 
-void GeminiPanel::saveHistory() {}
-void GeminiPanel::loadHistory() {}
-void GeminiPanel::loadHistoryFromFile(const QString& path) { Q_UNUSED(path); }
+void GeminiPanel::saveHistory() {
+    if (m_history.isEmpty()) return;
+    
+    QString historyDir = QDir::homePath() + "/.viospice/gemini/history";
+    if (!QDir().mkpath(historyDir)) return;
+    
+    QString title = m_bridge ? m_bridge->conversationTitle() : "Untitled Chat";
+    if (title == "VIORA AI") title = "Chat_" + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    
+    // Sanitize title for filename
+    QString safeTitle = title;
+    safeTitle.replace(QRegularExpression("[^a-zA-Z0-9_]"), "_");
+    QString filePath = historyDir + "/" + safeTitle + ".json";
+    
+    QFile file(filePath);
+    if (file.open(QIODevice::WriteOnly)) {
+        QJsonArray arr;
+        for (const auto& m : m_history) {
+            QJsonObject obj;
+            obj["role"] = m["role"].toString();
+            obj["content"] = m["content"].toString();
+            obj["timestamp"] = m["timestamp"].toString();
+            arr.append(obj);
+        }
+        
+        QJsonObject root;
+        root["title"] = title;
+        root["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        root["messages"] = arr;
+        
+        file.write(QJsonDocument(root).toJson());
+        file.close();
+        qDebug() << "[GeminiPanel] History saved to" << filePath;
+    }
+}
+
+void GeminiPanel::loadHistory() {
+    // We could load the last session here if desired
+}
+
+void GeminiPanel::loadHistoryFromFile(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return;
+    
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    
+    if (!doc.isObject()) return;
+    
+    QJsonObject rootObj = doc.object();
+    if (m_bridge) m_bridge->updateTitle(rootObj["title"].toString());
+    
+    m_history.clear();
+    QJsonArray arr = rootObj["messages"].toArray();
+    for (int i = 0; i < arr.size(); ++i) {
+        QJsonObject obj = arr[i].toObject();
+        QVariantMap entry;
+        entry["role"] = obj["role"].toString();
+        entry["content"] = obj["content"].toString();
+        entry["timestamp"] = obj["timestamp"].toString();
+        m_history.append(entry);
+    }
+    
+    syncHistoryToBridge();
+    qDebug() << "[GeminiPanel] History session loaded:" << path;
+}
+
+void GeminiPanel::onBridgeShowHistoryRequest() {
+    QString historyDir = QDir::homePath() + "/.viospice/gemini/history";
+    QDir dir(historyDir);
+    if (!dir.exists()) return;
+    
+    QFileInfoList files = dir.entryInfoList(QStringList() << "*.json", QDir::Files, QDir::Time);
+    if (files.isEmpty()) return;
+    
+    QMenu menu(this);
+    menu.setStyleSheet("QMenu { background-color: #1e293b; color: #e2e8f0; border: 1px solid #334155; padding: 4px; } "
+                       "QMenu::item { padding: 4px 20px; border-radius: 4px; } "
+                       "QMenu::item:selected { background-color: #3b82f6; color: white; }");
+    
+    for (const QFileInfo& info : files) {
+        QString title = info.baseName();
+        QFile file(info.absoluteFilePath());
+        if (file.open(QIODevice::ReadOnly)) {
+            QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+            if (doc.isObject()) title = doc.object()["title"].toString();
+            file.close();
+        }
+        
+        QAction* action = menu.addAction(title);
+        connect(action, &QAction::triggered, this, [this, filePath = info.absoluteFilePath()]() {
+            loadHistoryFromFile(filePath);
+        });
+    }
+    
+    menu.exec(QCursor::pos());
+}
 void GeminiPanel::onRefreshModelsClicked() { refreshModelList(); }
 void GeminiPanel::onCustomInstructionsClicked() {}
 void GeminiPanel::onCopyPromptClicked() {}

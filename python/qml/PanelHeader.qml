@@ -43,7 +43,7 @@ Rectangle {
             HeaderButton {
                 text: "🕒"
                 toolTip: "History"
-                // Placeholder action
+                onClicked: geminiBridge.showHistory()
             }
 
             // More (...)

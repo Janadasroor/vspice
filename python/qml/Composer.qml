@@ -126,7 +126,7 @@ Rectangle {
                     model: geminiBridge ? geminiBridge.availableModels : []
                     currentIndex: geminiBridge ? model.indexOf(geminiBridge.currentModel) : -1
                     onActivated: (index) => { if (geminiBridge) geminiBridge.currentModel = model[index] }
-                    Layout.preferredWidth: 100
+                    Layout.preferredWidth: 140
                     
                     contentItem: Text {
                         leftPadding: 6
@@ -140,7 +140,7 @@ Rectangle {
                     }
                     
                     background: Rectangle {
-                        implicitWidth: 100
+                        implicitWidth: 140
                         implicitHeight: 24
                         color: "#801e293b" // 50% alpha dark
                         border.color: modelSelector.hovered ? "#475569" : "#334155"
