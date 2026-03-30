@@ -5,6 +5,7 @@
 #include <QDebug>
 
 GeminiBridge::GeminiBridge(QObject* parent) : QObject(parent) {
+    m_availableModels << m_currentModel;
 }
 
 QString GeminiBridge::textColor() const {

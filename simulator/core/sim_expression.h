@@ -115,6 +115,11 @@ public:
     }
 
 private:
+    static bool isKnownFunctionName(const std::string& name) {
+        return name == "sin" || name == "cos" || name == "exp" || name == "log" ||
+               name == "sqrt" || name == "abs";
+    }
+
     void parse() {
         std::vector<ExprToken> tokens = tokenize(m_source);
         m_rpn = shuntingYard(tokens);
@@ -150,23 +155,21 @@ private:
                 tokens.push_back({ ExprTokenType::Number, num });
             } else if (std::isalpha(c)) {
                 std::string name;
-                while (i < s.length() && (std::isalnum(s[i]) || s[i] == '_' || s[i] == '(' || s[i] == ')')) {
-                    // Special handling for V(node) and I(comp)
-                    if (s[i] == '(') {
-                        // Look ahead to see if it's a function or variable
-                        // For now we treat V(...) as a single variable name
-                        name += s[i++];
-                        while (i < s.length() && s[i] != ')') name += s[i++];
-                        if (i < s.length()) name += s[i++];
-                        break; 
-                    }
+                while (i < s.length() && (std::isalnum(static_cast<unsigned char>(s[i])) || s[i] == '_')) {
                     name += s[i++];
                 }
-                
-                // Check if it's a known function
-                if (name == "sin" || name == "cos" || name == "exp" || name == "log" || name == "sqrt" || name == "abs") {
+
+                if (i < s.length() && s[i] == '(' && isKnownFunctionName(name)) {
                     tokens.push_back({ ExprTokenType::Function, name });
                 } else {
+                    if (i < s.length() && s[i] == '(') {
+                        int depth = 0;
+                        do {
+                            if (s[i] == '(') ++depth;
+                            else if (s[i] == ')') --depth;
+                            name += s[i++];
+                        } while (i < s.length() && depth > 0);
+                    }
                     tokens.push_back({ ExprTokenType::Variable, name });
                 }
             } else if (c == '(') {

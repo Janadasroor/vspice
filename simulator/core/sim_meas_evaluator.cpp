@@ -13,6 +13,20 @@ namespace {
 
 QString qFromStd(const std::string& s) { return QString::fromStdString(s); }
 
+const std::vector<double>* commonXAxis(const SimResults& results);
+
+double interpolateWaveformValue(const SimWaveform& w, double x);
+
+bool evaluateExpression(
+    const SimResults& results,
+    const std::string& expr,
+    double x,
+    bool useInterpolation,
+    size_t sampleIndex,
+    const std::map<std::string, double>& priorMeasurements,
+    double& out
+);
+
 std::string lowerCopy(const std::string& s) {
     std::string r = s;
     std::transform(r.begin(), r.end(), r.begin(), [](unsigned char c) {
@@ -23,6 +37,13 @@ std::string lowerCopy(const std::string& s) {
 
 bool parseSpiceNum(const std::string& s, double& out) {
     return SimValueParser::parseSpiceNumber(qFromStd(s), out);
+}
+
+std::string trimCopy(const std::string& s) {
+    const size_t first = s.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return std::string();
+    const size_t last = s.find_last_not_of(" \t\r\n");
+    return s.substr(first, last - first + 1);
 }
 
 std::vector<std::string> tokenizeMeas(const std::string& line) {
@@ -66,6 +87,107 @@ bool splitCondition(const std::string& text, std::string& lhs, std::string& rhs)
     return false;
 }
 
+bool isTriggerQualifier(const std::string& token) {
+    const std::string lower = lowerCopy(token);
+    return lower == "rise" || lower.rfind("rise=", 0) == 0 ||
+           lower == "fall" || lower.rfind("fall=", 0) == 0 ||
+           lower == "cross" || lower.rfind("cross=", 0) == 0 ||
+           lower == "td" || lower.rfind("td=", 0) == 0 ||
+           lower == "targ" || lower == "trig" || lower == "from" ||
+           lower == "to" || lower.rfind("from=", 0) == 0 ||
+           lower.rfind("to=", 0) == 0;
+}
+
+bool parseTriggerConditionToken(const std::string& text, MeasTrigger& trig) {
+    std::string lhs;
+    std::string rhs;
+    if (splitCondition(text, lhs, rhs)) {
+        trig.lhsExpr = trimCopy(lhs);
+        trig.rhsExpr = trimCopy(rhs);
+        if (trig.signal.empty()) trig.signal = trig.lhsExpr;
+        if (!trig.rhsExpr.empty()) {
+            double parsed = 0.0;
+            if (parseSpiceNum(trig.rhsExpr, parsed)) trig.value = parsed;
+        }
+        return !trig.lhsExpr.empty() && !trig.rhsExpr.empty();
+    }
+
+    trig.signal = text;
+    trig.lhsExpr = text;
+    return !trig.lhsExpr.empty();
+}
+
+bool buildExpressionWaveform(
+    const SimResults& results,
+    const std::string& expr,
+    const std::map<std::string, double>& priorMeasurements,
+    SimWaveform& out
+) {
+    const std::vector<double>* xAxis = commonXAxis(results);
+    if (!xAxis || xAxis->empty()) return false;
+
+    out.name = expr;
+    out.xData = *xAxis;
+    out.yData.clear();
+    out.yData.reserve(xAxis->size());
+    for (size_t i = 0; i < xAxis->size(); ++i) {
+        double value = 0.0;
+        if (!evaluateExpression(results, expr, (*xAxis)[i], false, i, priorMeasurements, value)) {
+            return false;
+        }
+        out.yData.push_back(value);
+    }
+    return true;
+}
+
+std::string rewriteWrappedWaveformCalls(
+    const std::string& expr,
+    std::map<std::string, std::string>& placeholderToExpr
+) {
+    std::string out;
+    size_t i = 0;
+    int counter = 0;
+    while (i < expr.size()) {
+        if (!std::isalpha(static_cast<unsigned char>(expr[i]))) {
+            out.push_back(expr[i++]);
+            continue;
+        }
+
+        const size_t identStart = i;
+        while (i < expr.size() && (std::isalnum(static_cast<unsigned char>(expr[i])) || expr[i] == '_')) ++i;
+        const std::string ident = expr.substr(identStart, i - identStart);
+        const std::string identLower = lowerCopy(ident);
+        if (i < expr.size() && expr[i] == '(' &&
+            (identLower == "mag" || identLower == "db" || identLower == "ph" || identLower == "phase" ||
+             identLower == "re" || identLower == "real" || identLower == "im" || identLower == "imag")) {
+            const size_t callStart = identStart;
+            int depth = 0;
+            size_t j = i;
+            for (; j < expr.size(); ++j) {
+                if (expr[j] == '(') ++depth;
+                else if (expr[j] == ')') {
+                    --depth;
+                    if (depth == 0) {
+                        ++j;
+                        break;
+                    }
+                }
+            }
+            if (depth == 0 && j > callStart) {
+                const std::string original = expr.substr(callStart, j - callStart);
+                const std::string placeholder = "MEASVAR_" + std::to_string(counter++);
+                placeholderToExpr[placeholder] = original;
+                out += placeholder;
+                i = j;
+                continue;
+            }
+        }
+
+        out += ident;
+    }
+    return out;
+}
+
 const std::vector<double>* commonXAxis(const SimResults& results) {
     for (const auto& w : results.waveforms) {
         if (!w.xData.empty()) return &w.xData;
@@ -87,6 +209,75 @@ const SimWaveform* lookupWaveform(const SimResults& results, const std::string& 
         if (lowerCopy(wn) == lowerCopy(wrapped)) return &w;
     }
     return nullptr;
+}
+
+bool splitWrapperCall(const std::string& text, std::string& name, std::string& arg) {
+    const size_t open = text.find('(');
+    if (open == std::string::npos || text.empty() || text.back() != ')') return false;
+    name = lowerCopy(trimCopy(text.substr(0, open)));
+    arg = trimCopy(text.substr(open + 1, text.size() - open - 2));
+    return !name.empty() && !arg.empty();
+}
+
+double waveformSamplePhaseDeg(const SimWaveform& w, double x, bool useInterpolation, size_t sampleIndex) {
+    if (w.yPhase.empty()) return 0.0;
+    const size_t n = std::min(w.xData.size(), w.yPhase.size());
+    if (n == 0) return 0.0;
+    if (!useInterpolation) return (sampleIndex < n) ? w.yPhase[sampleIndex] : w.yPhase.back();
+    if (n == 1 || x <= w.xData.front()) return w.yPhase.front();
+    if (x >= w.xData[n - 1]) return w.yPhase[n - 1];
+    auto it = std::lower_bound(w.xData.begin(), w.xData.begin() + static_cast<long>(n), x);
+    size_t idx = static_cast<size_t>(std::distance(w.xData.begin(), it));
+    if (idx == 0) return w.yPhase.front();
+    if (idx >= n) return w.yPhase[n - 1];
+    const double x0 = w.xData[idx - 1], x1 = w.xData[idx];
+    const double p0 = w.yPhase[idx - 1], p1 = w.yPhase[idx];
+    if (std::abs(x1 - x0) < 1e-30) return p0;
+    const double frac = (x - x0) / (x1 - x0);
+    return p0 + frac * (p1 - p0);
+}
+
+bool evaluateWaveformVariable(
+    const SimResults& results,
+    const std::string& var,
+    double x,
+    bool useInterpolation,
+    size_t sampleIndex,
+    double& out
+) {
+    std::string funcName;
+    std::string arg;
+    const SimWaveform* w = nullptr;
+    if (splitWrapperCall(var, funcName, arg) &&
+        (funcName == "mag" || funcName == "db" || funcName == "ph" || funcName == "phase" ||
+         funcName == "re" || funcName == "real" || funcName == "im" || funcName == "imag")) {
+        w = lookupWaveform(results, arg);
+        if (!w) return false;
+        const double mag = useInterpolation ? interpolateWaveformValue(*w, x)
+                                            : ((sampleIndex < std::min(w->xData.size(), w->yData.size())) ? w->yData[sampleIndex]
+                                                                                                             : (w->yData.empty() ? 0.0 : w->yData.back()));
+        const double phaseDeg = waveformSamplePhaseDeg(*w, x, useInterpolation, sampleIndex);
+        const double phaseRad = phaseDeg * std::acos(-1.0) / 180.0;
+        if (funcName == "mag") out = mag;
+        else if (funcName == "db") out = (mag > 0.0) ? 20.0 * std::log10(mag) : -300.0;
+        else if (funcName == "ph" || funcName == "phase") out = phaseDeg;
+        else if (funcName == "im" || funcName == "imag") out = mag * std::sin(phaseRad);
+        else out = mag * std::cos(phaseRad);
+        return true;
+    }
+
+    w = lookupWaveform(results, var);
+    if (!w) return false;
+    const double mag = useInterpolation ? interpolateWaveformValue(*w, x)
+                                        : ((sampleIndex < std::min(w->xData.size(), w->yData.size())) ? w->yData[sampleIndex]
+                                                                                                         : (w->yData.empty() ? 0.0 : w->yData.back()));
+    if (results.analysisType == SimAnalysisType::AC && !w->yPhase.empty()) {
+        const double phaseDeg = waveformSamplePhaseDeg(*w, x, useInterpolation, sampleIndex);
+        out = mag * std::cos(phaseDeg * std::acos(-1.0) / 180.0);
+    } else {
+        out = mag;
+    }
+    return true;
 }
 
 double interpolateWaveformValue(const SimWaveform& w, double x) {
@@ -114,23 +305,21 @@ bool evaluateExpression(
     const std::map<std::string, double>& priorMeasurements,
     double& out
 ) {
-    Sim::Expression parsed(expr);
+    std::map<std::string, std::string> placeholderToExpr;
+    const std::string rewrittenExpr = rewriteWrappedWaveformCalls(expr, placeholderToExpr);
+    Sim::Expression parsed(rewrittenExpr);
     if (!parsed.isValid()) return false;
     std::map<std::string, double> vars = priorMeasurements;
     vars["time"] = x;
     for (const auto& var : parsed.getVariables()) {
         if (vars.count(var)) continue;
-        const SimWaveform* w = lookupWaveform(results, var);
-        if (!w) {
+        const std::string resolvedVar = placeholderToExpr.count(var) ? placeholderToExpr.at(var) : var;
+        double waveformValue = 0.0;
+        if (!evaluateWaveformVariable(results, resolvedVar, x, useInterpolation, sampleIndex, waveformValue)) {
             vars[var] = 0.0;
             continue;
         }
-        if (useInterpolation) {
-            vars[var] = interpolateWaveformValue(*w, x);
-        } else {
-            const size_t n = std::min(w->xData.size(), w->yData.size());
-            vars[var] = (sampleIndex < n) ? w->yData[sampleIndex] : (n ? w->yData.back() : 0.0);
-        }
+        vars[var] = waveformValue;
     }
     std::vector<double> values;
     for (const auto& var : parsed.getVariables()) values.push_back(vars.count(var) ? vars.at(var) : 0.0);
@@ -225,17 +414,22 @@ bool SimMeasEvaluator::parseTrigger(
         pos++;
         if (pos < tokens.size() && tokens[pos] == "=") pos++;
         if (pos >= tokens.size()) return false;
-        if (!parseSpiceNum(tokens[pos], trig.value)) return false;
+        trig.rhsExpr = tokens[pos];
+        if (!parseSpiceNum(tokens[pos], trig.value) && trig.rhsExpr.empty()) return false;
         pos++;
     } else if (tok.substr(0, 4) == "val=") {
         std::string valStr = tokens[pos].substr(4);
-        if (!parseSpiceNum(valStr, trig.value)) return false;
+        trig.rhsExpr = valStr;
+        if (!parseSpiceNum(valStr, trig.value) && trig.rhsExpr.empty()) return false;
         pos++;
     } else {
-        // Direct numeric value (no "val=" keyword)
-        double v = 0.0;
-        if (parseSpiceNum(tokens[pos], v)) {
-            trig.value = v;
+        // Direct numeric or expression value (no "val=" keyword)
+        if (pos < tokens.size() && !isTriggerQualifier(tokens[pos])) {
+            trig.rhsExpr = tokens[pos];
+            double v = 0.0;
+            if (parseSpiceNum(tokens[pos], v)) {
+                trig.value = v;
+            }
             pos++;
         }
     }
@@ -341,8 +535,7 @@ bool SimMeasEvaluator::parse(
 
         // Parse TRIG signal
         if (pos >= tokens.size()) return false;
-        out.trig.signal = tokens[pos];
-        out.trig.lhsExpr = tokens[pos];
+        if (!parseTriggerConditionToken(tokens[pos], out.trig)) return false;
         pos++;
 
         // Parse TRIG conditions (VAL=, RISE=, etc.)
@@ -364,8 +557,7 @@ bool SimMeasEvaluator::parse(
 
         // Parse TARG signal
         if (pos >= tokens.size()) return false;
-        out.targ.signal = tokens[pos];
-        out.targ.lhsExpr = tokens[pos];
+        if (!parseTriggerConditionToken(tokens[pos], out.targ)) return false;
         pos++;
 
         // Parse TARG conditions
@@ -446,8 +638,7 @@ bool SimMeasEvaluator::parse(
             out.hasTrigTarg = true;
             pos++;
             if (pos >= tokens.size()) return false;
-            out.trig.signal = tokens[pos];
-            out.trig.lhsExpr = tokens[pos];
+            if (!parseTriggerConditionToken(tokens[pos], out.trig)) return false;
             pos++;
             parseTrigger(tokens, pos, out.trig);
             continue;
@@ -456,8 +647,7 @@ bool SimMeasEvaluator::parse(
             out.hasTrigTarg = true;
             pos++;
             if (pos >= tokens.size()) return false;
-            out.targ.signal = tokens[pos];
-            out.targ.lhsExpr = tokens[pos];
+            if (!parseTriggerConditionToken(tokens[pos], out.targ)) return false;
             pos++;
             parseTrigger(tokens, pos, out.targ);
             continue;
@@ -688,6 +878,26 @@ bool SimMeasEvaluator::findConditionCrossingTime(
     return true;
 }
 
+bool SimMeasEvaluator::resolveTriggerTime(
+    const SimResults& results,
+    const MeasTrigger& trigger,
+    const std::map<std::string, double>& priorMeasurements,
+    double& outTime
+) {
+    if (!trigger.rhsExpr.empty()) {
+        return findConditionCrossingTime(results, trigger, priorMeasurements, outTime);
+    }
+
+    const SimWaveform* w = findWaveform(results, trigger.signal);
+    if (!w && !trigger.lhsExpr.empty()) w = findWaveform(results, trigger.lhsExpr);
+    if (w) return findCrossingTime(*w, trigger, outTime);
+
+    MeasTrigger exprTrigger = trigger;
+    exprTrigger.lhsExpr = trigger.lhsExpr.empty() ? trigger.signal : trigger.lhsExpr;
+    exprTrigger.rhsExpr = std::to_string(trigger.value);
+    return findConditionCrossingTime(results, exprTrigger, priorMeasurements, outTime);
+}
+
 std::vector<MeasResult> SimMeasEvaluator::evaluate(
     const std::vector<MeasStatement>& statements,
     const SimResults& results,
@@ -767,28 +977,13 @@ std::vector<MeasResult> SimMeasEvaluator::evaluate(
         }
 
         if (stmt.function == MeasFunction::TRIG_TARG) {
-            // Conditional measurement: find TARG time minus TRIG time
-            const SimWaveform* trigW = findWaveform(results, stmt.trig.signal);
-            const SimWaveform* targW = findWaveform(results, stmt.targ.signal);
-
-            if (!trigW) {
-                mr.error = "TRIG signal not found: " + stmt.trig.signal;
-                results_out.push_back(mr);
-                continue;
-            }
-            if (!targW) {
-                mr.error = "TARG signal not found: " + stmt.targ.signal;
-                results_out.push_back(mr);
-                continue;
-            }
-
             double trigTime = 0.0, targTime = 0.0;
-            if (!findCrossingTime(*trigW, stmt.trig, trigTime)) {
+            if (!resolveTriggerTime(results, stmt.trig, priorMeasurements, trigTime)) {
                 mr.error = "TRIG crossing not found";
                 results_out.push_back(mr);
                 continue;
             }
-            if (!findCrossingTime(*targW, stmt.targ, targTime)) {
+            if (!resolveTriggerTime(results, stmt.targ, priorMeasurements, targTime)) {
                 mr.error = "TARG crossing not found";
                 results_out.push_back(mr);
                 continue;
@@ -802,8 +997,13 @@ std::vector<MeasResult> SimMeasEvaluator::evaluate(
         }
 
         // Direct function evaluation
+        SimWaveform exprWaveform;
         const SimWaveform* w = findWaveform(results, stmt.signal);
-        if (!w) {
+        if (w) {
+            exprWaveform = *w;
+        } else if (buildExpressionWaveform(results, stmt.expr, priorMeasurements, exprWaveform)) {
+            w = &exprWaveform;
+        } else {
             mr.error = "Signal not found: " + stmt.signal;
             results_out.push_back(mr);
             continue;
@@ -818,16 +1018,14 @@ std::vector<MeasResult> SimMeasEvaluator::evaluate(
             double fromX = view.xData.empty() ? 0.0 : view.xData.front();
             double toX = view.xData.empty() ? 0.0 : view.xData.back();
             if (!stmt.trig.signal.empty()) {
-                const SimWaveform* trigW = findWaveform(results, stmt.trig.signal);
-                if (!trigW || !findCrossingTime(*trigW, stmt.trig, fromX)) {
+                if (!resolveTriggerTime(results, stmt.trig, priorMeasurements, fromX)) {
                     mr.error = "TRIG crossing not found";
                     results_out.push_back(mr);
                     continue;
                 }
             }
             if (!stmt.targ.signal.empty()) {
-                const SimWaveform* targW = findWaveform(results, stmt.targ.signal);
-                if (!targW || !findCrossingTime(*targW, stmt.targ, toX)) {
+                if (!resolveTriggerTime(results, stmt.targ, priorMeasurements, toX)) {
                     mr.error = "TARG crossing not found";
                     results_out.push_back(mr);
                     continue;

@@ -126,6 +126,13 @@ private:
         const std::map<std::string, double>& priorMeasurements,
         double& outTime
     );
+
+    static bool resolveTriggerTime(
+        const SimResults& results,
+        const MeasTrigger& trigger,
+        const std::map<std::string, double>& priorMeasurements,
+        double& outTime
+    );
 };
 
 #endif // SIM_MEAS_EVALUATOR_H

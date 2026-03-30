@@ -56,6 +56,8 @@ private slots:
     void boostConverterFeedbackDoesNotRunAway();
     void evaluatesLtspiceMeasStatements();
     void evaluatesLtspiceMeasParamAndTrigTargIntervals();
+    void evaluatesLtspiceMeasExpressionConditions();
+    void evaluatesLtspiceAcMeasStatements();
     void mixedModeManagerInsertsAdcAndDacBridges();
     void logicComponentGeneratesVectorizedSubcircuit();
     void symbolDefinitionResolvesExplicitPinMetadata();
@@ -1225,6 +1227,121 @@ void SpiceDirectiveNetlistTest::evaluatesLtspiceMeasParamAndTrigTargIntervals() 
              qPrintable(QString("Expected p1 ~= 2.0, got %1").arg(values.at("p1"))));
     QVERIFY2(std::abs(values.at("p2") - 2.001) < 0.02,
              qPrintable(QString("Expected p2 ~= 2.001, got %1").arg(values.at("p2"))));
+}
+
+void SpiceDirectiveNetlistTest::evaluatesLtspiceMeasExpressionConditions() {
+    SimResults results;
+    results.analysisType = SimAnalysisType::Transient;
+
+    SimWaveform vx;
+    vx.name = "V(X)";
+    vx.xData = {0.0, 1e-3, 2e-3, 3e-3, 4e-3};
+    vx.yData = {0.0, 1.0, 4.0, 1.0, 0.0};
+    results.waveforms.push_back(vx);
+
+    SimWaveform vy;
+    vy.name = "V(Y)";
+    vy.xData = vx.xData;
+    vy.yData = {0.2, 0.5, 1.0, 0.5, 0.0};
+    results.waveforms.push_back(vy);
+
+    SimWaveform vout;
+    vout.name = "V(OUT)";
+    vout.xData = vx.xData;
+    vout.yData = {0.0, 2.0, 4.0, 6.0, 8.0};
+    results.waveforms.push_back(vout);
+
+    SimWaveform ivout;
+    ivout.name = "I(VOUT)";
+    ivout.xData = vx.xData;
+    ivout.yData = {1.0, 2.0, 3.0, 4.0, 5.0};
+    results.waveforms.push_back(ivout);
+
+    SimWaveform va;
+    va.name = "V(A)";
+    va.xData = vx.xData;
+    va.yData = {0.0, 2.0, 0.0, 2.0, 0.0};
+    results.waveforms.push_back(va);
+
+    SimWaveform vb;
+    vb.name = "V(B)";
+    vb.xData = vx.xData;
+    vb.yData = {1.0, 1.0, 1.0, 1.0, 1.0};
+    results.waveforms.push_back(vb);
+
+    std::vector<MeasStatement> statements;
+    for (const std::string line : {
+             std::string(".meas tran exprfind find V(OUT)*I(VOUT) when V(X)=3*V(Y) cross=2"),
+             std::string(".meas tran exprwhen when V(X)=3*V(Y) cross=2"),
+             std::string(".meas tran exprspan trig V(A)=V(B) rise=1 targ V(A)=V(B) rise=2"),
+             std::string(".meas tran expravg avg V(OUT)-V(Y) trig V(A)=V(B) rise=1 targ V(A)=V(B) rise=2") }) {
+        MeasStatement stmt;
+        QVERIFY2(SimMeasEvaluator::parse(line, 1, "test", stmt), line.c_str());
+        statements.push_back(stmt);
+    }
+
+    std::map<std::string, double> values;
+    for (const auto& mr : SimMeasEvaluator::evaluate(statements, results, "tran")) {
+        QVERIFY2(mr.valid, mr.error.c_str());
+        values[mr.name] = mr.value;
+    }
+
+    QVERIFY2(values.count("exprfind") == 1, "Missing evaluated expression FIND result.");
+    QVERIFY2(values.count("exprwhen") == 1, "Missing evaluated expression WHEN result.");
+    QVERIFY2(values.count("exprspan") == 1, "Missing evaluated expression TRIG/TARG result.");
+    QVERIFY2(values.count("expravg") == 1, "Missing evaluated expression AVG result.");
+
+    QVERIFY2(std::abs(values.at("exprfind") - 19.5555556) < 0.2,
+             qPrintable(QString("Expected exprfind ~= 19.56, got %1").arg(values.at("exprfind"))));
+    QVERIFY2(std::abs(values.at("exprwhen") - 2.6666667e-3) < 2e-4,
+             qPrintable(QString("Expected exprwhen ~= 2.667ms, got %1").arg(values.at("exprwhen"))));
+    QVERIFY2(std::abs(values.at("exprspan") - 2.0e-3) < 2e-4,
+             qPrintable(QString("Expected exprspan ~= 2ms, got %1").arg(values.at("exprspan"))));
+    QVERIFY2(std::abs(values.at("expravg") - 2.25) < 0.1,
+             qPrintable(QString("Expected expravg ~= 2.25, got %1").arg(values.at("expravg"))));
+}
+
+void SpiceDirectiveNetlistTest::evaluatesLtspiceAcMeasStatements() {
+    SimResults results;
+    results.analysisType = SimAnalysisType::AC;
+
+    SimWaveform vout;
+    vout.name = "V(OUT)";
+    vout.xData = {1.0e3, 2.0e3, 3.0e3, 4.0e3, 5.0e3};
+    vout.yData = {1.0, 2.0, 4.0, 2.0, 1.0};
+    vout.yPhase = {0.0, 0.0, 0.0, 0.0, 0.0};
+    results.waveforms.push_back(vout);
+
+    std::vector<MeasStatement> statements;
+    for (const std::string line : {
+             std::string(".meas ac tmp max mag(V(OUT))"),
+             std::string(".meas ac bw trig mag(V(OUT))=tmp/sqrt(2) rise=1 targ mag(V(OUT))=tmp/sqrt(2) fall=last"),
+             std::string(".meas ac peakdb max db(V(OUT))"),
+             std::string(".meas ac re3k find re(V(OUT)) at=3k") }) {
+        MeasStatement stmt;
+        QVERIFY2(SimMeasEvaluator::parse(line, 1, "test", stmt), line.c_str());
+        statements.push_back(stmt);
+    }
+
+    std::map<std::string, double> values;
+    for (const auto& mr : SimMeasEvaluator::evaluate(statements, results, "ac")) {
+        QVERIFY2(mr.valid, mr.error.c_str());
+        values[mr.name] = mr.value;
+    }
+
+    QVERIFY2(values.count("tmp") == 1, "Missing AC MAX magnitude result.");
+    QVERIFY2(values.count("bw") == 1, "Missing AC bandwidth result.");
+    QVERIFY2(values.count("peakdb") == 1, "Missing AC dB result.");
+    QVERIFY2(values.count("re3k") == 1, "Missing AC real-part FIND result.");
+
+    QVERIFY2(std::abs(values.at("tmp") - 4.0) < 0.01,
+             qPrintable(QString("Expected tmp ~= 4, got %1").arg(values.at("tmp"))));
+    QVERIFY2(std::abs(values.at("bw") - 1.1715729e3) < 50.0,
+             qPrintable(QString("Expected bw ~= 1171.6, got %1").arg(values.at("bw"))));
+    QVERIFY2(std::abs(values.at("peakdb") - 12.0411998) < 0.05,
+             qPrintable(QString("Expected peakdb ~= 12.04, got %1").arg(values.at("peakdb"))));
+    QVERIFY2(std::abs(values.at("re3k") - 4.0) < 0.01,
+             qPrintable(QString("Expected re3k ~= 4, got %1").arg(values.at("re3k"))));
 }
 
 void SpiceDirectiveNetlistTest::boostConverterFeedbackDoesNotRunAway() {
