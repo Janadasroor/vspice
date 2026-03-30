@@ -214,9 +214,7 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext) {
         m_process->deleteLater();
     }
     m_process = new QProcess(this);
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert("GEMINI_API_KEY", key);
-    m_process->setProcessEnvironment(env);
+    m_process->setProcessEnvironment(PythonManager::getConfiguredEnvironment());
 
     connect(m_process, &QProcess::readyReadStandardOutput, this, &GeminiPanel::onProcessReadyRead);
     connect(m_process, &QProcess::readyReadStandardError, this, [this]() {
@@ -229,10 +227,8 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext) {
     });
     connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &GeminiPanel::onProcessFinished);
 
-    QString sDir = QCoreApplication::applicationDirPath() + "/../python/scripts";
-    QString sPath = QDir(sDir).absoluteFilePath("gemini_query.py");
-    QString vPy = QDir(sDir).absoluteFilePath("../venv/bin/python");
-    QString py = QFile::exists(vPy) ? vPy : "python3";
+    QString sPath = QDir(PythonManager::getScriptsDir()).absoluteFilePath("gemini_query.py");
+    QString py = PythonManager::getPythonExecutable();
 
     m_responseBuffer.clear();
     m_leftover.clear();
@@ -305,24 +301,33 @@ void GeminiPanel::syncHistoryToBridge() {
 
 void GeminiPanel::refreshModelList() {
     QString key = ConfigManager::instance().geminiApiKey().trimmed();
-    if (key.isEmpty()) return;
+    if (key.isEmpty()) {
+        qDebug() << "[GeminiPanel] refreshModelList: API Key is missing. Skipping model fetch.";
+        return;
+    }
 
     if (m_modelFetchProcess && m_modelFetchProcess->state() != QProcess::NotRunning) return;
 
     m_modelFetchProcess = new QProcess(this);
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert("GEMINI_API_KEY", key);
-    m_modelFetchProcess->setProcessEnvironment(env);
+    m_modelFetchProcess->setProcessEnvironment(PythonManager::getConfiguredEnvironment());
 
     connect(m_modelFetchProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &GeminiPanel::onModelFetchFinished);
 
-    QString sDir = QCoreApplication::applicationDirPath() + "/../python/scripts";
-    QString sPath = QDir(sDir).absoluteFilePath("gemini_query.py");
-    m_modelFetchProcess->start("python3", QStringList() << sPath << "--list-models");
+    QString sPath = QDir(PythonManager::getScriptsDir()).absoluteFilePath("gemini_query.py");
+    QString py = PythonManager::getPythonExecutable();
+
+    qDebug() << "[GeminiPanel] Fetching models using:" << py;
+    m_modelFetchProcess->start(py, QStringList() << sPath << "--list-models");
 }
 
 void GeminiPanel::onModelFetchFinished(int exitCode, QProcess::ExitStatus) {
-    if (exitCode != 0 || !m_modelFetchProcess) return;
+    if (exitCode != 0 || !m_modelFetchProcess) {
+        if (m_modelFetchProcess) {
+            QByteArray err = m_modelFetchProcess->readAllStandardError();
+            qDebug() << "[GeminiPanel] Model fetch failed with exit code" << exitCode << "Error:" << err;
+        }
+        return;
+    }
     
     QString output = QString::fromUtf8(m_modelFetchProcess->readAllStandardOutput());
     QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8());
@@ -332,7 +337,19 @@ void GeminiPanel::onModelFetchFinished(int exitCode, QProcess::ExitStatus) {
             if (v.isString()) models << v.toString();
             else if (v.isObject()) models << v.toObject()["name"].toString();
         }
-        if (m_bridge) m_bridge->updateAvailableModels(models);
+        
+        // Ensure default model is first if not already present
+        const QString defModel = "gemini-2.0-flash";
+        if (!models.contains(defModel)) {
+            models.prepend(defModel);
+        }
+
+        if (m_bridge) {
+            m_bridge->updateAvailableModels(models);
+            qDebug() << "[GeminiPanel] Models updated:" << models.count() << "found.";
+        }
+    } else {
+        qDebug() << "[GeminiPanel] Failed to parse model list JSON. Output was:" << output;
     }
 }
 
