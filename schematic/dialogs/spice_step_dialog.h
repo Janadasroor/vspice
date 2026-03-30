@@ -10,6 +10,7 @@ class QDialogButtonBox;
 class QLineEdit;
 class QLabel;
 class QStackedWidget;
+class QWidget;
 
 class SpiceStepDialog : public QDialog {
     Q_OBJECT
@@ -30,7 +31,8 @@ private:
     enum class TargetKind {
         Parameter,
         Temperature,
-        Custom
+        Source,
+        ModelParameter
     };
 
     enum class SweepMode {
@@ -49,8 +51,12 @@ private:
     QString validationMessage() const;
 
     QComboBox* m_targetKindCombo = nullptr;
-    QLabel* m_targetLabel = nullptr;
-    QLineEdit* m_targetEdit = nullptr;
+    QStackedWidget* m_targetStack = nullptr;
+    QLineEdit* m_paramNameEdit = nullptr;
+    QLineEdit* m_sourceNameEdit = nullptr;
+    QLineEdit* m_modelTypeEdit = nullptr;
+    QLineEdit* m_modelNameEdit = nullptr;
+    QLineEdit* m_modelParamEdit = nullptr;
     QComboBox* m_sweepModeCombo = nullptr;
     QStackedWidget* m_modeStack = nullptr;
 

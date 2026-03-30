@@ -316,9 +316,19 @@ GUIDELINES:
             )
             
             full_response_content = None
+            final_usage = None
             for chunk in stream:
                 if not chunk.candidates:
                     continue
+                
+                # Capture final usage metadata
+                if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
+                    final_usage = {
+                        "prompt_tokens": getattr(chunk.usage_metadata, 'prompt_token_count', 0),
+                        "candidates_tokens": getattr(chunk.usage_metadata, 'candidates_token_count', 0),
+                        "total_tokens": getattr(chunk.usage_metadata, 'total_token_count', 0)
+                    }
+
                 for part in chunk.candidates[0].content.parts:
                     # Handle thinking process
                     if hasattr(part, 'thought') and part.thought:
@@ -331,28 +341,16 @@ GUIDELINES:
                     
                     # Handle function calls (tools)
                     if part.function_call:
-                        # We accumulate function calls for processing after the stream
                         if not full_response_content:
                             full_response_content = chunk.candidates[0].content
-                        else:
-                            # Re-construct if multiple parts
-                            pass
-                
+
                 if chunk.candidates[0].finish_reason == 'STOP' or chunk.candidates[0].content.parts:
                     if not full_response_content:
                         full_response_content = chunk.candidates[0].content
-                    else:
-                        # Accumulate parts if needed for tool calls (though usually tool calls are in a single chunk)
-                        pass
 
-                # Output usage metadata if available in this chunk
-                if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
-                    usage = {
-                        "prompt_tokens": getattr(chunk.usage_metadata, 'prompt_token_count', 0),
-                        "candidates_tokens": getattr(chunk.usage_metadata, 'candidates_token_count', 0),
-                        "total_tokens": getattr(chunk.usage_metadata, 'total_token_count', 0)
-                    }
-                    print(f"<USAGE>{json.dumps(usage)}</USAGE>", end="", flush=True)
+            # Output final usage metadata ONCE after the stream is fully finished
+            if final_usage:
+                print(f"<USAGE>{json.dumps(final_usage)}</USAGE>", end="", flush=True)
 
             # Check for tool calls in the final accumulated response (or last chunk)
             # For simplicity with the new SDK, we'll assume tool calls arrive and we break the stream.

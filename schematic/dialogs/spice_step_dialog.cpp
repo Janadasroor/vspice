@@ -61,13 +61,52 @@ SpiceStepDialog::SpiceStepDialog(const QString& initialCommand, QWidget* parent)
 
     auto* form = new QFormLayout();
     m_targetKindCombo = new QComboBox(this);
-    m_targetKindCombo->addItems({"Parameter", "Temperature", "Custom Target"});
+    m_targetKindCombo->addItems({"Parameter", "Temperature", "Independent Source", "Model Parameter"});
     form->addRow("Sweep Target:", m_targetKindCombo);
 
-    m_targetLabel = new QLabel("Name:", this);
-    m_targetEdit = new QLineEdit(this);
-    m_targetEdit->setPlaceholderText("RLOAD or NPN QDRV(Bf)");
-    form->addRow(m_targetLabel, m_targetEdit);
+    m_targetStack = new QStackedWidget(this);
+
+    auto* paramPage = new QWidget(this);
+    auto* paramLayout = new QHBoxLayout(paramPage);
+    paramLayout->setContentsMargins(0, 0, 0, 0);
+    m_paramNameEdit = new QLineEdit(paramPage);
+    m_paramNameEdit->setPlaceholderText("RLOAD");
+    paramLayout->addWidget(m_paramNameEdit);
+    m_targetStack->addWidget(paramPage);
+
+    auto* tempPage = new QWidget(this);
+    auto* tempLayout = new QHBoxLayout(tempPage);
+    tempLayout->setContentsMargins(0, 0, 0, 0);
+    auto* tempInfo = new QLabel("Temperature sweeps target LTspice 'temp'.", tempPage);
+    tempInfo->setStyleSheet("color: #94a3b8;");
+    tempLayout->addWidget(tempInfo);
+    m_targetStack->addWidget(tempPage);
+
+    auto* sourcePage = new QWidget(this);
+    auto* sourceLayout = new QHBoxLayout(sourcePage);
+    sourceLayout->setContentsMargins(0, 0, 0, 0);
+    m_sourceNameEdit = new QLineEdit(sourcePage);
+    m_sourceNameEdit->setPlaceholderText("V1 or I1");
+    sourceLayout->addWidget(m_sourceNameEdit);
+    m_targetStack->addWidget(sourcePage);
+
+    auto* modelPage = new QWidget(this);
+    auto* modelLayout = new QGridLayout(modelPage);
+    m_modelTypeEdit = new QLineEdit(modelPage);
+    m_modelNameEdit = new QLineEdit(modelPage);
+    m_modelParamEdit = new QLineEdit(modelPage);
+    m_modelTypeEdit->setPlaceholderText("NPN");
+    m_modelNameEdit->setPlaceholderText("2N2222");
+    m_modelParamEdit->setPlaceholderText("VAF");
+    modelLayout->addWidget(new QLabel("Device Type", modelPage), 0, 0);
+    modelLayout->addWidget(m_modelTypeEdit, 0, 1);
+    modelLayout->addWidget(new QLabel("Model Name", modelPage), 1, 0);
+    modelLayout->addWidget(m_modelNameEdit, 1, 1);
+    modelLayout->addWidget(new QLabel("Parameter", modelPage), 2, 0);
+    modelLayout->addWidget(m_modelParamEdit, 2, 1);
+    m_targetStack->addWidget(modelPage);
+
+    form->addRow("Target Details:", m_targetStack);
 
     m_sweepModeCombo = new QComboBox(this);
     m_sweepModeCombo->addItems({"Linear Range", "Value List", "Decade", "Octave", "File List"});
@@ -180,7 +219,8 @@ SpiceStepDialog::SpiceStepDialog(const QString& initialCommand, QWidget* parent)
     connect(m_targetKindCombo, &QComboBox::currentTextChanged, this, &SpiceStepDialog::updateUiState);
     connect(m_sweepModeCombo, &QComboBox::currentTextChanged, this, &SpiceStepDialog::updateUiState);
     connect(browseButton, &QPushButton::clicked, this, &SpiceStepDialog::browseStepFile);
-    for (QLineEdit* edit : {m_targetEdit, m_linearStartEdit, m_linearStopEdit, m_linearStepEdit,
+    for (QLineEdit* edit : {m_paramNameEdit, m_sourceNameEdit, m_modelTypeEdit, m_modelNameEdit, m_modelParamEdit,
+                            m_linearStartEdit, m_linearStopEdit, m_linearStepEdit,
                             m_listValuesEdit, m_logPointsEdit, m_logStartEdit, m_logStopEdit,
                             m_octPointsEdit, m_octStartEdit, m_octStopEdit, m_filePathEdit}) {
         connect(edit, &QLineEdit::textChanged, this, &SpiceStepDialog::updatePreview);
@@ -207,7 +247,8 @@ QString SpiceStepDialog::quotedFilePath(const QString& path) {
 SpiceStepDialog::TargetKind SpiceStepDialog::currentTargetKind() const {
     switch (m_targetKindCombo->currentIndex()) {
     case 1: return TargetKind::Temperature;
-    case 2: return TargetKind::Custom;
+    case 2: return TargetKind::Source;
+    case 3: return TargetKind::ModelParameter;
     default: return TargetKind::Parameter;
     }
 }
@@ -226,11 +267,16 @@ QString SpiceStepDialog::targetPrefix() const {
     switch (currentTargetKind()) {
     case TargetKind::Temperature:
         return "temp";
-    case TargetKind::Custom:
-        return m_targetEdit->text().trimmed();
+    case TargetKind::Source:
+        return m_sourceNameEdit ? m_sourceNameEdit->text().trimmed() : QString();
+    case TargetKind::ModelParameter:
+        return QString("%1 %2(%3)")
+            .arg(m_modelTypeEdit ? m_modelTypeEdit->text().trimmed() : QString(),
+                 m_modelNameEdit ? m_modelNameEdit->text().trimmed() : QString(),
+                 m_modelParamEdit ? m_modelParamEdit->text().trimmed() : QString()).trimmed();
     case TargetKind::Parameter:
     default:
-        return QString("param %1").arg(m_targetEdit->text().trimmed());
+        return QString("param %1").arg(m_paramNameEdit ? m_paramNameEdit->text().trimmed() : QString());
     }
 }
 
@@ -309,10 +355,7 @@ QString SpiceStepDialog::validationMessage() const {
 }
 
 void SpiceStepDialog::updateUiState() {
-    const bool needsTarget = currentTargetKind() != TargetKind::Temperature;
-    m_targetLabel->setText(currentTargetKind() == TargetKind::Custom ? "Target:" : "Name:");
-    m_targetEdit->setEnabled(needsTarget);
-    m_targetEdit->setPlaceholderText(currentTargetKind() == TargetKind::Custom ? "V1 or NPN QDRV(Bf)" : "RLOAD");
+    if (m_targetStack) m_targetStack->setCurrentIndex(m_targetKindCombo->currentIndex());
     m_modeStack->setCurrentIndex(m_sweepModeCombo->currentIndex());
     updatePreview();
 }
@@ -387,21 +430,25 @@ void SpiceStepDialog::applyCommandText() {
     if (maybeParam == "param") {
         m_targetKindCombo->setCurrentIndex(0);
         pos++;
-        m_targetEdit->setText(tokens.value(pos));
+        if (m_paramNameEdit) m_paramNameEdit->setText(tokens.value(pos));
         pos++;
     } else if (maybeParam == "temp") {
         m_targetKindCombo->setCurrentIndex(1);
         pos++;
-        m_targetEdit->clear();
+        if (m_paramNameEdit) m_paramNameEdit->clear();
+    } else if (pos + 1 < tokens.size() && tokens.value(pos + 1).contains('(') && tokens.value(pos + 1).contains(')')) {
+        m_targetKindCombo->setCurrentIndex(3);
+        if (m_modelTypeEdit) m_modelTypeEdit->setText(tokens.value(pos));
+        const QString modelToken = tokens.value(pos + 1);
+        const int open = modelToken.indexOf('(');
+        const int close = modelToken.lastIndexOf(')');
+        if (m_modelNameEdit) m_modelNameEdit->setText(modelToken.left(open));
+        if (m_modelParamEdit && open > 0 && close > open) m_modelParamEdit->setText(modelToken.mid(open + 1, close - open - 1));
+        pos += 2;
     } else {
         m_targetKindCombo->setCurrentIndex(2);
-        if (m_sweepModeCombo->currentIndex() == 0 && tokens.size() >= pos + 4) {
-            m_targetEdit->setText(tokens.mid(pos, tokens.size() - pos - 3).join(' '));
-            pos = tokens.size() - 3;
-        } else {
-            m_targetEdit->setText(tokens.value(pos));
-            pos++;
-        }
+        if (m_sourceNameEdit) m_sourceNameEdit->setText(tokens.value(pos));
+        pos++;
     }
 
     if (m_sweepModeCombo->currentIndex() == 1) {
@@ -446,19 +493,19 @@ void SpiceStepDialog::applyPreset(const QString& presetId) {
     m_syncingCommand = true;
     if (presetId == "resistor") {
         m_targetKindCombo->setCurrentIndex(0);
-        m_targetEdit->setText("RLOAD");
+        if (m_paramNameEdit) m_paramNameEdit->setText("RLOAD");
         m_sweepModeCombo->setCurrentIndex(1);
         m_listValuesEdit->setText("1k 2k 5k 10k");
     } else if (presetId == "capacitor") {
         m_targetKindCombo->setCurrentIndex(0);
-        m_targetEdit->setText("CLOAD");
+        if (m_paramNameEdit) m_paramNameEdit->setText("CLOAD");
         m_sweepModeCombo->setCurrentIndex(2);
         m_logPointsEdit->setText("10");
         m_logStartEdit->setText("1p");
         m_logStopEdit->setText("1u");
     } else if (presetId == "temperature") {
         m_targetKindCombo->setCurrentIndex(1);
-        m_targetEdit->clear();
+        if (m_paramNameEdit) m_paramNameEdit->clear();
         m_sweepModeCombo->setCurrentIndex(0);
         m_linearStartEdit->setText("-40");
         m_linearStopEdit->setText("125");
