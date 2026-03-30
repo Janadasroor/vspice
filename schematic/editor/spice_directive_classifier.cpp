@@ -39,6 +39,11 @@ SpiceDirectiveClassification SpiceDirectiveClassifier::classify(const QString& c
         return out;
     }
 
+    if (out.firstCard == ".step") {
+        out.target = SpiceDirectiveEditTarget::StepDialog;
+        return out;
+    }
+
     out.target = SpiceDirectiveEditTarget::GenericDirective;
     return out;
 }

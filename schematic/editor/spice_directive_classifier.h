@@ -6,6 +6,7 @@
 enum class SpiceDirectiveEditTarget {
     SimulationSetup,
     MeanDialog,
+    StepDialog,
     GenericDirective
 };
 

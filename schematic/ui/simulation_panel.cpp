@@ -17,6 +17,7 @@
 #include "../../simulator/bridge/sim_schematic_bridge.h"
 #include "../analysis/net_manager.h"
 #include "../editor/schematic_editor.h"
+#include "../dialogs/spice_step_dialog.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -1595,7 +1596,17 @@ void SimulationPanel::setupUI() {
     m_commandLine = new QLineEdit(".op");
     m_commandLine->setStyleSheet("QLineEdit { background: #1e3a5f; color: #3b82f6; border: 1px solid #3b82f6; font-family: 'Courier New'; font-weight: bold; }");
     m_commandLine->setPlaceholderText(".tran <tstep> <tstop>");
-    configForm->addRow("Command:", m_commandLine);
+    QWidget* commandRow = new QWidget();
+    auto* commandRowLayout = new QHBoxLayout(commandRow);
+    commandRowLayout->setContentsMargins(0, 0, 0, 0);
+    commandRowLayout->setSpacing(6);
+    commandRowLayout->addWidget(m_commandLine, 1);
+    QPushButton* stepBuilderBtn = new QPushButton(".step...");
+    stepBuilderBtn->setToolTip("Open the LTspice .step sweep builder");
+    stepBuilderBtn->setStyleSheet("QPushButton { background: #0f766e; color: white; font-weight: bold; padding: 4px 8px; border-radius: 4px; }");
+    connect(stepBuilderBtn, &QPushButton::clicked, this, &SimulationPanel::onOpenStepBuilder);
+    commandRowLayout->addWidget(stepBuilderBtn);
+    configForm->addRow("Command:", commandRow);
 
     m_param1 = new QLineEdit("1u");
     m_param2 = new QLineEdit("10m");
@@ -2090,6 +2101,55 @@ void SimulationPanel::onOpenPwlEditor() {
             m_pwlPoints.push_back({table->item(r, 0)->text(), table->item(r, 1)->text()});
         }
     }
+}
+
+void SimulationPanel::onOpenStepBuilder() {
+    QString currentStep;
+    if (m_scene) {
+        for (auto* gi : m_scene->items()) {
+            auto* directive = dynamic_cast<SchematicSpiceDirectiveItem*>(gi);
+            if (!directive) continue;
+            if (directive->text().trimmed().startsWith(".step", Qt::CaseInsensitive)) {
+                currentStep = directive->text().trimmed();
+                break;
+            }
+        }
+    }
+    if (currentStep.isEmpty() && m_commandLine && m_commandLine->text().trimmed().startsWith(".step", Qt::CaseInsensitive)) {
+        currentStep = m_commandLine->text().trimmed();
+    }
+
+    SpiceStepDialog dlg(currentStep, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    const QString stepCommand = dlg.commandText();
+    if (m_commandLine) m_commandLine->setText(stepCommand);
+
+    if (!m_scene) return;
+    SchematicSpiceDirectiveItem* found = nullptr;
+    for (auto* gi : m_scene->items()) {
+        auto* directive = dynamic_cast<SchematicSpiceDirectiveItem*>(gi);
+        if (!directive) continue;
+        if (directive->text().trimmed().startsWith(".step", Qt::CaseInsensitive)) {
+            found = directive;
+            break;
+        }
+    }
+
+    if (found) {
+        found->setText(stepCommand);
+        found->update();
+        return;
+    }
+
+    QPointF cmdPos(100, 200);
+    if (!m_scene->views().isEmpty()) {
+        if (auto* view = m_scene->views().first()) {
+            cmdPos = view->mapToScene(view->viewport()->rect().center() + QPoint(120, -60));
+        }
+    }
+    auto* cmdItem = new SchematicSpiceDirectiveItem(stepCommand, cmdPos);
+    m_scene->addItem(cmdItem);
 }
 
 void SimulationPanel::onImportPwlCsv() {

@@ -116,6 +116,7 @@ private slots:
     void onGeneratorTypeChanged(int index);
     void onApplyGeneratorToSelection();
     void onOpenPwlEditor();
+    void onOpenStepBuilder();
     void onImportPwlCsv();
     void onExportPwlCsv();
     void onSaveGeneratorPreset();

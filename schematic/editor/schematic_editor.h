@@ -224,6 +224,7 @@ private:
     SchematicSpiceDirectiveItem* resolveDirectiveItemForEdit(const QString& currentCommand) const;
     bool editDirectiveWithSimulationSetup(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem);
     bool editDirectiveWithMeanDialog(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem);
+    bool editDirectiveWithStepDialog(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem);
     bool editDirectiveWithGenericDialog(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem);
     void beginMouseFollowPlacement(const QList<SchematicItem*>& items, const QString& actionLabel);
     void endMouseFollowPlacement(bool cancel);

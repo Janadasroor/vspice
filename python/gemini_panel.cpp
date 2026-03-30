@@ -720,7 +720,7 @@ void GeminiPanel::onBridgeShowHistoryRequest() {
 void GeminiPanel::onRefreshModelsClicked() { refreshModelList(); }
 void GeminiPanel::onCustomInstructionsClicked() {
     qDebug() << "[GeminiPanel] Opening Custom Instructions Dialog";
-    GeminiInstructionsDialog dialog(this);
+    GeminiInstructionsDialog dialog(m_projectFilePath, this);
     dialog.exec();
 }
 void GeminiPanel::onCopyPromptClicked() {}

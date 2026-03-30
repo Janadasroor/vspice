@@ -201,6 +201,8 @@ set(SCHEMATIC_SOURCES
     schematic/dialogs/subcircuit_picker_dialog.h
     schematic/dialogs/spice_mean_dialog.cpp
     schematic/dialogs/spice_mean_dialog.h
+    schematic/dialogs/spice_step_dialog.cpp
+    schematic/dialogs/spice_step_dialog.h
     schematic/dialogs/simulation_debugger_dialog.cpp
     schematic/dialogs/simulation_debugger_dialog.h
     schematic/dialogs/power_nets_manager_dialog.cpp

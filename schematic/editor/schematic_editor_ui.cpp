@@ -9,6 +9,7 @@
 #include "schematic_commands.h"
 #include "spice_directive_classifier.h"
 #include "../dialogs/spice_mean_dialog.h"
+#include "../dialogs/spice_step_dialog.h"
 #include "../../symbols/models/symbol_definition.h"
 #include "../items/generic_component_item.h"
 #include "../ui/schematic_components_widget.h"
@@ -1953,6 +1954,23 @@ bool SchematicEditor::editDirectiveWithMeanDialog(const QString& currentCommand,
     return true;
 }
 
+bool SchematicEditor::editDirectiveWithStepDialog(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem) {
+    QPointer<SchematicSpiceDirectiveItem> safeDirective(directiveItem);
+    SpiceStepDialog dlg(currentCommand, this);
+    if (dlg.exec() != QDialog::Accepted) {
+        return true;
+    }
+
+    const QString newCommand = dlg.commandText();
+    if (safeDirective && safeDirective->scene() == m_scene) {
+        applyDirectiveText(safeDirective, newCommand);
+    } else if (m_simulationPanel) {
+        m_simulationPanel->updateSchematicDirectiveFromCommand(newCommand);
+    }
+    statusBar()->showMessage("SPICE .step directive updated.", 3000);
+    return true;
+}
+
 bool SchematicEditor::editDirectiveWithGenericDialog(const QString& currentCommand, SchematicSpiceDirectiveItem* directiveItem) {
     QPointer<SchematicSpiceDirectiveItem> safeDirective(directiveItem);
     if (safeDirective && safeDirective->scene() == m_scene) {
@@ -1985,9 +2003,10 @@ void SchematicEditor::onEditSimulationFromDirective(const QString& currentComman
         bool (SchematicEditor::*handler)(const QString&, SchematicSpiceDirectiveItem*);
     };
 
-    static const std::array<EditRoute, 3> routes = {{
+    static const std::array<EditRoute, 4> routes = {{
         {SpiceDirectiveEditTarget::SimulationSetup, &SchematicEditor::editDirectiveWithSimulationSetup},
         {SpiceDirectiveEditTarget::MeanDialog, &SchematicEditor::editDirectiveWithMeanDialog},
+        {SpiceDirectiveEditTarget::StepDialog, &SchematicEditor::editDirectiveWithStepDialog},
         {SpiceDirectiveEditTarget::GenericDirective, &SchematicEditor::editDirectiveWithGenericDialog},
     }};
 
