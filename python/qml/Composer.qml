@@ -23,6 +23,10 @@ Rectangle {
 
     signal sendMessage(string text)
     signal stopRun()
+    
+    function forceFocus() {
+        inputField.forceActiveFocus()
+    }
 
     ColumnLayout {
         id: inputColumn
@@ -102,10 +106,13 @@ Rectangle {
                         if (text.trim() !== "") {
                             composerRoot.sendMessage(text.trim())
                             text = ""
+                            inputField.forceActiveFocus()
                         }
                         event.accepted = true
                     }
                 }
+                
+                Component.onCompleted: forceActiveFocus()
             }
         }
 
@@ -181,6 +188,7 @@ Rectangle {
                         } else if (inputField.text.trim() !== "") {
                             composerRoot.sendMessage(inputField.text.trim())
                             inputField.text = ""
+                            inputField.forceActiveFocus()
                         }
                     }
 
@@ -238,6 +246,8 @@ Rectangle {
         property int popupWidth: 200
         property bool showDescriptions: false
         property string headerTitle: ""
+        
+        onClosed: composerRoot.forceFocus()
 
         background: Item { 
             implicitWidth: contentLayout.implicitWidth + 8

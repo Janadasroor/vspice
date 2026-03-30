@@ -1,5 +1,6 @@
 #include "sim_manager.h"
 #include "sim_schematic_bridge.h"
+#include "../core/sim_net_evaluator.h"
 #include "../core/raw_data_parser.h"
 #include "../../schematic/items/schematic_item.h"
 #include "../../schematic/items/smart_signal_item.h"
@@ -514,6 +515,38 @@ std::vector<MeasStatement> parseMeasStatementsFromNetlist(const QString& netlist
     return statements;
 }
 
+std::vector<NetStatement> parseNetStatementsFromNetlist(const QString& netlistContent) {
+    std::vector<NetStatement> statements;
+    int lineNo = 0;
+    for (const QString& rawLine : netlistContent.split('\n')) {
+        ++lineNo;
+        const QString line = rawLine.trimmed();
+        if (line.isEmpty() || line.startsWith('*') || line.startsWith(';') || line.startsWith('#')) continue;
+        NetStatement stmt;
+        if (SimNetEvaluator::parse(line.toStdString(), lineNo, "netlist", stmt)) {
+            statements.push_back(stmt);
+        }
+    }
+    return statements;
+}
+
+std::map<std::string, NetSourceInfo> parseSourceInfosFromNetlist(const QString& netlistContent) {
+    std::map<std::string, NetSourceInfo> sources;
+    for (const QString& rawLine : netlistContent.split('\n')) {
+        const QString line = rawLine.trimmed();
+        if (line.isEmpty() || line.startsWith('.') || line.startsWith('*') || line.startsWith(';') || line.startsWith('#')) continue;
+        const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+        if (parts.size() < 3) continue;
+        const QString ref = parts.at(0).trimmed().toUpper();
+        if (!(ref.startsWith('V') || ref.startsWith('I'))) continue;
+        NetSourceInfo info;
+        info.positiveNode = parts.at(1).trimmed().toUpper().toStdString();
+        info.negativeNode = parts.at(2).trimmed().toUpper().toStdString();
+        sources[ref.toStdString()] = info;
+    }
+    return sources;
+}
+
 QString stripMeasStatementsFromNetlist(const QString& netlistContent) {
     QStringList outLines;
     bool previousWasMeas = false;
@@ -528,6 +561,19 @@ QString stripMeasStatementsFromNetlist(const QString& netlistContent) {
             continue;
         }
         previousWasMeas = false;
+        outLines.append(rawLine);
+    }
+    return outLines.join('\n');
+}
+
+QString stripNetStatementsFromNetlist(const QString& netlistContent) {
+    QStringList outLines;
+    for (const QString& rawLine : netlistContent.split('\n')) {
+        const QString trimmed = rawLine.trimmed();
+        if (trimmed.startsWith(".net", Qt::CaseInsensitive)) {
+            outLines.append(QString("* VioSpice evaluates this .net statement post-simulation: %1").arg(rawLine));
+            continue;
+        }
         outLines.append(rawLine);
     }
     return outLines.join('\n');
@@ -557,6 +603,15 @@ void evaluateMeasStatementsIntoResults(const QString& netlistContent, SimAnalysi
         }
         else results->diagnostics.push_back(".meas " + mr.name + " failed: " + mr.error);
     }
+}
+
+void evaluateNetStatementsIntoResults(const QString& netlistContent, SimAnalysisType analysisType, SimResults* results) {
+    if (!results) return;
+    const std::vector<NetStatement> statements = parseNetStatementsFromNetlist(netlistContent);
+    if (statements.empty()) return;
+    const NetEvaluation eval = SimNetEvaluator::evaluate(statements, parseSourceInfosFromNetlist(netlistContent), *results, measAnalysisToken(analysisType));
+    for (const SimWaveform& waveform : eval.waveforms) results->waveforms.push_back(waveform);
+    for (const std::string& diag : eval.diagnostics) results->diagnostics.push_back(diag);
 }
 
 QString withStepSuffix(const QString& name, const QString& stepLabel) {
@@ -788,7 +843,7 @@ void SimManager::startNgspiceWithNetlist(const QString& netlistContent) {
     // We'll manage it via a member or just use a transient one and pass path.
     auto* tempFile = new QTemporaryFile(this);
     tempFile->setAutoRemove(false);
-    const QString activeNetlist = stripMeasStatementsFromNetlist(netlistContent);
+    const QString activeNetlist = stripNetStatementsFromNetlist(stripMeasStatementsFromNetlist(netlistContent));
     if (tempFile->open()) {
         QTextStream out(tempFile);
         out << activeNetlist;
@@ -865,6 +920,7 @@ void SimManager::startNgspiceWithNetlist(const QString& netlistContent) {
             if (RawDataParser::loadRawAscii(path, &rd, &err)) {
                 SimResults simResults = rd.toSimResults();
                 evaluateMeasStatementsIntoResults(netlistText, analysisType, &simResults);
+                evaluateNetStatementsIntoResults(netlistText, analysisType, &simResults);
                 return std::make_pair(true, simResults);
             }
             qDebug() << "RawDataParser error:" << err;

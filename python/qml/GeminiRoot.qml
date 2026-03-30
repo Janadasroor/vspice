@@ -14,6 +14,7 @@ Rectangle {
         anchors.top: parent.top
         z: 10
         onShowDashboardRequested: dashboard.visible = !dashboard.visible
+        onRequestInputFocus: composer.forceFocus()
     }
 
     // Main Chat History

@@ -36,6 +36,7 @@ struct UserSpiceContentSummary {
     bool hasExplicitAnalysisCard = false;
     bool hasElementCards = false;
     bool hasLtspiceStartup = false;
+    bool hasExplicitSaveDirective = false;
 };
 
 bool isLikelyLogicInputPinName(const QString& rawPinName) {
@@ -2460,10 +2461,15 @@ UserSpiceContentSummary summarizeUserSpiceText(const QString& text, const QStrin
             if (analysisCards.contains(card)) {
                 summary.hasExplicitAnalysisCard = true;
                 if (analysisSeen.contains(card)) {
-                    summary.warnings.append(QString("Duplicate analysis card %1 in directive block (line %2).").arg(card, QString::number(lineNo)));
+                    summary.warnings.append(QString("Duplicate analysis card %1 in directive block (line %2).")
+                        .arg(card, QString::number(lineNo)));
                 } else {
                     analysisSeen.insert(card);
                 }
+            }
+
+            if (card == ".save") {
+                summary.hasExplicitSaveDirective = true;
             }
 
             if (card == ".tran" && line.contains("startup", Qt::CaseInsensitive)) {
@@ -2616,6 +2622,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
     QStringList directiveWarnings;
     bool hasExplicitAnalysisCard = false;
     bool hasUserElementCards = false;
+    bool hasExplicitSaveDirective = false;
     for (QGraphicsItem* item : scene->items()) {
         if (auto* si = dynamic_cast<SchematicItem*>(item)) {
             if (si->itemType() == SchematicItem::SpiceDirectiveType) {
@@ -2630,6 +2637,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                         directiveWarnings.append(summary.warnings);
                         hasExplicitAnalysisCard = hasExplicitAnalysisCard || summary.hasExplicitAnalysisCard;
                         hasUserElementCards = hasUserElementCards || summary.hasElementCards;
+                        hasExplicitSaveDirective = hasExplicitSaveDirective || summary.hasExplicitSaveDirective;
 
                         const QStringList cmdLines = collapseSpiceContinuationLines(cmd);
                         int subcktDepth = 0;
@@ -4127,9 +4135,11 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         }
     }
 
-    netlist += ".save all\n";
-    for (const QString& saveVec : savedCurrentVectors) {
-        netlist += QString(".save %1\n").arg(saveVec);
+    if (!hasExplicitSaveDirective) {
+        netlist += ".save all\n";
+        for (const QString& saveVec : savedCurrentVectors) {
+            netlist += QString(".save %1\n").arg(saveVec);
+        }
     }
     netlist += ".control\nrun\n.endc\n.end\n";
     return netlist;

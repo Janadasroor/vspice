@@ -10,6 +10,7 @@ Rectangle {
 
     property string title: (typeof geminiBridge !== "undefined" && geminiBridge && geminiBridge.conversationTitle) ? geminiBridge.conversationTitle : "VIORA AI"
     signal showDashboardRequested()
+    signal requestInputFocus()
 
     RowLayout {
         anchors.fill: parent
@@ -108,6 +109,7 @@ Rectangle {
                 
             Menu {
                 id: moreMenu
+                onClosed: headerRoot.requestInputFocus()
                     y: moreBtn.height + 5
                     x: -120 // Offset to the left to avoid edge
                     width: 160

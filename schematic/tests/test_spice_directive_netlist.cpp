@@ -5,6 +5,7 @@
 #include "../items/schematic_spice_directive_item.h"
 #include "../../core/simulation_manager.h"
 #include "../../simulator/bridge/sim_manager.h"
+#include "../../simulator/core/sim_net_evaluator.h"
 #include "../../simulator/core/raw_data_parser.h"
 #include "../../simulator/mixedmode/LogicComponent.h"
 #include "../../simulator/mixedmode/NetlistManager.h"
@@ -27,6 +28,7 @@ class SpiceDirectiveNetlistTest : public QObject {
 private slots:
     void generatesWarningsAndHonorsManualDirectives();
     void reportsDuplicateElementsAndUnclosedSubckts();
+    void honorsExplicitSaveDirective();
     void rewritesSimpleLtspiceIfExpressions();
     void rewritesIfWithTrueAndFalseBranches();
     void rewritesLtspiceBooleanOperators();
@@ -58,6 +60,8 @@ private slots:
     void evaluatesLtspiceMeasParamAndTrigTargIntervals();
     void evaluatesLtspiceMeasExpressionConditions();
     void evaluatesLtspiceAcMeasStatements();
+    void evaluatesLtspiceNetOnePortStatements();
+    void evaluatesLtspiceNetTwoPortStatements();
     void mixedModeManagerInsertsAdcAndDacBridges();
     void logicComponentGeneratesVectorizedSubcircuit();
     void symbolDefinitionResolvesExplicitPinMetadata();
@@ -120,6 +124,26 @@ void SpiceDirectiveNetlistTest::reportsDuplicateElementsAndUnclosedSubckts() {
     QVERIFY2(netlist.contains("* Warning: Missing .ends for subcircuit opamp."), qPrintable(netlist));
     QCOMPARE(netlist.count(".ac dec 10 1 1Meg"), 1);
     QVERIFY2(!netlist.contains(".tran 1u 1m"), qPrintable(netlist));
+}
+
+void SpiceDirectiveNetlistTest::honorsExplicitSaveDirective() {
+    QGraphicsScene scene;
+
+    auto* directive = new SchematicSpiceDirectiveItem(
+        ".save V(out) I(L1)\n"
+        ".tran 1u 1m",
+        QPointF(0, 0));
+    scene.addItem(directive);
+
+    SpiceNetlistGenerator::SimulationParams params;
+    params.type = SpiceNetlistGenerator::Transient;
+    params.step = "1u";
+    params.stop = "1m";
+
+    const QString netlist = SpiceNetlistGenerator::generate(&scene, QString(), nullptr, params);
+
+    QVERIFY2(netlist.contains(".save V(out) I(L1)"), qPrintable(netlist));
+    QVERIFY2(!netlist.contains(".save all"), qPrintable(netlist));
 }
 
 void SpiceDirectiveNetlistTest::rewritesSimpleLtspiceIfExpressions() {
@@ -1342,6 +1366,99 @@ void SpiceDirectiveNetlistTest::evaluatesLtspiceAcMeasStatements() {
              qPrintable(QString("Expected peakdb ~= 12.04, got %1").arg(values.at("peakdb"))));
     QVERIFY2(std::abs(values.at("re3k") - 4.0) < 0.01,
              qPrintable(QString("Expected re3k ~= 4, got %1").arg(values.at("re3k"))));
+}
+
+void SpiceDirectiveNetlistTest::evaluatesLtspiceNetOnePortStatements() {
+    SimResults results;
+    results.analysisType = SimAnalysisType::AC;
+
+    SimWaveform vp;
+    vp.name = "V(IN)";
+    vp.xData = {1.0e3, 2.0e3};
+    vp.yData = {10.0, 10.0};
+    vp.yPhase = {0.0, 0.0};
+    results.waveforms.push_back(vp);
+
+    SimWaveform vgnd;
+    vgnd.name = "V(0)";
+    vgnd.xData = vp.xData;
+    vgnd.yData = {0.0, 0.0};
+    vgnd.yPhase = {0.0, 0.0};
+    results.waveforms.push_back(vgnd);
+
+    SimWaveform ivin;
+    ivin.name = "I(VIN)";
+    ivin.xData = vp.xData;
+    ivin.yData = {2.0, 2.0};
+    ivin.yPhase = {0.0, 0.0};
+    results.waveforms.push_back(ivin);
+
+    NetStatement stmt;
+    QVERIFY(SimNetEvaluator::parse(".net VIN", 1, "test", stmt));
+
+    std::map<std::string, NetSourceInfo> sources;
+    sources["VIN"] = {"IN", "0"};
+
+    const NetEvaluation eval = SimNetEvaluator::evaluate({stmt}, sources, results, "ac");
+    QCOMPARE(eval.diagnostics.size(), 0);
+    QCOMPARE(eval.waveforms.size(), 2);
+
+    const SimWaveform& zin = eval.waveforms.at(0);
+    const SimWaveform& yin = eval.waveforms.at(1);
+    QCOMPARE(QString::fromStdString(zin.name), QString("Zin(VIN)"));
+    QCOMPARE(QString::fromStdString(yin.name), QString("Yin(VIN)"));
+    QVERIFY2(std::abs(zin.yData.at(0) - 5.0) < 1e-6, qPrintable(QString::number(zin.yData.at(0))));
+    QVERIFY2(std::abs(yin.yData.at(0) - 0.2) < 1e-6, qPrintable(QString::number(yin.yData.at(0))));
+}
+
+void SpiceDirectiveNetlistTest::evaluatesLtspiceNetTwoPortStatements() {
+    SimResults results;
+    results.analysisType = SimAnalysisType::AC;
+
+    SimWaveform vin;
+    vin.name = "V(IN)";
+    vin.xData = {1.0e3, 2.0e3};
+    vin.yData = {10.0, 10.0};
+    vin.yPhase = {0.0, 0.0};
+    results.waveforms.push_back(vin);
+
+    SimWaveform vgnd;
+    vgnd.name = "V(0)";
+    vgnd.xData = vin.xData;
+    vgnd.yData = {0.0, 0.0};
+    vgnd.yPhase = {0.0, 0.0};
+    results.waveforms.push_back(vgnd);
+
+    SimWaveform iin;
+    iin.name = "I(VIN)";
+    iin.xData = vin.xData;
+    iin.yData = {2.0, 2.0};
+    iin.yPhase = {0.0, 0.0};
+    results.waveforms.push_back(iin);
+
+    SimWaveform vout;
+    vout.name = "V(OUT)";
+    vout.xData = vin.xData;
+    vout.yData = {5.0, 5.0};
+    vout.yPhase = {0.0, 0.0};
+    results.waveforms.push_back(vout);
+
+    NetStatement stmt;
+    QVERIFY(SimNetEvaluator::parse(".net V(OUT) VIN Rin=5 Rout=5", 1, "test", stmt));
+
+    std::map<std::string, NetSourceInfo> sources;
+    sources["VIN"] = {"IN", "0"};
+
+    const NetEvaluation eval = SimNetEvaluator::evaluate({stmt}, sources, results, "ac");
+    QCOMPARE(eval.diagnostics.size(), 0);
+    QCOMPARE(eval.waveforms.size(), 5);
+
+    QCOMPARE(QString::fromStdString(eval.waveforms.at(2).name), QString("Vtransfer(VIN->V(OUT))"));
+    QCOMPARE(QString::fromStdString(eval.waveforms.at(3).name), QString("S11(VIN)"));
+    QCOMPARE(QString::fromStdString(eval.waveforms.at(4).name), QString("S21(VIN->V(OUT))"));
+    QVERIFY2(std::abs(eval.waveforms.at(2).yData.at(0) - 0.5) < 1e-6, qPrintable(QString::number(eval.waveforms.at(2).yData.at(0))));
+    QVERIFY2(std::abs(eval.waveforms.at(3).yData.at(0) - 0.0) < 1e-6, qPrintable(QString::number(eval.waveforms.at(3).yData.at(0))));
+    QVERIFY2(std::abs(eval.waveforms.at(4).yData.at(0) - 0.5) < 1e-6, qPrintable(QString::number(eval.waveforms.at(4).yData.at(0))));
 }
 
 void SpiceDirectiveNetlistTest::boostConverterFeedbackDoesNotRunAway() {

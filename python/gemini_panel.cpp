@@ -16,6 +16,7 @@
 #include "../schematic/analysis/spice_netlist_generator.h"
 #include <QTimer>
 #include <QDateTime>
+#include <QGraphicsItem>
 #include <QGraphicsView>
 #include <QRegularExpression>
 #include <QDir>
@@ -887,8 +888,14 @@ void GeminiPanel::parseAndExecuteCommandModeInput(const QString& in) {
         appendSystemNote("<b>Available Commands:</b><br/>"
                          "- <b>help</b>: Show this message<br/>"
                          "- <b>list nodes</b>: List all net names in the schematic<br/>"
+                         "- <b>list components</b>: List all parts (R1, U1, etc.)<br/>"
+                         "- <b>run sim / run simulation</b>: Start SPICE engine (F8)<br/>"
                          "- <b>run erc</b>: Run Electrical Rules Check<br/>"
-                         "- <b>run simulation</b>: Start SPICE simulation (F8)");
+                         "- <b>plot <name></b>: Open oscilloscope for a signal<br/>"
+                         "- <b>zoom fit</b>: Fit the schematic to view<br/>"
+                         "- <b>export netlist</b>: Show raw SPICE output<br/>"
+                         "- <b>clear chat / clear history</b>: Wipe all messages<br/>"
+                         "- <b>toggle <panel></b>: Show/hide UI panels (e.g. toggle library)");
     } else if (cmd == "list nodes") {
         if (!m_netManager) {
             appendSystemNote("<b>Error:</b> NetManager is not currently linked to the AI panel.");
@@ -906,19 +913,44 @@ void GeminiPanel::parseAndExecuteCommandModeInput(const QString& in) {
     } else if (cmd == "run simulation" || cmd == "run sim") {
         appendSystemAction("Simulation", "Initializing SPICE simulation...", "⚡");
         emit runSimulationRequested();
-    } else if (cmd.startsWith("plot ")) {
-        QString target = in.mid(5).trimmed(); // Use original horizontal case 'in' for case-sensitive nodes
-        // Strip prefixes if present
-        if (target.toLower().startsWith("node:")) target = target.mid(5);
-        else if (target.toLower().startsWith("signal:")) target = target.mid(7);
-        
-        appendSystemAction("Oscilloscope", "Plotting signal: " + target, "📈");
-        // We emit a signal to the main window/schematic editor to open the oscilloscope
-        // In this architecture, we assume the SchematicEditor is listening for plot requests
-        emit plotSignalRequested(target);
         
         // Also ensure simulation data is fresh if needed
         emit runSimulationRequested(); 
+    } else if (cmd == "list components" || cmd == "list parts") {
+        if (!m_scene) {
+            appendSystemNote("<b>Error:</b> Schematic scene is not active.");
+            return;
+        }
+        QStringList references;
+        for (QGraphicsItem* item : m_scene->items()) {
+            // Symbols usually have a "reference" property in their data
+            QVariant ref = item->data(0); // 0 is often the reference string in this project
+            if (!ref.toString().isEmpty() && !ref.toString().contains("Net")) {
+                references << ref.toString();
+            }
+        }
+        if (references.isEmpty()) {
+            appendSystemNote("<b>Result:</b> No components found in active scene.");
+        } else {
+            references.sort();
+            appendSystemNote("<b>Components Found:</b> " + references.join(", "));
+        }
+    } else if (cmd == "zoom fit" || cmd == "zoom all") {
+        appendSystemNote("<b>View:</b> Fitting schematic to view...");
+        emit zoomFitRequested();
+    } else if (cmd == "clear chat" || cmd == "clear history" || cmd == "clear") {
+        clearHistory();
+    } else if (cmd == "export netlist" || cmd == "show netlist") {
+        QString netlist = gatherSchematicContext();
+        if (netlist.isEmpty()) {
+            appendSystemNote("<b>Error:</b> Failed to generate netlist context.");
+        } else {
+            appendSystemNote("<b>Exported Netlist:</b><br/><pre><code>" + netlist + "</code></pre>");
+        }
+    } else if (cmd.startsWith("toggle ")) {
+        QString panel = cmd.mid(7).trimmed();
+        appendSystemNote("<b>UI:</b> Toggling panel: " + panel);
+        emit togglePanelRequested(panel);
     } else {
         appendSystemNote("<b>Unknown Command:</b> \"" + in + "\".<br/>Type <b>help</b> for a list of available system commands.");
     }

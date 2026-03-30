@@ -3,6 +3,8 @@ add_library(FluxSimulator STATIC
     core/sim_netlist.cpp
     core/sim_meas_evaluator.h
     core/sim_meas_evaluator.cpp
+    core/sim_net_evaluator.h
+    core/sim_net_evaluator.cpp
     mixedmode/NetlistManager.h
     mixedmode/NetlistManager.cpp
     mixedmode/LogicComponent.h
