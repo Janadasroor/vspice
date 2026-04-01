@@ -43,7 +43,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 20
             spacing: 8
-            visible: (typeof geminiBridge !== "undefined") && geminiBridge && geminiBridge.isWorking
+            visible: (typeof geminiBridge !== "undefined" && geminiBridge) && geminiBridge.isWorking
             opacity: visible ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 250 } }
 
@@ -63,7 +63,7 @@ Rectangle {
                 id: toolName
                 text: (typeof geminiBridge !== "undefined" && geminiBridge) ? geminiBridge.currentTool : "ViorAI"
                 color: (typeof geminiBridge !== "undefined" && geminiBridge) ? geminiBridge.accentColor : "#3b82f6"
-                font.pixelSize: 10 * (typeof geminiBridge !== "undefined" ? geminiBridge.zoomFactor : 1.0)
+                font.pixelSize: 10 * (typeof geminiBridge !== "undefined" && geminiBridge ? geminiBridge.zoomFactor : 1.0)
                 font.bold: true
                 Layout.alignment: Qt.AlignVCenter
             }
@@ -78,7 +78,7 @@ Rectangle {
                 id: actionSubtext
                 text: (typeof geminiBridge !== "undefined" && geminiBridge) ? geminiBridge.currentAction : ""
                 color: "#94a3b8"
-                font.pixelSize: 10 * (typeof geminiBridge !== "undefined" ? geminiBridge.zoomFactor : 1.0)
+                font.pixelSize: 10 * (typeof geminiBridge !== "undefined" && geminiBridge ? geminiBridge.zoomFactor : 1.0)
                 font.italic: true
                 elide: Text.ElideRight
                 Layout.fillWidth: true
@@ -97,7 +97,7 @@ Rectangle {
                 placeholderText: "Message Viora AI..."
                 placeholderTextColor: "#4b5563"
                 color: "white"
-                font.pixelSize: 14 * (typeof geminiBridge !== "undefined" ? geminiBridge.zoomFactor : 1.0)
+                font.pixelSize: 14 * (typeof geminiBridge !== "undefined" && geminiBridge ? geminiBridge.zoomFactor : 1.0)
                 wrapMode: TextArea.Wrap
                 background: null
                 
@@ -138,13 +138,13 @@ Rectangle {
                     id: modeSelector
                     model: (typeof geminiBridge !== "undefined" && geminiBridge) ? geminiBridge.availableModes : []
                     currentIndex: {
-                        if (!geminiBridge || !model) return 0;
+                        if (typeof geminiBridge === "undefined" || !geminiBridge || !model) return 0;
                         for (var i = 0; i < model.length; i++) {
                             if (model[i].name === geminiBridge.currentMode) return i;
                         }
                         return 0;
                     }
-                    onActivated: (index) => { if (geminiBridge) geminiBridge.currentMode = model[index].name }
+                    onActivated: (index) => { if (typeof geminiBridge !== "undefined" && geminiBridge) geminiBridge.currentMode = model[index].name }
                     
                     textRole: "name"
                     popupWidth: 280
@@ -157,7 +157,7 @@ Rectangle {
                     id: modelSelector
                     model: (typeof geminiBridge !== "undefined" && geminiBridge && geminiBridge.availableModels) ? geminiBridge.availableModels : ["Gemini 2.0 Flash"]
                     currentIndex: (typeof geminiBridge !== "undefined" && geminiBridge && geminiBridge.availableModels) ? Math.max(0, model.indexOf(geminiBridge.currentModel)) : 0
-                    onActivated: (index) => { if (geminiBridge) geminiBridge.currentModel = model[index] }
+                    onActivated: (index) => { if (typeof geminiBridge !== "undefined" && geminiBridge) geminiBridge.currentModel = model[index] }
                 }
             }
 
@@ -286,7 +286,7 @@ Rectangle {
                 Text {
                     text: (typeof modelData === "object") ? modelData.name : modelData
                     color: highlighted || hovered ? "white" : "#e2e8f0"
-                    font.pixelSize: 12 * (typeof geminiBridge !== "undefined" ? geminiBridge.zoomFactor : 1.0)
+                    font.pixelSize: 12 * (typeof geminiBridge !== "undefined" && geminiBridge ? geminiBridge.zoomFactor : 1.0)
                     font.bold: true
                 }
                 Text {

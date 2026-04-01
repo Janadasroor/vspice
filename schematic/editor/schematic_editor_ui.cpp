@@ -436,6 +436,10 @@ void SchematicEditor::createToolBar() {
     editMenu->addAction("Select All", this, &SchematicEditor::onSelectAll, QKeySequence::SelectAll);
     editMenu->addSeparator();
     editMenu->addAction(getThemeIcon(":/icons/tool_search.svg"), "Find and Replace...", QKeySequence::Find, this, &SchematicEditor::onOpenFindReplace);
+    editMenu->addSeparator();
+    QAction* batchEditAction = editMenu->addAction(getThemeIcon(":/icons/tool_edit.svg"), "Batch Edit Values...", this, &SchematicEditor::onBatchEdit);
+    batchEditAction->setShortcut(QKeySequence("Ctrl+E"));
+    batchEditAction->setToolTip("Edit values of multiple selected components simultaneously");
 
     // View Menu
     QMenu* viewMenu = mainAppMenu->addMenu("&View");

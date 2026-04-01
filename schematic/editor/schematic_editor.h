@@ -166,6 +166,7 @@ private slots:
     void onFlipVertical();
     void onBringToFront();
     void onSendToBack();
+    void onBatchEdit();
     
     // UI Phase 2 slots
     void onToggleMiniMap(bool visible);

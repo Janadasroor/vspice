@@ -48,6 +48,7 @@
 #include "../dialogs/spice_directive_dialog.h"
 #include "../dialogs/spice_subcircuit_import_dialog.h"
 #include "../dialogs/signal_generator_properties_dialog.h"
+#include "../dialogs/batch_edit_dialog.h"
 #include "../dialogs/led_properties_dialog.h"
 #include "../dialogs/switch_properties_dialog.h"
 #include "../items/tuning_slider_symbol_item.h"
@@ -2233,6 +2234,30 @@ void SchematicEditor::onAssignModel(const QString& modelName) {
     m_undoStack->endMacro();
 
     statusBar()->showMessage(QString("Assigned model '%1' to %2 component(s)").arg(modelName).arg(targets.size()), 4000);
+}
+
+void SchematicEditor::onBatchEdit() {
+    const auto selected = m_scene->selectedItems();
+    QList<SchematicItem*> targetItems;
+
+    for (auto* item : selected) {
+        if (auto* si = dynamic_cast<SchematicItem*>(item)) {
+            // Only include components that have editable values
+            if (!si->value().isEmpty()) {
+                targetItems.append(si);
+            }
+        }
+    }
+
+    if (targetItems.isEmpty()) {
+        statusBar()->showMessage("No components with editable values selected", 3000);
+        return;
+    }
+
+    BatchEditDialog dialog(targetItems, this);
+    if (dialog.exec() == QDialog::Accepted) {
+        statusBar()->showMessage(QString("Batch edited %1 component(s)").arg(targetItems.size()), 3000);
+    }
 }
 void SchematicEditor::onCheckpointRequested() {
     if (!m_scene) return;

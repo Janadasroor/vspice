@@ -142,6 +142,8 @@ set(SCHEMATIC_SOURCES
     schematic/dialogs/schematic_diff_dialog.h
     schematic/dialogs/sheet_properties_dialog.cpp
     schematic/dialogs/sheet_properties_dialog.h
+    schematic/dialogs/batch_edit_dialog.cpp
+    schematic/dialogs/batch_edit_dialog.h
     schematic/dialogs/signal_generator_properties_dialog.cpp
     schematic/dialogs/signal_generator_properties_dialog.h
     schematic/dialogs/logic_analyzer_properties_dialog.cpp

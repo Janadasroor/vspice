@@ -55,7 +55,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            model: (typeof geminiBridge !== "undefined") ? geminiBridge.toolCalls : []
+            model: (typeof geminiBridge !== "undefined" && geminiBridge) ? geminiBridge.toolCalls : []
             spacing: 4
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
 

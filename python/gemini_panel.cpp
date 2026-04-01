@@ -127,6 +127,19 @@ QVariantList parseMessageParts(const QString& text) {
 
 GeminiPanel::~GeminiPanel() {
     m_isDestroying = true;
+
+    // 1. First, tell the QML engine to stop and clear context properties
+    // This prevents QML from trying to access geminiBridge properties during destruction
+    if (m_quickWidget) {
+        m_quickWidget->setSource(QUrl());
+        if (auto engine = m_quickWidget->engine()) {
+            if (auto context = engine->rootContext()) {
+                context->setContextProperty("geminiBridge", nullptr);
+            }
+        }
+    }
+
+    // 2. Disconnect and stop background processes
     if (m_process) {
         m_process->disconnect(this);
         if (m_process->state() != QProcess::NotRunning) {
@@ -145,6 +158,9 @@ GeminiPanel::~GeminiPanel() {
             }
         }
     }
+    
+    // 3. Disconnect any remaining connections to prevent signals from reaching a half-destroyed object
+    disconnect();
 }
 
 GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent) 
