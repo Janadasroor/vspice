@@ -402,11 +402,15 @@ void SchematicEditor::addSchematicTab(const QString& name) {
 
     // Create Logic Editor (each schematic gets one potentially, or shared)
     // For now, keep shared logic editor but update its scene
-    if (!m_logicEditorPanel) {
+    if (m_logicEditorPanel) {
         m_logicEditorPanel = new LogicEditorPanel(scene, netManager, this);
         connect(m_logicEditorPanel, &LogicEditorPanel::closed, this, [this]() {
             m_logicEditorPanel->setTargetBlock(nullptr);
         });
+    }
+
+    if (m_geminiPanel) {
+        view->setGeminiPanel(m_geminiPanel);
     }
 
     if (m_api) m_api->setScene(m_scene);
@@ -1328,6 +1332,7 @@ void SchematicEditor::showSimulationResults(const SimResults& results) {
 
     if (m_view) {
         m_view->setSimulationResults(nodeVoltages, currents);
+        m_view->setLastSimResults(&results);
     }
     updateSimulationOverlays(nodeVoltages, currents);
 }

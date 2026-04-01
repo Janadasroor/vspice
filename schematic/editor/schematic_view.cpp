@@ -23,6 +23,9 @@
 #include "../tools/schematic_probe_tool.h"
 #include "../items/wire_item.h"
 #include "../analysis/net_manager.h"
+#include "../ui/smart_probe_overlay.h"
+#include "../ui/smart_probe_engine.h"
+#include "../../simulator/core/sim_results.h"
 #include <QPainter>
 #include <QWheelEvent>
 #include <QDebug>
@@ -124,6 +127,9 @@ SchematicView::SchematicView(QWidget *parent)
     m_snapToPin(true),
     m_showCrosshair(true),
     m_cursorScenePos(0, 0) {
+    setLastSimResults(nullptr);
+    clearSimulationResults();
+    m_simNodeVoltages.clear();
     setRenderHint(QPainter::Antialiasing);
     
     m_autoScrollTimer = new QTimer(this);
@@ -185,6 +191,9 @@ SchematicView::SchematicView(QWidget *parent)
 
     // Set default tool to Select
     setCurrentTool("Select");
+
+    // Initialize Smart Probe UI
+    m_smartProbeOverlay = new SmartProbeOverlay(viewport());
 }
 
 SchematicView::~SchematicView() {
@@ -741,6 +750,32 @@ void SchematicView::mouseMoveEvent(QMouseEvent *event) {
         clearHoverHighlights();
     }
 
+    // --- Viora Smart Probe (the new AI logic) ---
+    if (m_hasLastSimResults && m_smartProbeEngine && isSelectTool && !(event->buttons() & Qt::LeftButton)) {
+        QString hoveredNet;
+        if (m_netManager) {
+            hoveredNet = m_netManager->findNetAtPoint(scenePos);
+        }
+        
+        if (!hoveredNet.isEmpty()) {
+            // Find connected components for context
+            QString context;
+            if (m_netManager) {
+                QStringList conns = m_netManager->connectedComponents(hoveredNet);
+                if (!conns.isEmpty()) {
+                    context = conns.join(", ");
+                }
+            }
+            
+            // Trigger Smart Probe logic
+            m_smartProbeEngine->probe(hoveredNet, m_lastSimResults, context, event->pos() + QPoint(20, 20));
+        } else {
+            m_smartProbeOverlay->hideOverlay();
+        }
+    } else if (m_smartProbeOverlay) {
+        m_smartProbeOverlay->hideOverlay();
+    }
+
     // Heatmap / On-Canvas Results Tooltip
     if (m_heatmapEnabled && (!m_simNodeVoltages.isEmpty() || !m_simBranchCurrents.isEmpty()) && !m_isPanning && isSelectTool) {
         QString tooltipText;
@@ -1089,6 +1124,24 @@ QString SchematicView::getNextReference(const QString& prefix) {
 #include "../items/switch_item.h"
 #include "../items/generic_component_item.h"
 #include <QGuiApplication>
+
+void SchematicView::setLastSimResults(const SimResults* results) {
+    if (results) {
+        m_lastSimResults = *results;
+        m_hasLastSimResults = true;
+    } else {
+        m_hasLastSimResults = false;
+    }
+    if (m_smartProbeEngine) {
+        m_smartProbeEngine->clearCache();
+    }
+}
+
+void SchematicView::setGeminiPanel(GeminiPanel* panel) {
+    if (!m_smartProbeEngine && panel && m_smartProbeOverlay) {
+        m_smartProbeEngine = new SmartProbeEngine(panel, m_smartProbeOverlay, this);
+    }
+}
 
 void SchematicView::contextMenuEvent(QContextMenuEvent *event) {
     if (m_currentTool) m_currentTool->ensureView(this);

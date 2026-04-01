@@ -153,7 +153,7 @@ void FindReplaceDialog::searchInFile(const QString& filePath, const QString& ter
         
         auto check = [&](const QString& val, const QString& context, const QString& label) {
             if (val.contains(term, cs)) {
-                SearchResult res;
+                EditorSearchResult res;
                 res.label = label;
                 res.value = val;
                 res.sheetPath = sheetPath;

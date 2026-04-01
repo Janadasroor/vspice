@@ -10,7 +10,7 @@
 #include <QLabel>
 #include <QUuid>
 
-struct SearchResult {
+struct EditorSearchResult {
     QString label;      // e.g. "R1 (Resistor)"
     QString value;      // e.g. "10k"
     QString sheetPath;  // e.g. "Root/PowerSupply"
@@ -28,8 +28,8 @@ public:
     void setProjectContext(const QString& currentFile, const QString& projectDir);
 
 signals:
-    void navigateToResult(const SearchResult& result);
-    void replaceRequested(const SearchResult& result, const QString& newValue);
+    void navigateToResult(const EditorSearchResult& result);
+    void replaceRequested(const EditorSearchResult& result, const QString& newValue);
 
 private slots:
     void onSearch();
@@ -53,7 +53,7 @@ private:
     
     QString m_currentFile;
     QString m_projectDir;
-    QList<SearchResult> m_results;
+    QList<EditorSearchResult> m_results;
 };
 
 #endif // FIND_REPLACE_DIALOG_H

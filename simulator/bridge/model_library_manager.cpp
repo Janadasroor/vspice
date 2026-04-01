@@ -9,7 +9,7 @@
 #include <QVector>
 
 namespace {
-QString decodeSpiceText(const QByteArray& raw) {
+QString decodeSpiceTextInLibrary(const QByteArray& raw) {
     if (raw.isEmpty()) return QString();
 
     auto decodeUtf16Le = [](const QByteArray& bytes, int start) {
@@ -190,7 +190,7 @@ void ModelLibraryManager::loadLibraryFile(const QString& path) {
         return;
     }
     
-    const QString content = decodeSpiceText(file.readAll());
+    const QString content = decodeSpiceTextInLibrary(file.readAll());
     file.close();
 
     // Quick sniff for non-SPICE formats

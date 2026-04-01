@@ -21,7 +21,7 @@
 #include <vector>
 
 namespace {
-QString decodeSpiceText(const QByteArray& raw) {
+QString decodeSpiceTextInBridge(const QByteArray& raw) {
     if (raw.isEmpty()) return QString();
 
     auto decodeUtf16Le = [](const QByteArray& bytes, int start) {
@@ -436,7 +436,7 @@ void loadProjectModelLibraries(SimNetlist& netlist, QStringList& mappingWarnings
             return;
         }
 
-        const std::string content = decodeSpiceText(f.readAll()).toStdString();
+        const std::string content = decodeSpiceTextInBridge(f.readAll()).toStdString();
         SimModelParseOptions opts;
         opts.sourceName = absPath.toStdString();
 

@@ -407,6 +407,57 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext) {
     m_process->start(py, QStringList() << sPath << args);
 }
 
+void GeminiPanel::askSmartProbe(const QString& prompt,
+                               std::function<void(const QString& chunk)> onChunk,
+                               std::function<void()> onDone) {
+    if (m_probeProcess && m_probeProcess->state() != QProcess::NotRunning) {
+        m_probeProcess->kill();
+        m_probeProcess->waitForFinished(200);
+    }
+
+    if (!m_probeProcess) {
+        m_probeProcess = new QProcess(this);
+        m_probeProcess->setProcessEnvironment(PythonManager::getConfiguredEnvironment());
+    } else {
+        m_probeProcess->disconnect(this);
+    }
+
+    QString key = ConfigManager::instance().geminiApiKey().trimmed();
+    if (key.isEmpty()) return;
+
+    QString sPath = QDir(PythonManager::getScriptsDir()).absoluteFilePath("gemini_query.py");
+    QString py = PythonManager::getPythonExecutable();
+
+    QStringList args;
+    args << prompt << "--mode" << "ask" << "--model" << (m_bridge ? m_bridge->currentModel() : "gemini-2.0-flash");
+    
+    struct ProbeState {
+        QString fullResponse;
+        std::function<void(const QString&)> onChunk;
+        std::function<void()> onDone;
+    };
+    auto state = std::make_shared<ProbeState>();
+    state->onChunk = onChunk;
+    state->onDone = onDone;
+
+    connect(m_probeProcess, &QProcess::readyReadStandardOutput, this, [this, state]() {
+        QString chunk = QString::fromUtf8(m_probeProcess->readAllStandardOutput());
+        // Clean tags like <THOUGHT>, <ACTION>, etc.
+        chunk.remove(QRegularExpression("<THOUGHT>.*?</THOUGHT>", QRegularExpression::DotMatchesEverythingOption));
+        chunk.remove(QRegularExpression("<ACTION>.*?</ACTION>"));
+        chunk.remove(QRegularExpression("<USAGE>.*?</USAGE>"));
+        
+        state->fullResponse += chunk;
+        if (state->onChunk) state->onChunk(state->fullResponse.trimmed());
+    });
+
+    connect(m_probeProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, [state](int code) {
+        if (code == 0 && state->onDone) state->onDone();
+    });
+
+    m_probeProcess->start(py, args);
+}
+
 void GeminiPanel::onProcessReadyRead() {
     if (m_isDestroying || !m_process) return;
     QString chunk = m_leftover + QString::fromUtf8(m_process->readAllStandardOutput());

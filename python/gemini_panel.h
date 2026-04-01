@@ -37,6 +37,9 @@ public:
     QString mode() const { return m_mode; }
 
     void askPrompt(const QString& prompt, bool includeContext = true);
+    void askSmartProbe(const QString& prompt,
+                      std::function<void(const QString& chunk)> onChunk,
+                      std::function<void()> onDone);
     void setContextProvider(std::function<QString()> provider) { m_contextProvider = provider; }
 
 public slots:
@@ -91,6 +94,7 @@ private:
 
     // Backend Process Mangement
     QProcess* m_process = nullptr;
+    QProcess* m_probeProcess = nullptr;
     QProcess* m_modelFetchProcess = nullptr;
     QString m_modelFetchStdErr;
     QString m_responseBuffer;

@@ -9,6 +9,7 @@
 #include <cmath>
 #include "schematic_tool.h"
 #include "../tools/schematic_probe_tool.h"
+#include "../../simulator/core/sim_results.h"
 
 class WireItem;
 class QGraphicsPixmapItem;
@@ -122,6 +123,8 @@ public:
     bool isHeatmapEnabled() const { return m_heatmapEnabled; }
     
     void setSimulationResults(const QMap<QString, double>& nodeVoltages, const QMap<QString, double>& branchCurrents);
+    void setLastSimResults(const class SimResults* results);
+    void setGeminiPanel(class GeminiPanel* panel);
     void clearSimulationResults();
 
     void setHandToolActive(bool active);
@@ -187,6 +190,11 @@ private:
 
     QTimer* m_autoScrollTimer;
     QPoint m_autoScrollDelta;
+
+    class SmartProbeOverlay* m_smartProbeOverlay = nullptr;
+    class SmartProbeEngine* m_smartProbeEngine = nullptr;
+    SimResults m_lastSimResults;
+    bool m_hasLastSimResults = false;
 
     void updateHoverHighlight(SchematicItem* item);
     void clearHoverHighlights();

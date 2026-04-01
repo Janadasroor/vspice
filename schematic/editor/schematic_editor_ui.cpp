@@ -1228,6 +1228,11 @@ void SchematicEditor::createDockWidgets() {
     m_geminiDock->setObjectName("GeminiDock");
     m_geminiDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
     m_geminiPanel = new GeminiPanel(m_scene, this);
+    for (int i = 0; i < m_workspaceTabs->count(); ++i) {
+        if (auto* v = qobject_cast<SchematicView*>(m_workspaceTabs->widget(i))) {
+            v->setGeminiPanel(m_geminiPanel);
+        }
+    }
     m_geminiPanel->setNetManager(m_netManager);
     m_geminiPanel->setUndoStack(m_undoStack);
     connect(m_geminiPanel, &GeminiPanel::runSimulationRequested, this, &SchematicEditor::onRunSimulation);

@@ -2068,7 +2068,7 @@ void SchematicEditor::onOpenFindReplace() {
     FindReplaceDialog* dlg = new FindReplaceDialog(this);
     dlg->setProjectContext(m_currentFilePath, m_projectDir);
     
-    connect(dlg, &FindReplaceDialog::navigateToResult, this, [this](const SearchResult& res) {
+    connect(dlg, &FindReplaceDialog::navigateToResult, this, [this](const EditorSearchResult& res) {
         if (res.fileName != m_currentFilePath) {
             onSaveSchematic();
             m_navigationStack.clear(); 
@@ -2087,7 +2087,7 @@ void SchematicEditor::onOpenFindReplace() {
         }
     });
 
-    connect(dlg, &FindReplaceDialog::replaceRequested, this, [this](const SearchResult& res, const QString& newValue) {
+    connect(dlg, &FindReplaceDialog::replaceRequested, this, [this](const EditorSearchResult& res, const QString& newValue) {
         if (res.fileName == m_currentFilePath) {
             for (auto* item : m_scene->items()) {
                 if (auto* si = dynamic_cast<SchematicItem*>(item)) {
