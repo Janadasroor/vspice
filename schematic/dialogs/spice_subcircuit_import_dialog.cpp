@@ -166,9 +166,7 @@ void SpiceSubcircuitImportDialog::setupUi() {
 }
 
 QString SpiceSubcircuitImportDialog::baseDirectory() const {
-    if (!m_projectDir.trimmed().isEmpty()) return m_projectDir;
-    if (!m_currentFilePath.trimmed().isEmpty()) return QFileInfo(m_currentFilePath).absolutePath();
-    return QDir::homePath();
+    return QDir::homePath() + "/ViospiceLib";
 }
 
 QString SpiceSubcircuitImportDialog::suggestedFileName(const QString& subcktName) const {
@@ -178,7 +176,7 @@ QString SpiceSubcircuitImportDialog::suggestedFileName(const QString& subcktName
 QString SpiceSubcircuitImportDialog::targetAbsolutePath() const {
     const QString baseDir = baseDirectory();
     const QString fileName = m_fileNameEdit->text().trimmed();
-    return QDir(baseDir).filePath(QStringLiteral("spice/%1").arg(fileName));
+    return QDir(baseDir).filePath(QStringLiteral("sub/%1").arg(fileName));
 }
 
 void SpiceSubcircuitImportDialog::refreshPathPreview() {
@@ -311,12 +309,12 @@ void SpiceSubcircuitImportDialog::onAccepted() {
 
     const QString baseDir = baseDirectory();
     QDir dir(baseDir);
-    if (!dir.mkpath("spice")) {
-        QMessageBox::warning(this, "Import SPICE Subcircuit", "Failed to create the project spice library folder.");
+    if (!dir.mkpath("sub")) {
+        QMessageBox::warning(this, "Import SPICE Subcircuit", "Failed to create the global sub library folder.");
         return;
     }
 
-    const QString absolutePath = QDir(baseDir).filePath(QStringLiteral("spice/%1").arg(fileName));
+    const QString absolutePath = QDir(baseDir).filePath(QStringLiteral("sub/%1").arg(fileName));
     QFile file(absolutePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
         QMessageBox::warning(this, "Import SPICE Subcircuit", QString("Failed to write %1.").arg(absolutePath));

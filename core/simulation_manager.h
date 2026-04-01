@@ -28,6 +28,7 @@ public:
     void initialize();
     void runSimulation(const QString& netlist, SimControl* control = nullptr);
     bool validateNetlist(const QString& netlist, QString* errorOut = nullptr);
+    QString lastErrorMessage() const;
     void stopSimulation();
     void shutdown();
 
@@ -51,6 +52,7 @@ private:
 
     bool m_isInitialized;
     bool m_lastLoadFailed = false;
+    QString m_lastErrorMessage;
     bool m_bgRunIssued = false;
     QString m_currentNetlist;
     SimControl* m_streamingControl = nullptr;

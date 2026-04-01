@@ -1,0 +1,27 @@
+{
+  "rc_high_pass": {
+    "name": "RC High-Pass Filter",
+    "category": "filters",
+    "description": "First-order RC high-pass filter. Cutoff frequency: f = 1/(2πRC)",
+    "tags": ["rc", "filter", "high-pass", "analog"],
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "Resistor", "unit": "Ω"},
+      {"name": "C1", "default": "1u", "label": "Capacitor", "unit": "F"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "ac"
+  },
+  "voltage_divider": {
+    "name": "Voltage Divider",
+    "category": "basics",
+    "description": "Basic voltage divider circuit. Output: Vout = Vin * R2/(R1+R2)",
+    "tags": ["voltage", "divider", "basics", "analog"],
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "Top Resistor", "unit": "Ω"},
+      {"name": "R2", "default": "10k", "label": "Bottom Resistor", "unit": "Ω"},
+      {"name": "V1", "default": "10", "label": "Input Voltage", "unit": "V"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "op"
+  }
+}

@@ -14,6 +14,8 @@ target_include_directories(FluxSchematic PRIVATE
 target_sources(FluxSchematic PRIVATE
     ui/schematic_minimap.cpp
     ui/schematic_minimap.h
+    dialogs/circuit_template_gallery.cpp
+    dialogs/circuit_template_gallery.h
 )
 
 if(VIOSPICE_ENGINE_FOUND)

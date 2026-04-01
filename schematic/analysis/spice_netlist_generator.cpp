@@ -1501,6 +1501,20 @@ QString rewriteLtspiceDirectiveLine(const QString& line, QStringList* warnings =
         }
     }
 
+    if (out.startsWith(".include ", Qt::CaseInsensitive) || out.startsWith(".lib ", Qt::CaseInsensitive) || out.startsWith(".inc ", Qt::CaseInsensitive)) {
+        static const QRegularExpression incRe("^(?:\\.(?:include|lib|inc))\\s+(?:\"?)(spice/[^\"]+)(?:\"?)\\s*$", QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch incMatch = incRe.match(out);
+        if (incMatch.hasMatch()) {
+            QString keyword = out.left(out.indexOf(' '));
+            QString oldPath = incMatch.captured(1);
+            QString newPath = "sub/" + oldPath.mid(6);
+            out = QString("%1 \"%2\"").arg(keyword, newPath);
+            if (warnings) {
+                warnings->append(QString("Auto-corrected legacy include path from %1 to %2 for backwards compatibility.").arg(oldPath, newPath));
+            }
+        }
+    }
+
     return out;
 }
 
@@ -2313,8 +2327,39 @@ QString resolveModelPath(const QString& modelPath, const QString& projectDir) {
 
     // Fallback: default Viospice subcircuit library
     {
-        const QString candidate = QDir(QDir::homePath() + "/ViospiceLib/sub").filePath(source);
-        if (QFileInfo::exists(candidate)) return candidate;
+        const QString libRoot = QDir::homePath() + "/ViospiceLib";
+        
+        // If path starts with "sub/" try it relative to ViospiceLib root (correct path)
+        if (source.startsWith("sub/", Qt::CaseInsensitive)) {
+            const QString candidate = QDir(libRoot).filePath(source);
+            if (QFileInfo::exists(candidate)) return candidate;
+            // Extension fallback: .lib <-> .sub
+            QFileInfo fic(candidate);
+            const QString altExt = fic.suffix().toLower() == "lib" ? ".sub" : ".lib";
+            const QString altCandidate = fic.dir().filePath(fic.completeBaseName() + altExt);
+            if (QFileInfo::exists(altCandidate)) return altCandidate;
+        } else {
+            // Try inside sub/ subdirectory
+            const QString candidate = QDir(libRoot + "/sub").filePath(source);
+            if (QFileInfo::exists(candidate)) return candidate;
+            // Extension fallback inside sub/
+            QFileInfo fic(candidate);
+            const QString altExt = fic.suffix().toLower() == "lib" ? ".sub" : ".lib";
+            const QString altCandidate = fic.dir().filePath(fic.completeBaseName() + altExt);
+            if (QFileInfo::exists(altCandidate)) return altCandidate;
+        }
+        
+        // Backwards compatibility for paths saved as spice/filename
+        if (source.startsWith("spice/")) {
+            const QString compatSource = source.mid(6);
+            const QString candidate = QDir(libRoot + "/sub").filePath(compatSource);
+            if (QFileInfo::exists(candidate)) return candidate;
+            // Extension fallback
+            QFileInfo fic(candidate);
+            const QString altExt = fic.suffix().toLower() == "lib" ? ".sub" : ".lib";
+            const QString altCandidate = fic.dir().filePath(fic.completeBaseName() + altExt);
+            if (QFileInfo::exists(altCandidate)) return altCandidate;
+        }
     }
 
     return modelPath;
@@ -2333,14 +2378,66 @@ QString normalizeIncludePathForNetlist(const QString& includePath, const QString
         } else {
             // Fall back to known library roots.
             const QStringList roots = ConfigManager::instance().libraryRoots();
+            bool found = false;
             for (const QString& root : roots) {
                 if (root.isEmpty()) continue;
-                const QString candidate = QDir(root).absoluteFilePath(resolvedPath);
-                if (QFileInfo::exists(candidate)) {
-                    resolvedPath = QDir::cleanPath(candidate);
-                    break;
+
+                // If path already starts with "sub/", resolve directly against the root
+                // to avoid a double "sub/sub/" when the root itself ends with /sub.
+                if (resolvedPath.startsWith("sub/", Qt::CaseInsensitive)) {
+                    QString candidate = QDir(root).absoluteFilePath(resolvedPath);
+                    if (QFileInfo::exists(candidate)) {
+                        resolvedPath = QDir::cleanPath(candidate);
+                        found = true;
+                        break;
+                    }
+                    // Extension fallback: .lib <-> .sub
+                    QFileInfo fic(candidate);
+                    const QString altExt = fic.suffix().toLower() == "lib" ? ".sub" : ".lib";
+                    candidate = fic.dir().filePath(fic.completeBaseName() + altExt);
+                    if (QFileInfo::exists(candidate)) {
+                        resolvedPath = QDir::cleanPath(candidate);
+                        found = true;
+                        break;
+                    }
+                } else {
+                    QString candidate = QDir(root).absoluteFilePath(resolvedPath);
+                    if (QFileInfo::exists(candidate)) {
+                        resolvedPath = QDir::cleanPath(candidate);
+                        found = true;
+                        break;
+                    }
+                    // Extension fallback
+                    QFileInfo fic(candidate);
+                    const QString altExt = fic.suffix().toLower() == "lib" ? ".sub" : ".lib";
+                    candidate = fic.dir().filePath(fic.completeBaseName() + altExt);
+                    if (QFileInfo::exists(candidate)) {
+                        resolvedPath = QDir::cleanPath(candidate);
+                        found = true;
+                        break;
+                    }
+                }
+
+                // Backwards compatibility: spice/X -> sub/X
+                if (resolvedPath.startsWith("spice/")) {
+                    const QString compat = "sub/" + resolvedPath.mid(6);
+                    QString candidate = QDir(root).absoluteFilePath(compat);
+                    if (QFileInfo::exists(candidate)) {
+                        resolvedPath = QDir::cleanPath(candidate);
+                        found = true;
+                        break;
+                    }
+                    QFileInfo fic(candidate);
+                    const QString altExt = fic.suffix().toLower() == "lib" ? ".sub" : ".lib";
+                    candidate = fic.dir().filePath(fic.completeBaseName() + altExt);
+                    if (QFileInfo::exists(candidate)) {
+                        resolvedPath = QDir::cleanPath(candidate);
+                        found = true;
+                        break;
+                    }
                 }
             }
+            Q_UNUSED(found);
         }
     } else if (QFileInfo::exists(resolvedPath)) {
         resolvedPath = QFileInfo(resolvedPath).absoluteFilePath();
@@ -2650,6 +2747,28 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
 
                             const bool emulateStartupOnLine = summary.hasLtspiceStartup && subcktDepth == 0;
                             QString lineToWrite = rewriteLtspiceDirectiveLine(trimmedCmdLine, &directiveWarnings, emulateStartupOnLine, projectDir);
+
+                            // Resolve relative .include/.lib/.inc paths to absolute so ngspice can always
+                            // find them regardless of its CWD.
+                            {
+                                static const QRegularExpression incLineRe(
+                                    "^(\\s*\\.(?:include|lib|inc)\\s+)(?:\"([^\"]+)\"|(\\S+))\\s*$",
+                                    QRegularExpression::CaseInsensitiveOption);
+                                const QRegularExpressionMatch m = incLineRe.match(lineToWrite);
+                                if (m.hasMatch()) {
+                                    const QString keyword = m.captured(1);
+                                    const QString rawPath = m.captured(2).isEmpty() ? m.captured(3) : m.captured(2);
+                                    QFileInfo rfInfo(rawPath);
+                                    if (!rfInfo.isAbsolute()) {
+                                        const QString absPath = normalizeIncludePathForNetlist(rawPath, projectDir);
+                                        if (!absPath.isEmpty() && absPath != rawPath && QFileInfo::exists(absPath)) {
+                                            lineToWrite = QString("%1\"%2\"").arg(keyword.trimmed() + " ", absPath);
+                                            directiveWarnings.append(QString("Resolved relative include '%1' to '%2'.").arg(rawPath, absPath));
+                                        }
+                                    }
+                                }
+                            }
+
         if (trimmedCmdLine.startsWith(".mean", Qt::CaseInsensitive)) {
             const QString converted = normalizeMeanDirective(trimmedCmdLine);
             if (converted != trimmedCmdLine) {

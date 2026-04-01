@@ -20,9 +20,11 @@
 #include "../ui/schematic_minimap.h"
 #include "../../symbols/symbol_library.h"
 #include "../dialogs/simulation_debugger_dialog.h"
+#include "../dialogs/circuit_template_gallery.h"
 #include <QTreeWidget>
 #include <QHeaderView>
 #include <QFileDialog>
+#include <QMessageBox>
 #include "../dialogs/spice_directive_dialog.h"
 #include "../../simulator/bridge/sim_manager.h"
 #include "../tools/schematic_zoom_area_tool.h"
@@ -361,6 +363,31 @@ void SchematicEditor::createToolBar() {
     QMenu* fileMenu = mainAppMenu->addMenu("&File");
     fileMenu->addAction(createComponentIcon("New"), "New Schematic", QKeySequence::New, this, &SchematicEditor::onNewSchematic);
     fileMenu->addAction(createComponentIcon("Open"), "Open Schematic...", QKeySequence::Open, this, &SchematicEditor::onOpenSchematic);
+    fileMenu->addAction(createComponentIcon("Open"), "Open Template...", this, [this]() {
+        CircuitTemplateGallery dlg(m_projectDir, this);
+        if (dlg.exec() == QDialog::Accepted) {
+            auto tpl = dlg.selectedTemplate();
+            if (!tpl.filePath.isEmpty()) {
+                if (m_isModified) {
+                    QMessageBox::StandardButton reply = QMessageBox::question(
+                        this, "Unsaved Changes",
+                        "Do you want to save changes before loading a template?",
+                        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel
+                    );
+                    if (reply == QMessageBox::Save) {
+                        onSaveSchematic();
+                        if (m_isModified) return;
+                    } else if (reply == QMessageBox::Cancel) {
+                        return;
+                    }
+                }
+                m_navigationStack.clear();
+                openFile(tpl.filePath);
+                m_isModified = true;
+                statusBar()->showMessage(QString("Loaded template: %1").arg(tpl.name), 5000);
+            }
+        }
+    });
     fileMenu->addAction(createComponentIcon("Open"), "Import ASC File...", this, &SchematicEditor::onImportAscFile);
     
     QMenu* importSubcktMenu = fileMenu->addMenu("Import SPICE Subcircuit");

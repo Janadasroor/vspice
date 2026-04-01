@@ -32,6 +32,11 @@ bool SimulationManager::isAvailable() const {
 #endif
 }
 
+QString SimulationManager::lastErrorMessage() const {
+    std::lock_guard<std::mutex> lock(const_cast<SimulationManager*>(this)->m_logMutex);
+    return m_lastErrorMessage;
+}
+
 void SimulationManager::initialize() {
     if (m_isInitialized) return;
 
@@ -97,7 +102,9 @@ void SimulationManager::runSimulation(const QString& netlist, SimControl* contro
     if (rc != 0 || m_lastLoadFailed) {
         m_bufferTimer->stop();
         m_bgRunIssued = false;
-        emit errorOccurred("Ngspice failed to start simulation.");
+        QString finalErr = "Ngspice failed to start simulation.";
+        if (!m_lastErrorMessage.isEmpty()) finalErr = m_lastErrorMessage;
+        emit errorOccurred(finalErr);
         emit simulationFinished();
         return;
     }
@@ -126,7 +133,11 @@ bool SimulationManager::validateNetlist(const QString& netlist, QString* errorOu
 bool SimulationManager::loadNetlistInternal(const QString& netlist, bool keepStorage, QString* errorOut) {
 #ifdef HAVE_NGSPICE
     ngSpice_Command((char*)"reset");
-    m_lastLoadFailed = false;
+    {
+        std::lock_guard<std::mutex> lock(m_logMutex);
+        m_lastLoadFailed = false;
+        m_lastErrorMessage.clear();
+    }
 
     bool loaded = false;
     QFile file(netlist);
@@ -192,7 +203,9 @@ bool SimulationManager::loadNetlistInternal(const QString& netlist, bool keepSto
         if (!loaded) {
             emit outputReceived(QString("Ngspice: failed to load circuit via ngSpice_Circ (rc=%1), falling back to source.").arg(rc));
             if (m_lastLoadFailed) {
-                if (errorOut) *errorOut = "Ngspice rejected the netlist during parse/model load.";
+                if (errorOut) {
+                    *errorOut = m_lastErrorMessage.isEmpty() ? "Ngspice rejected the netlist during parse/model load." : m_lastErrorMessage;
+                }
                 if (!keepStorage) { m_circStorage.clear(); m_circPtrs.clear(); }
                 return false;
             }
@@ -215,8 +228,9 @@ bool SimulationManager::loadNetlistInternal(const QString& netlist, bool keepSto
         const int rc = ngSpice_Command(cmd.toLatin1().data());
         QFile::remove(sourcePath);
         if (rc != 0) {
-            emit outputReceived(QString("Ngspice: source command failed (rc=%1).").arg(rc));
-            if (errorOut) *errorOut = "Failed to load netlist into ngspice.";
+            if (errorOut) {
+                *errorOut = m_lastErrorMessage.isEmpty() ? "Failed to load netlist into ngspice." : m_lastErrorMessage;
+            }
             if (!keepStorage) { m_circStorage.clear(); m_circPtrs.clear(); }
             return false;
         }
@@ -314,25 +328,33 @@ int SimulationManager::cbSendChar(char* output, int id, void* userData) {
     SimulationManager* self = static_cast<SimulationManager*>(userData);
     if (self && output) {
         QString msg = QString::fromLatin1(output);
+        const QString lower = msg.toLower();
         // Clean up stderr/stdout distinction if needed
         if (msg.startsWith("stderr ")) msg.remove(0, 7);
         else if (msg.startsWith("stdout ")) msg.remove(0, 7);
 
-        const QString lower = msg.toLower();
-        if (lower.contains("no circuit loaded") ||
-            lower.contains("there is no circuit") ||
-            lower.contains("error on line") ||
-            lower.contains("unknown model type") ||
-            lower.contains("unable to find definition of model") ||
-            lower.contains("mif-error") ||
-            lower.contains("circuit not parsed") ||
-            lower.contains("ngspice.dll cannot recover")) {
-            self->m_lastLoadFailed = true;
-        }
-        
         qDebug() << "[Ngspice]" << msg.trimmed();
         {
             std::lock_guard<std::mutex> lock(self->m_logMutex);
+            if (lower.contains("no circuit loaded") ||
+                lower.contains("there is no circuit") ||
+                lower.contains("error on line") ||
+                lower.contains("unknown model type") ||
+                lower.contains("unable to find definition of model") ||
+                lower.contains("mif-error") ||
+                lower.contains("circuit not parsed") ||
+                lower.contains("ngspice.dll cannot recover") ||
+                lower.contains("could not find include file")) {
+                self->m_lastLoadFailed = true;
+                if (self->m_lastErrorMessage.isEmpty()) {
+                    self->m_lastErrorMessage = msg.trimmed();
+                }
+            }
+            
+            // Capture specific "Error:" prefix even if not in the known failure list
+            if (self->m_lastErrorMessage.isEmpty() && (msg.startsWith("Error:", Qt::CaseInsensitive) || msg.startsWith("Fatal error:", Qt::CaseInsensitive))) {
+                self->m_lastErrorMessage = msg.trimmed();
+            }
             self->m_logBuffer.push_back(msg);
         }
     }
