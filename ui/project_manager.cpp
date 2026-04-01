@@ -532,39 +532,64 @@ QWidget* ProjectManager::createProjectFilesPanel() {
     QWidget* panel = new QWidget;
     panel->setObjectName("ProjectFilesPanel");
     panel->setMinimumWidth(220);
-    
+    panel->setMaximumWidth(340);
+
     QVBoxLayout* layout = new QVBoxLayout(panel);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    // Header
-    QLabel* header = new QLabel("  EXPLORER");
-    header->setObjectName("PanelHeader");
-    layout->addWidget(header);
+    // ── Header row with action buttons ───────────────────────
+    QWidget* headerRow = new QWidget;
+    headerRow->setObjectName("ExplorerHeader");
+    QHBoxLayout* headerLayout = new QHBoxLayout(headerRow);
+    headerLayout->setContentsMargins(12, 0, 8, 0);
+    headerLayout->setSpacing(4);
 
-    // Search field
+    QLabel* header = new QLabel("EXPLORER");
+    header->setObjectName("PanelHeader");
+    headerLayout->addWidget(header);
+    headerLayout->addStretch();
+
+    auto makeIconBtn = [](const QString& text, const QString& tip) -> QPushButton* {
+        auto* btn = new QPushButton(text);
+        btn->setToolTip(tip);
+        btn->setObjectName("ExplorerActionBtn");
+        btn->setFixedSize(26, 26);
+        btn->setCursor(Qt::PointingHandCursor);
+        return btn;
+    };
+
+    QPushButton* refreshBtn  = makeIconBtn("⟳", "Refresh");
+    QPushButton* addFolderBtn = makeIconBtn("+", "Add Folder to Workspace");
+    connect(refreshBtn,   &QPushButton::clicked, this, &ProjectManager::refreshProjectTree);
+    connect(addFolderBtn, &QPushButton::clicked, this, &ProjectManager::addFolderToWorkspace);
+
+    headerLayout->addWidget(refreshBtn);
+    headerLayout->addWidget(addFolderBtn);
+    layout->addWidget(headerRow);
+
+    // ── Search field ─────────────────────────────────────────
     auto* searchField = new QLineEdit();
-    searchField->setPlaceholderText("  Search files...");
+    searchField->setPlaceholderText("Search files...");
     searchField->setClearButtonEnabled(true);
     searchField->setObjectName("ProjectSearch");
     layout->addWidget(searchField);
 
-    // Tree widget
+    // ── File tree ─────────────────────────────────────────────
     m_projectTree = new QTreeWidget;
     m_projectTree->setHeaderHidden(true);
     m_projectTree->setRootIsDecorated(true);
     m_projectTree->setObjectName("ProjectTree");
     m_projectTree->setAnimated(true);
     m_projectTree->setIndentation(16);
+    m_projectTree->setIconSize(QSize(18, 18));
     m_projectTree->setContextMenuPolicy(Qt::CustomContextMenu);
-    
+
     connect(m_projectTree, &QTreeWidget::customContextMenuRequested,
             this, &ProjectManager::onProjectTreeContextMenu);
-    
     connect(m_projectTree, &QTreeWidget::itemDoubleClicked,
             this, &ProjectManager::onProjectTreeItemDoubleClicked);
 
-    // Search filtering
     connect(searchField, &QLineEdit::textChanged, this, [this](const QString& text) {
         std::function<bool(QTreeWidgetItem*)> filterItem = [&](QTreeWidgetItem* item) -> bool {
             bool childVisible = false;
@@ -579,16 +604,15 @@ QWidget* ProjectManager::createProjectFilesPanel() {
             filterItem(m_projectTree->topLevelItem(i));
         }
     });
-    
-    layout->addWidget(m_projectTree);
 
+    layout->addWidget(m_projectTree);
     return panel;
 }
 
-// Helper to add a launcher tile to the grid
-void ProjectManager::addLauncherTile(QGridLayout* grid, int row, int col, 
-                                     const QString& title, const QString& desc, 
-                                     const QString& iconPath, 
+// Helper kept for backward compatibility (menu bar / other callers)
+void ProjectManager::addLauncherTile(QGridLayout* grid, int row, int col,
+                                     const QString& title, const QString& desc,
+                                     const QString& iconPath,
                                      void (ProjectManager::*slot)()) {
     LauncherTile* tile = new LauncherTile("", title, desc);
     tile->setIcon(QIcon(iconPath));
@@ -599,85 +623,204 @@ void ProjectManager::addLauncherTile(QGridLayout* grid, int row, int col,
 
 QWidget* ProjectManager::createLauncherArea() {
     QScrollArea* scroll = new QScrollArea;
-    scroll->setObjectName("LauncherScroll");
+    scroll->setObjectName("LauncherScrollArea");
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setStyleSheet("QScrollArea { background-color: #0a0a0c; border: none; }");
 
     m_launcherScrollContent = new QWidget;
     m_launcherScrollContent->setObjectName("LauncherArea");
-    
+
     QVBoxLayout* layout = new QVBoxLayout(m_launcherScrollContent);
-    layout->setContentsMargins(40, 30, 40, 20);
-    layout->setSpacing(24);
+    layout->setContentsMargins(36, 28, 36, 28);
+    layout->setSpacing(18);
 
-    // Welcome header
-    QLabel* welcomeLabel = new QLabel("viospice");
-    welcomeLabel->setObjectName("WelcomeTitle");
-    layout->addWidget(welcomeLabel);
+    // ── Hero ─────────────────────────────────────────────────
+    {
+        QHBoxLayout* logoRow = new QHBoxLayout;
+        logoRow->setSpacing(12);
+        logoRow->setContentsMargins(0,0,0,0);
 
-    QLabel* subtitleLabel = new QLabel("Professional Electronic Design Automation");
-    subtitleLabel->setObjectName("WelcomeSubtitle");
-    layout->addWidget(subtitleLabel);
+        QLabel* title = new QLabel("viospice");
+        title->setObjectName("WelcomeTitle");
+        logoRow->addWidget(title);
 
-    // Thin accent line
-    QFrame* accentLine = new QFrame();
-    accentLine->setFixedHeight(2);
-    accentLine->setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #007acc, stop:0.5 #00c8ff, stop:1 transparent);");
-    layout->addWidget(accentLine);
+        QLabel* chip = new QLabel("v0.2.0");
+        chip->setObjectName("VersionChip");
+        logoRow->addWidget(chip);
+        logoRow->addStretch();
 
-    // Grid layout for launcher tiles (will be managed by updateLauncherLayout)
-    m_launcherGrid = new QGridLayout;
-    m_launcherGrid->setSpacing(24);
-    m_launcherGrid->setContentsMargins(0, 10, 0, 10);
-    m_launcherGrid->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+        QLabel* subtitle = new QLabel("Professional Electronic Design Automation");
+        subtitle->setObjectName("WelcomeSubtitle");
 
-    // Initialize tiles list if not already
+        // CTA buttons
+        QHBoxLayout* ctaRow = new QHBoxLayout;
+        ctaRow->setSpacing(10);
+        ctaRow->setContentsMargins(0,0,0,0);
+
+        QPushButton* newBtn = new QPushButton("+ New Project");
+        newBtn->setObjectName("CtaButtonPrimary");
+        newBtn->setCursor(Qt::PointingHandCursor);
+        newBtn->setFixedHeight(34);
+        connect(newBtn, &QPushButton::clicked, this, &ProjectManager::createNewProject);
+
+        QPushButton* openBtn = new QPushButton("Open Folder...");
+        openBtn->setObjectName("CtaButtonSecondary");
+        openBtn->setCursor(Qt::PointingHandCursor);
+        openBtn->setFixedHeight(34);
+        connect(openBtn, &QPushButton::clicked, this, &ProjectManager::addFolderToWorkspace);
+
+        ctaRow->addWidget(newBtn);
+        ctaRow->addWidget(openBtn);
+        ctaRow->addStretch();
+
+        QVBoxLayout* heroLayout = new QVBoxLayout;
+        heroLayout->setSpacing(8);
+        heroLayout->setContentsMargins(0,0,0,0);
+        heroLayout->addLayout(logoRow);
+        heroLayout->addWidget(subtitle);
+        heroLayout->addLayout(ctaRow);
+        layout->addLayout(heroLayout);
+    }
+
+    // Accent separator
+    {
+        QFrame* line = new QFrame;
+        line->setFixedHeight(2);
+        line->setStyleSheet(
+            "background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            "stop:0 #3b82f6, stop:0.35 #8b5cf6, stop:0.65 #06b6d4, stop:1 transparent);"
+        );
+        layout->addWidget(line);
+    }
+
     m_launcherTiles.clear();
+    m_importTiles.clear();
 
-    auto createAndStoreTile = [&](const QString& title, const QString& desc, const QString& iconPath, void (ProjectManager::*slot)()) {
-        LauncherTile* tile = new LauncherTile("", title, desc);
-        tile->setIcon(QIcon(iconPath));
+    // Helper lambdas
+    auto addDesign = [&](const QString& ttl, const QString& dsc,
+                          const QString& icon, const QColor& accent,
+                          void(ProjectManager::*slot)()) {
+        auto* tile = new LauncherTile("", ttl, dsc, accent, "Design");
+        tile->setIcon(QIcon(icon));
+        connect(tile, &LauncherTile::clicked, this, slot);
+        m_launcherTiles.append(tile);
+    };
+    auto addImport = [&](const QString& ttl, const QString& dsc,
+                          const QString& icon, const QColor& accent,
+                          void(ProjectManager::*slot)()) {
+        auto* tile = new LauncherTile("", ttl, dsc, accent, "Import");
+        tile->setIcon(QIcon(icon));
+        connect(tile, &LauncherTile::clicked, this, slot);
+        m_importTiles.append(tile);
+    };
+    auto addUtil = [&](const QString& ttl, const QString& dsc,
+                        const QString& icon, const QColor& accent,
+                        void(ProjectManager::*slot)()) {
+        auto* tile = new LauncherTile("", ttl, dsc, accent, "Utility");
+        tile->setIcon(QIcon(icon));
         connect(tile, &LauncherTile::clicked, this, slot);
         m_launcherTiles.append(tile);
     };
 
-    createAndStoreTile("Schematic Editor", "Capture and edit circuit schematics", ":/icons/schematic_editor.png", &ProjectManager::openSchematicEditor);
-    createAndStoreTile("Symbol Editor", "Create and manage schematic symbol libraries", ":/icons/symbol_editor.png", &ProjectManager::openSymbolEditor);
-    createAndStoreTile("LTspice Batch Import", "Import LTspice .asy symbols to .viosym", ":/icons/toolbar_file.png", &ProjectManager::importLtspiceBatch);
-    createAndStoreTile("KiCad Batch Import", "Import one .kicad_sym library and export all symbols to .viosym", ":/icons/toolbar_file.png", &ProjectManager::importKicadBatch);
-    createAndStoreTile("Diode/JFET Import", "Import LTspice .dio/.jft model libraries by type", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceDiodeModels);
-    createAndStoreTile("JFET Model Import", "Import LTspice .jft model libraries (NJF/PJF)", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceJfetModels);
-    createAndStoreTile("BJT Model Import", "Import LTspice .bjt model libraries (NPN/PNP)", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceBjtModels);
-    createAndStoreTile("MOS Model Import", "Import LTspice .mos model libraries (NMOS/PMOS)", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceMosModels);
-    createAndStoreTile("Resistor Model Import", "Import LTspice standard.res resistor models", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceResistorModels);
-    createAndStoreTile("Capacitor Model Import", "Import LTspice standard.cap capacitor models", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceCapacitorModels);
-    createAndStoreTile("Inductor Model Import", "Import LTspice standard.ind inductor models", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceInductorModels);
-    createAndStoreTile("Import Standard Passives", "Import standard.res, standard.cap, and standard.ind in one run", ":/icons/toolbar_netlist.png", &ProjectManager::importLtspiceStandardPassiveModels);
-    createAndStoreTile("SPICE Model Manager", "Manage simulation models and subcircuit libraries", ":/icons/toolbar_netlist.png", &ProjectManager::openSpiceModelManager);
-    createAndStoreTile("Calculator Tools", "Resistance, trace width, and impedance calculators", ":/icons/calculator_tools.png", &ProjectManager::openCalculatorTools);
-    createAndStoreTile("Plugins Manager", "Manage extensions, importers, and add-ons", ":/icons/plugins_manager.png", &ProjectManager::openPluginsManager);
-    createAndStoreTile("Help Documentation", "Software guides, tutorials, and documentation", ":/icons/tool_search.svg", &ProjectManager::showHelp);
+    // ── Design Tools ─────────────────────────────────────────
+    {
+        QLabel* hdr = new QLabel("Design Tools");
+        hdr->setObjectName("SectionHeader");
+        layout->addWidget(hdr);
 
-    // Add Circuit Templates Gallery
-    TemplateGalleryWidget* templateGallery = new TemplateGalleryWidget(m_launcherScrollContent);
-    connect(templateGallery, &TemplateGalleryWidget::openSchematicRequested, this, &ProjectManager::openSchematicFromTemplate);
-    layout->addWidget(templateGallery, 1);
+        m_launcherGrid = new QGridLayout;
+        m_launcherGrid->setSpacing(14);
+        m_launcherGrid->setContentsMargins(0, 4, 0, 4);
+        m_launcherGrid->setAlignment(Qt::AlignTop | Qt::AlignLeft);
 
-    layout->addLayout(m_launcherGrid);
+        addDesign("Schematic Editor",  "Capture and edit circuit schematics",
+                  ":/icons/schematic_editor.png", QColor("#3b82f6"), &ProjectManager::openSchematicEditor);
+        addDesign("Symbol Editor", "Create and manage schematic symbol libraries",
+                  ":/icons/symbol_editor.png",    QColor("#8b5cf6"), &ProjectManager::openSymbolEditor);
+
+        layout->addLayout(m_launcherGrid);
+    }
+
+    // ── Import Tools (Collapsible) ────────────────────────────
+    {
+        m_importSection = new CollapsibleSection("Import Tools", QColor("#f59e0b"), true);
+        layout->addWidget(m_importSection);
+
+        m_importGrid = m_importSection->grid();
+        m_importGrid->setSpacing(14);
+        m_importGrid->setContentsMargins(0, 6, 0, 6);
+        m_importGrid->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+
+        addImport("LTspice Batch Import",  "Import LTspice .asy symbols to .viosym",
+                  ":/icons/toolbar_file.png",    QColor("#f59e0b"), &ProjectManager::importLtspiceBatch);
+        addImport("KiCad Batch Import",    "Import .kicad_sym library — export all symbols",
+                  ":/icons/toolbar_file.png",    QColor("#10b981"), &ProjectManager::importKicadBatch);
+        addImport("Diode/JFET Import",     "Import LTspice .dio/.jft model libraries",
+                  ":/icons/toolbar_netlist.png", QColor("#06b6d4"), &ProjectManager::importLtspiceDiodeModels);
+        addImport("JFET Model Import",     "Import LTspice .jft libraries (NJF/PJF)",
+                  ":/icons/toolbar_netlist.png", QColor("#0ea5e9"), &ProjectManager::importLtspiceJfetModels);
+        addImport("BJT Model Import",      "Import LTspice .bjt libraries (NPN/PNP)",
+                  ":/icons/toolbar_netlist.png", QColor("#ec4899"), &ProjectManager::importLtspiceBjtModels);
+        addImport("MOS Model Import",      "Import LTspice .mos libraries (NMOS/PMOS)",
+                  ":/icons/toolbar_netlist.png", QColor("#a855f7"), &ProjectManager::importLtspiceMosModels);
+        addImport("Resistor Model Import", "Import LTspice standard.res resistor models",
+                  ":/icons/toolbar_netlist.png", QColor("#ef4444"), &ProjectManager::importLtspiceResistorModels);
+        addImport("Capacitor Model Import","Import LTspice standard.cap capacitor models",
+                  ":/icons/toolbar_netlist.png", QColor("#f97316"), &ProjectManager::importLtspiceCapacitorModels);
+        addImport("Inductor Model Import", "Import LTspice standard.ind inductor models",
+                  ":/icons/toolbar_netlist.png", QColor("#84cc16"), &ProjectManager::importLtspiceInductorModels);
+        addImport("Import Standard Passives","Import standard.res, .cap, and .ind in one run",
+                  ":/icons/toolbar_netlist.png", QColor("#14b8a6"), &ProjectManager::importLtspiceStandardPassiveModels);
+
+        m_importSection->updateCount(m_importTiles.size());
+
+        // Place import tiles into the collapsible grid
+        int cols = 2, idx = 0;
+        for (auto* tile : m_importTiles) {
+            m_importGrid->addWidget(tile, idx / cols, idx % cols);
+            ++idx;
+        }
+    }
+
+    // ── Utilities ─────────────────────────────────────────────
+    {
+        QLabel* hdr = new QLabel("Utilities");
+        hdr->setObjectName("SectionHeader");
+        layout->addWidget(hdr);
+
+        // Utility tiles go into the same m_launcherGrid (after design tiles)
+        addUtil("SPICE Model Manager","Manage simulation models and subcircuit libraries",
+                ":/icons/toolbar_netlist.png", QColor("#06b6d4"), &ProjectManager::openSpiceModelManager);
+        addUtil("Calculator Tools",  "Resistance, trace width, and impedance calculators",
+                ":/icons/calculator_tools.png", QColor("#f59e0b"), &ProjectManager::openCalculatorTools);
+        addUtil("Plugins Manager",   "Manage extensions, importers, and add-ons",
+                ":/icons/plugins_manager.png",  QColor("#8b5cf6"), &ProjectManager::openPluginsManager);
+        addUtil("Help Documentation","Software guides, tutorials, and documentation",
+                ":/icons/tool_search.svg",      QColor("#64748b"), &ProjectManager::showHelp);
+    }
+
+    // ── Circuit Templates ─────────────────────────────────────
+    {
+        QLabel* hdr = new QLabel("Circuit Templates");
+        hdr->setObjectName("SectionHeader");
+        layout->addWidget(hdr);
+
+        TemplateGalleryWidget* gallery = new TemplateGalleryWidget(m_launcherScrollContent);
+        connect(gallery, &TemplateGalleryWidget::openSchematicRequested,
+                this, &ProjectManager::openSchematicFromTemplate);
+        layout->addWidget(gallery, 1);
+    }
+
     layout->addStretch();
 
-    // Version footer
-    QLabel* versionLabel = new QLabel("viospice v0.2.0  ·  Modern Engineering Suite");
-    versionLabel->setObjectName("VersionFooter");
-    versionLabel->setAlignment(Qt::AlignCenter);
-    layout->addWidget(versionLabel);
+    // Footer
+    QLabel* footer = new QLabel("viospice v0.2.0  ·  Modern Electronic Design Automation");
+    footer->setObjectName("VersionFooter");
+    footer->setAlignment(Qt::AlignCenter);
+    layout->addWidget(footer);
 
     scroll->setWidget(m_launcherScrollContent);
-    
-    // Trigger initial layout
     QTimer::singleShot(0, this, &ProjectManager::updateLauncherLayout);
-
     return scroll;
 }
 
@@ -687,24 +830,21 @@ void ProjectManager::resizeEvent(QResizeEvent* event) {
 }
 
 void ProjectManager::updateLauncherLayout() {
-    if (!m_launcherGrid || m_launcherTiles.isEmpty()) return;
+    if (!m_launcherScrollContent) return;
 
-    // Calculate available width for the grid
-    int availableWidth = m_launcherScrollContent->width() - 80; // Accounting for margins
-    int tileMinWidth = 320; // 300px min-width + 20px spacing buffer
-    
-    int columns = qMax(1, availableWidth / tileMinWidth);
-    
-    // Clear current grid (without deleting tiles)
-    while (m_launcherGrid->count() > 0) {
-        m_launcherGrid->takeAt(0);
-    }
+    const int available = m_launcherScrollContent->width() - 72;
+    const int tileMin   = 300;
+    const int cols      = qMax(1, available / tileMin);
 
-    // Re-populate grid based on columns
-    for (int i = 0; i < m_launcherTiles.size(); ++i) {
-        int row = i / columns;
-        int col = i % columns;
-        m_launcherGrid->addWidget(m_launcherTiles[i], row, col);
+    // Re-layout design + utility tiles (m_launcherTiles)
+    if (m_launcherGrid) {
+        while (m_launcherGrid->count() > 0)
+            m_launcherGrid->takeAt(0);
+
+        // First 2 are Design tiles, rest are Utility tiles.
+        // They share one grid but we just re-pack them all together.
+        for (int i = 0; i < m_launcherTiles.size(); ++i)
+            m_launcherGrid->addWidget(m_launcherTiles[i], i / cols, i % cols);
     }
 }
 
@@ -1350,102 +1490,156 @@ void ProjectManager::updateThemeStyle() {
     auto* theme = ThemeManager::theme();
     if (!theme) return;
 
-    QString windowBg = theme->windowBackground().name();
-    QString panelBg = theme->panelBackground().name();
-    QString textColor = theme->textColor().name();
-    QString textSecondary = theme->textSecondary().name();
-    QString border = theme->panelBorder().name();
-    QString accent = theme->accentColor().name();
-    QString accentHover = theme->accentHover().name();
+    const bool    isLight   = theme->type() == PCBTheme::Light;
+    const QString windowBg      = isLight ? "#f1f5f9" : theme->windowBackground().name();
+    const QString panelBg       = isLight ? "#ffffff" : theme->panelBackground().name();
+    const QString textPrimary   = theme->textColor().name();
+    const QString textSecondary = theme->textSecondary().name();
+    const QString border        = theme->panelBorder().name();
+    const QString accent        = theme->accentColor().name();
 
-    bool isLight = theme->type() == PCBTheme::Light;
-    QString toolbarBg = isLight ? "#f8fafc" : "#0a0a0c";
-    QString headerBg = isLight ? "#f1f5f9" : "#121214";
-    QString inputBg = isLight ? "#ffffff" : "#121214";
-    QString treeHover = isLight ? "#f1f5f9" : "#1f1f23";
 
-    QString pmStyle = QString(
-        "QMainWindow { background-color: %1; color: %3; font-family: 'Inter', 'Segoe UI', sans-serif; }"
-        "QMenuBar { background-color: %9; color: %4; border-bottom: 1px solid %5; padding: 4px; }"
-        "QMenuBar::item:selected { background-color: %6; color: white; border-radius: 4px; }"
-        
-        "QToolBar#VerticalToolbar {"
-        "   background-color: %8;"
-        "   border-right: 1px solid %5;"
-        "   padding: 15px 8px;"
-        "   spacing: 12px;"
+    const QString toolbarBg = isLight ? "#f1f5f9" : "#08080c";
+    const QString headerBg  = isLight ? "#e8ecf0" : "#0e0e12";
+    const QString inputBg   = isLight ? "#ffffff"  : "#111118";
+    const QString treeHover = isLight ? "#e8ecf4"  : "#1c1c24";
+    const QString cardBg    = isLight ? "#f8fafc"  : "#13131a";
+    const QString sectionFg = isLight ? "#64748b"  : "#52525b";
+
+    setStyleSheet(QString(
+        // ── Window & MenuBar ───────────────────────────────────────
+        "QMainWindow { background:%1; color:%2; }"
+
+        "QMenuBar {"
+        "  background:%8; color:%3; border-bottom:1px solid %5;"
+        "  padding:2px 0; font-size:13px;"
         "}"
-        "QToolBar#VerticalToolbar QToolButton {"
-        "   background: transparent;"
-        "   border: none;"
-        "   padding: 10px;"
-        "   color: %4;"
-        "   transition: color 0.2s;"
-        "}"
-        "QToolBar#VerticalToolbar QToolButton:hover { color: %6; }"
-        "QToolBar#VerticalToolbar QToolButton:checked { color: %7; }"
+        "QMenuBar::item { padding:6px 12px; border-radius:4px; }"
+        "QMenuBar::item:selected { background:%4; color:#fff; }"
+        "QMenu { background:%8; color:%2; border:1px solid %5;"
+        "        padding:4px; border-radius:8px; }"
+        "QMenu::item { padding:7px 20px; border-radius:4px; }"
+        "QMenu::item:selected { background:%4; color:#fff; }"
+        "QMenu::separator { height:1px; background:%5; margin:4px 8px; }"
 
-        "QWidget#ProjectFilesPanel { background-color: %2; border-right: 1px solid %5; }"
+        // ── Sidebar (Explorer) ─────────────────────────────────────
+        "QWidget#ProjectFilesPanel {"
+        "  background:%6; border-right:1px solid %5;"
+        "}"
+        "QWidget#ExplorerHeader {"
+        "  background:%7; border-bottom:1px solid %5; min-height:38px; max-height:38px;"
+        "}"
+
         "QLabel#PanelHeader {"
-        "   color: %6; font-size: 10px; font-weight: 800; padding: 6px 12px; "
-        "   letter-spacing: 2px; text-transform: uppercase; background: %9;"
+        "  color:%3; font-size:10px; font-weight:800; letter-spacing:2px;"
+        "  background:transparent; padding:0;"
         "}"
+        "QPushButton#ExplorerActionBtn {"
+        "  background:transparent; color:%3; border:none; border-radius:5px;"
+        "  font-size:14px; font-weight:bold; padding:0;"
+        "}"
+        "QPushButton#ExplorerActionBtn:hover { background:%9; color:%4; }"
 
         "QLineEdit#ProjectSearch {"
-        "   background-color: %10; color: %3; border: none; border-bottom: 1px solid %5;"
-        "   padding: 6px 12px; margin: 0; font-size: 12px;"
+        "  background:%10; color:%2; border:none; border-bottom:1px solid %5;"
+        "  padding:7px 12px; font-size:12px;"
         "}"
-        "QLineEdit#ProjectSearch:focus { border-bottom: 2px solid %6; background: %10; }"
+        "QLineEdit#ProjectSearch:focus { border-bottom:2px solid %4; }"
 
-        "QTreeWidget#ProjectTree { background-color: transparent; border: none; outline: 0; color: %4; }"
-        "QTreeWidget#ProjectTree::item { padding: 6px 10px; border-radius: 4px; margin: 1px 5px; }"
-        "QTreeWidget#ProjectTree::item:hover { background-color: %11; color: %3; }"
-        "QTreeWidget#ProjectTree::item:selected { background-color: %6; color: white; }"
-
-        "QWidget#LauncherArea { background-color: %1; }"
-        "QLabel#WelcomeTitle { color: %3; font-size: 36px; font-weight: 900; letter-spacing: -1px; }"
-        "QLabel#WelcomeSubtitle { color: %4; font-size: 16px; font-weight: 400; margin-top: -5px; }"
-
-        "LauncherTile {"
-        "   background: %10;"
-        "   border: 1px solid %5;"
-        "   border-radius: 14px;"
-        "   min-width: 280px;"
-        "   min-height: 100px;"
-        "   margin: 4px;"
+        "QTreeWidget#ProjectTree {"
+        "  background:transparent; border:none; outline:0;"
+        "  color:%3; font-size:13px;"
         "}"
-        "LauncherTile:hover {"
-        "   border: 1px solid %6;"
+        "QTreeWidget#ProjectTree::item {"
+        "  padding:5px 8px; border-radius:5px; margin:1px 4px;"
         "}"
-        "QLabel#TileTitle { color: %3; font-size: 16px; font-weight: 700; }"
-        "QLabel#TileDesc { color: %4; font-size: 13px; line-height: 1.5; }"
-        
-        "QStatusBar { background-color: %9; color: %4; border-top: 1px solid %5; padding: 5px; }"
-        "QSplitter::handle { background-color: %5; width: 1px; }"
+        "QTreeWidget#ProjectTree::item:hover { background:%11; }"
+        "QTreeWidget#ProjectTree::item:selected { background:%4; color:#fff; }"
+        "QTreeWidget#ProjectTree::branch:open:has-children {"
+        "  image: url(:/icons/arrow_down.svg);"
+        "}"
+        "QTreeWidget#ProjectTree::branch:closed:has-children {"
+        "  image: url(:/icons/arrow_right.svg);"
+        "}"
+
+        // ── Launcher Area & Hero ─────────────────────────────────
+        "QScrollArea#LauncherScrollArea { background:%1; border:none; }"
+        "QWidget#LauncherArea { background:%1; }"
+
+        "QLabel#WelcomeTitle {"
+        "  color:%2; font-size:30px; font-weight:900; letter-spacing:-0.5px;"
+        "  background:transparent;"
+        "}"
+        "QLabel#WelcomeSubtitle {"
+        "  color:%3; font-size:14px; font-weight:400; background:transparent;"
+        "}"
+        "QLabel#VersionChip {"
+        "  background:%10; color:%3; font-size:11px; font-weight:600;"
+        "  border:1px solid %5; border-radius:10px; padding:2px 10px;"
+        "}"
+
+        // CTA Buttons
+        "QPushButton#CtaButtonPrimary {"
+        "  background:%4; color:#fff; border:none; border-radius:8px;"
+        "  font-size:13px; font-weight:600; padding:0 18px;"
+        "}"
+        "QPushButton#CtaButtonPrimary:hover { background:%4; opacity:0.9; }"
+        "QPushButton#CtaButtonSecondary {"
+        "  background:%10; color:%2; border:1px solid %5; border-radius:8px;"
+        "  font-size:13px; font-weight:500; padding:0 18px;"
+        "}"
+        "QPushButton#CtaButtonSecondary:hover { border-color:%4; color:%4; }"
+
+        // Section headers
+        "QLabel#SectionHeader {"
+        "  color:%12; font-size:10px; font-weight:700; letter-spacing:2px;"
+        "  text-transform:uppercase; background:transparent; padding:4px 0 2px 0;"
+        "}"
+
+        // LauncherTile (render based on theme)
+        "LauncherTile { min-width:260px; min-height:82px; }"
+        "QLabel#TileTitle { color:%2; font-size:14px; font-weight:700; background:transparent; }"
+        "QLabel#TileDesc  { color:%3; font-size:11px; background:transparent; }"
+        "QLabel#TileIcon  { background:transparent; }"
+
+        // Collapsible Section
+        "QWidget#CollapsibleHeader {"
+        "  background:%6; border:1px solid %5; border-radius:9px;"
+        "}"
+        "QLabel#CollapsibleTitle {"
+        "  color:%3; font-size:10px; font-weight:700; letter-spacing:2px; background:transparent;"
+        "}"
+
+        // Version footer
+        "QLabel#VersionFooter {"
+        "  color:%12; font-size:11px; padding:8px 0;"
+        "  background:transparent;"
+        "}"
+
+        // Status bar
+        "QStatusBar { background:%7; color:%3; border-top:1px solid %5; font-size:12px; }"
+
+        // Splitter
+        "QSplitter::handle { background:%5; width:1px; }"
+
+        // ScrollBar (slim)
+        "QScrollBar:vertical { background:transparent; width:6px; margin:0; }"
+        "QScrollBar::handle:vertical { background:%5; border-radius:3px; min-height:30px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
     )
     .arg(windowBg)       // 1
-    .arg(panelBg)        // 2
-    .arg(textColor)      // 3
-    .arg(textSecondary)  // 4
+    .arg(textPrimary)    // 2
+    .arg(textSecondary)  // 3
+    .arg(accent)         // 4
     .arg(border)         // 5
-    .arg(accent)         // 6
-    .arg(accentHover)    // 7
+    .arg(panelBg)        // 6
+    .arg(headerBg)       // 7
     .arg(toolbarBg)      // 8
-    .arg(headerBg)       // 9
+    .arg(treeHover)      // 9
     .arg(inputBg)        // 10
-    .arg(treeHover);     // 11
-
-    setStyleSheet(pmStyle);
-    
-    // Also update tiles manually since they use some hardcoded styles in their constructor
-    for (auto* tile : m_launcherTiles) {
-        tile->setStyleSheet(QString(
-            "LauncherTile { background: %1; border: 1px solid %2; border-radius: 14px; }"
-            "LauncherTile:hover { border: 1px solid %3; }"
-            "QLabel#TileTitle { color: %4; }"
-            "QLabel#TileDesc { color: %5; }"
-        ).arg(inputBg, border, accent, textColor, textSecondary));
-    }
+    .arg(treeHover)      // 11
+    .arg(sectionFg)      // 12
+    );
 }
 
 
@@ -2603,81 +2797,226 @@ QString ProjectManager::resolveProjectPath(const QString& inputPath, const QStri
     return pFile;
 }
 
-// ============ LauncherTile Implementation ============
+// ─────────────────────────────────────────────────────────────────────────────
+// LauncherTile — full paintEvent rendering with per-tile accent color + hover
+// ─────────────────────────────────────────────────────────────────────────────
 
-LauncherTile::LauncherTile(const QString& iconPath, const QString& title, 
-                           const QString& description, QWidget* parent)
-    : QFrame(parent) {
+LauncherTile::LauncherTile(const QString& iconPath, const QString& title,
+                           const QString& description,
+                           const QColor& accentColor,
+                           const QString& /*category*/,
+                           QWidget* parent)
+    : QWidget(parent), m_accentColor(accentColor), m_hovered(false)
+{
     setObjectName("LauncherTile");
     setCursor(Qt::PointingHandCursor);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setAttribute(Qt::WA_StyledBackground, false);
 
-    QHBoxLayout* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(16, 14, 16, 14);
-    layout->setSpacing(16);
+    QHBoxLayout* lay = new QHBoxLayout(this);
+    lay->setContentsMargins(14, 10, 14, 10);
+    lay->setSpacing(14);
 
-    // Icon with subtle round background
     m_iconLabel = new QLabel;
     m_iconLabel->setObjectName("TileIcon");
-    m_iconLabel->setFixedSize(56, 56);
+    m_iconLabel->setFixedSize(44, 44);
     m_iconLabel->setAlignment(Qt::AlignCenter);
-    m_iconLabel->setStyleSheet(
-        "background-color: #1a1c22;"
-        "border: 1px solid #2d2d30;"
-        "border-radius: 16px;"
-        "padding: 8px;"
-    );
-    layout->addWidget(m_iconLabel);
+    m_iconLabel->setStyleSheet("background:transparent;");
+    lay->addWidget(m_iconLabel);
 
-    // Text container
-    QVBoxLayout* textLayout = new QVBoxLayout;
-    textLayout->setSpacing(4);
-    textLayout->setContentsMargins(0, 4, 0, 4);
+    QVBoxLayout* textLay = new QVBoxLayout;
+    textLay->setSpacing(3);
+    textLay->setContentsMargins(0, 3, 0, 3);
 
     m_titleLabel = new QLabel(title);
     m_titleLabel->setObjectName("TileTitle");
-    textLayout->addWidget(m_titleLabel);
+    m_titleLabel->setStyleSheet("background:transparent;");
+    textLay->addWidget(m_titleLabel);
 
     m_descLabel = new QLabel(description);
     m_descLabel->setObjectName("TileDesc");
     m_descLabel->setWordWrap(true);
-    textLayout->addWidget(m_descLabel);
+    m_descLabel->setStyleSheet("background:transparent;");
+    textLay->addWidget(m_descLabel);
 
-    textLayout->addStretch();
-    layout->addLayout(textLayout, 1);
-
-    // Small arrow indicator on the right
-    QLabel* arrowLabel = new QLabel("›");
-    arrowLabel->setStyleSheet("color: #3c3c3c; font-size: 22px; font-weight: bold; background: transparent;");
-    arrowLabel->setAlignment(Qt::AlignCenter);
-    layout->addWidget(arrowLabel);
-
+    textLay->addStretch();
+    lay->addLayout(textLay, 1);
     Q_UNUSED(iconPath)
 }
 
-void LauncherTile::setIcon(const QIcon& icon) {
-    m_iconLabel->setPixmap(icon.pixmap(40, 40));
-}
+void LauncherTile::paintEvent(QPaintEvent* event) {
+    Q_UNUSED(event)
+    auto* theme = ThemeManager::theme();
+    if (!theme) return;
 
-void LauncherTile::setIconFromChar(const QString& character, const QColor& bgColor) {
-    m_iconLabel->setText(character);
-    m_iconLabel->setStyleSheet(QString(
-        "background-color: %1; "
-        "border-radius: 12px; "
-        "font-size: 22px; "
-        "color: white;"
-    ).arg(bgColor.name()));
-}
+    const bool isLight = theme->type() == PCBTheme::Light;
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
 
-void LauncherTile::mousePressEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton && isEnabled()) {
-        emit clicked();
+    const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    
+    // Premium Shadow
+    QPainterPath shadowPath;
+    shadowPath.addRoundedRect(r.adjusted(1, 1, 1, 1), 12, 12);
+    p.fillPath(shadowPath, isLight ? QColor(0, 0, 0, 35) : QColor(0, 0, 0, 60));
+
+    QPainterPath path;
+    path.addRoundedRect(r, 11, 11);
+
+    // Background gradient
+    QLinearGradient bg(0, 0, 0, height());
+    if (m_hovered) {
+        QColor hoverC = m_accentColor;
+        hoverC.setAlpha(isLight ? 25 : 22);
+        bg.setColorAt(0, hoverC);
+        bg.setColorAt(1, isLight ? Qt::white : QColor(15, 15, 22));
+    } else {
+        bg.setColorAt(0, isLight ? Qt::white : QColor(22, 22, 30));
+        bg.setColorAt(1, isLight ? Qt::white : QColor(15, 15, 22));
+    }
+    p.setPen(Qt::NoPen);
+    p.setBrush(bg);
+    p.drawPath(path);
+
+    // Top accent stripe (3px, clipped to rounded top)
+    p.setClipPath(path);
+    p.setBrush(m_accentColor);
+    p.drawRect(QRectF(r.left(), r.top(), r.width(), 3));
+    p.setClipping(false);
+
+    // Icon area background (accent at low opacity)
+    if (m_iconLabel && m_iconLabel->isVisible()) {
+        QRectF iconR = m_iconLabel->geometry().adjusted(-4, -4, 4, 4);
+        QColor iconBg = m_accentColor;
+        iconBg.setAlpha(isLight ? 25 : 35);
+        p.setBrush(iconBg);
+        p.setPen(Qt::NoPen);
+        p.drawRoundedRect(iconR, 10, 10);
+    }
+
+    // Border
+    QColor borderC = m_hovered
+        ? m_accentColor
+        : theme->panelBorder();
+    
+    if (!m_hovered) borderC.setAlpha(isLight ? 100 : 40);
+
+    p.setPen(QPen(borderC, m_hovered ? 1.2 : 1.0));
+    p.setBrush(Qt::NoBrush);
+    p.drawPath(path);
+
+    // Hover radial glow
+    if (m_hovered) {
+        p.setClipPath(path);
+        QRadialGradient glow(QPointF(width() * 0.5, height() * 0.5), width() * 0.8);
+        QColor glowC = m_accentColor;
+        glowC.setAlpha(isLight ? 15 : 12);
+        glow.setColorAt(0, glowC);
+        glow.setColorAt(1, Qt::transparent);
+        p.setPen(Qt::NoPen);
+        p.setBrush(glow);
+        p.drawRect(rect());
+        p.setClipping(false);
     }
 }
 
-void LauncherTile::enterEvent(QEnterEvent*) {
-    // Hover effect handled by CSS
+void LauncherTile::setIcon(const QIcon& icon) {
+    if (m_iconLabel) m_iconLabel->setPixmap(icon.pixmap(32, 32));
 }
 
-void LauncherTile::leaveEvent(QEvent*) {
-    // Leave effect handled by CSS
+void LauncherTile::setIconFromChar(const QString& character, const QColor& /*bgColor*/) {
+    if (m_iconLabel) {
+        m_iconLabel->setText(character);
+        m_iconLabel->setStyleSheet("background:transparent; font-size:20px; color:#fff;");
+    }
+}
+
+void LauncherTile::setAccentColor(const QColor& color) {
+    m_accentColor = color;
+    update();
+}
+
+void LauncherTile::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && isEnabled())
+        emit clicked();
+}
+
+void LauncherTile::enterEvent(QEnterEvent*) { m_hovered = true;  update(); }
+void LauncherTile::leaveEvent(QEvent*)      { m_hovered = false; update(); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CollapsibleSection — header with arrow/badge + grid of tiles
+// ─────────────────────────────────────────────────────────────────────────────
+
+CollapsibleSection::CollapsibleSection(const QString& title, const QColor& accentColor,
+                                       bool startCollapsed, QWidget* parent)
+    : QWidget(parent), m_collapsed(startCollapsed), m_hovered(false), m_accentColor(accentColor)
+{
+    QVBoxLayout* mainLay = new QVBoxLayout(this);
+    mainLay->setContentsMargins(0, 0, 0, 0);
+    mainLay->setSpacing(0);
+
+    // ── Clickable header ──────────────────────────────────────
+    m_header = new QWidget;
+    m_header->setObjectName("CollapsibleHeader");
+    m_header->setCursor(Qt::PointingHandCursor);
+    m_header->setFixedHeight(44);
+    m_header->installEventFilter(this);
+
+    QHBoxLayout* hdrLay = new QHBoxLayout(m_header);
+    hdrLay->setContentsMargins(14, 0, 14, 0);
+    hdrLay->setSpacing(10);
+
+    // Left accent pip
+    QFrame* pip = new QFrame;
+    pip->setFixedSize(3, 22);
+    pip->setStyleSheet(QString("background:%1; border-radius:2px;").arg(accentColor.name()));
+    hdrLay->addWidget(pip);
+
+    m_arrowLabel = new QLabel(m_collapsed ? "▶" : "▼");
+    m_arrowLabel->setStyleSheet(
+        QString("color:%1; font-size:8px; background:transparent; font-weight:bold;").arg(accentColor.name())
+    );
+    m_arrowLabel->setFixedWidth(14);
+    hdrLay->addWidget(m_arrowLabel);
+
+    QLabel* titleLbl = new QLabel(title.toUpper());
+    titleLbl->setObjectName("CollapsibleTitle");
+    hdrLay->addWidget(titleLbl, 1);
+
+    m_countBadge = new QLabel("0");
+    m_countBadge->setFixedSize(30, 18);
+    m_countBadge->setAlignment(Qt::AlignCenter);
+    m_countBadge->setStyleSheet(QString(
+        "background:%1; color:#fff; font-size:10px; font-weight:700;"
+        "border-radius:9px;"
+    ).arg(accentColor.name()));
+    hdrLay->addWidget(m_countBadge);
+
+    mainLay->addWidget(m_header);
+
+    // ── Content (grid) ────────────────────────────────────────
+    m_content = new QWidget;
+    m_content->setStyleSheet("background:transparent;");
+    m_grid = new QGridLayout(m_content);
+    m_grid->setSpacing(14);
+    m_grid->setContentsMargins(0, 8, 0, 8);
+    m_grid->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    m_content->setVisible(!m_collapsed);
+    mainLay->addWidget(m_content);
+}
+
+bool CollapsibleSection::eventFilter(QObject* obj, QEvent* event) {
+    if (obj == m_header && event->type() == QEvent::MouseButtonPress) {
+        m_collapsed = !m_collapsed;
+        m_arrowLabel->setText(m_collapsed ? "▶" : "▼");
+        m_content->setVisible(!m_collapsed);
+        emit toggled(m_collapsed);
+        return true;
+    }
+    return QWidget::eventFilter(obj, event);
+}
+
+void CollapsibleSection::updateCount(int n) {
+    if (m_countBadge) m_countBadge->setText(QString::number(n));
 }

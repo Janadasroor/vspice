@@ -20,6 +20,10 @@
 #include <QPainter>
 #include <QGraphicsScene>
 #include <QFileDialog>
+#include <QScrollBar>
+#include <QDir>
+#include "theme_manager.h"
+#include "theme.h"
 
 TemplateGalleryWidget::TemplateGalleryWidget(QWidget* parent)
     : QWidget(parent)
@@ -51,55 +55,44 @@ QString TemplateGalleryWidget::templatesDirectory() const {
 }
 
 void TemplateGalleryWidget::setupUi() {
-    setStyleSheet("background: #0a0a0c;");
-    
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(20, 20, 20, 20);
     mainLayout->setSpacing(16);
     
-    QLabel* titleLabel = new QLabel("Circuit Templates", this);
-    titleLabel->setStyleSheet("font-size: 24px; font-weight: bold; color: #e6edf3;");
-    mainLayout->addWidget(titleLabel);
+    m_titleLabel = new QLabel("Circuit Templates", this);
+    m_titleLabel->setObjectName("GalleryTitle");
+    mainLayout->addWidget(m_titleLabel);
     
-    QLabel* subtitleLabel = new QLabel("Start with 25+ ready-to-simulate circuits", this);
-    subtitleLabel->setStyleSheet("font-size: 14px; color: #8b949e;");
-    mainLayout->addWidget(subtitleLabel);
+    m_subtitleLabel = new QLabel("Start with 25+ ready-to-simulate circuits", this);
+    m_subtitleLabel->setObjectName("GallerySubtitle");
+    mainLayout->addWidget(m_subtitleLabel);
     
     m_searchEdit = new QLineEdit(this);
     m_searchEdit->setPlaceholderText("Search templates...");
-    m_searchEdit->setStyleSheet(
-        "QLineEdit { background: #161b22; border: 1px solid #30363d; border-radius: 6px; "
-        "padding: 10px; color: #e6edf3; font-size: 14px; } "
-        "QLineEdit:focus { border-color: #58a6ff; }"
-    );
+    m_searchEdit->setObjectName("GallerySearch");
     m_searchEdit->setMinimumHeight(40);
     mainLayout->addWidget(m_searchEdit);
     
     m_categoryTabs = new QTabWidget(this);
-    m_categoryTabs->setStyleSheet(
-        "QTabWidget::pane { background: transparent; border: none; } "
-        "QTabBar::tab { background: #161b22; color: #8b949e; padding: 8px 16px; border: none; } "
-        "QTabBar::tab:selected { background: #21262d; color: #58a6ff; } "
-        "QTabBar::tab:hover { background: #21262d; }"
-    );
+    m_categoryTabs->setObjectName("GalleryTabs");
     
-    m_categoryTabs->addTab(new QLabel("All"), "All");
-    m_categoryTabs->addTab(new QLabel("Amplifiers"), "amplifiers");
-    m_categoryTabs->addTab(new QLabel("Filters"), "filters");
-    m_categoryTabs->addTab(new QLabel("Oscillators"), "oscillators");
-    m_categoryTabs->addTab(new QLabel("Power"), "power");
-    m_categoryTabs->addTab(new QLabel("Timers"), "timers");
-    m_categoryTabs->addTab(new QLabel("Basics"), "basics");
+    m_categoryTabs->addTab(new QWidget(), "All");
+    m_categoryTabs->addTab(new QWidget(), "Amplifiers");
+    m_categoryTabs->addTab(new QWidget(), "Filters");
+    m_categoryTabs->addTab(new QWidget(), "Oscillators");
+    m_categoryTabs->addTab(new QWidget(), "Power");
+    m_categoryTabs->addTab(new QWidget(), "Timers");
+    m_categoryTabs->addTab(new QWidget(), "Basics");
     
     mainLayout->addWidget(m_categoryTabs);
     
     m_scrollArea = new QScrollArea(this);
-    m_scrollArea->setStyleSheet("QScrollArea { background: transparent; border: none; }");
+    m_scrollArea->setObjectName("GalleryScrollArea");
     m_scrollArea->setWidgetResizable(true);
     m_scrollArea->setFrameShape(QFrame::NoFrame);
     
     m_cardContainer = new QWidget;
-    m_cardContainer->setStyleSheet("background: transparent;");
+    m_cardContainer->setObjectName("GalleryCardContainer");
     
     m_cardGrid = new QGridLayout(m_cardContainer);
     m_cardGrid->setSpacing(16);
@@ -110,6 +103,60 @@ void TemplateGalleryWidget::setupUi() {
     
     connect(m_searchEdit, &QLineEdit::textChanged, this, &TemplateGalleryWidget::onSearchChanged);
     connect(m_categoryTabs, &QTabWidget::currentChanged, this, &TemplateGalleryWidget::onCategoryChanged);
+}
+
+void TemplateGalleryWidget::updateTheme() {
+    auto* theme = ThemeManager::theme();
+    if (!theme) return;
+
+    const bool isLight = theme->type() == PCBTheme::Light;
+    const QString windowBg    = isLight ? "#f1f5f9" : theme->windowBackground().name();
+    const QString textPrimary = theme->textColor().name();
+    const QString textSec     = theme->textSecondary().name();
+    const QString accent      = theme->accentColor().name();
+    const QString border      = theme->panelBorder().name();
+    const QString inputBg     = isLight ? "#ffffff" : "#161b22";
+    const QString cardBg      = isLight ? "#ffffff" : "#161b22";
+
+    setStyleSheet(QString(
+        "TemplateGalleryWidget { background: %1; }"
+        "QLabel#GalleryTitle { color: %2; font-size: 24px; font-weight: bold; background:transparent; }"
+        "QLabel#GallerySubtitle { color: %3; font-size: 14px; background:transparent; }"
+        
+        "QLineEdit#GallerySearch {"
+        "  background: %7; border: 1px solid %5; border-radius: 6px;"
+        "  padding: 10px; color: %2; font-size: 14px;"
+        "}"
+        "QLineEdit#GallerySearch:focus { border-color: %4; }"
+
+        "QTabWidget#GalleryTabs::pane { background: transparent; border: none; }"
+        "QTabBar::tab {"
+        "  background: %7; color: %3; padding: 8px 16px; border: 1px solid %5;"
+        "  border-bottom: none; border-top-left-radius: 6px; border-top-right-radius: 6px;"
+        "  margin-right: 2px;"
+        "}"
+        "QTabBar::tab:selected { background: %4; color: #fff; border-color: %4; }"
+        "QTabBar::tab:hover:!selected { background: %8; }"
+
+        "QScrollArea#GalleryScrollArea { background: transparent; border: none; }"
+        "QWidget#GalleryCardContainer { background: transparent; }"
+        
+        "QScrollBar:vertical { background:transparent; width:8px; }"
+        "QScrollBar::handle:vertical { background:%5; border-radius:4px; min-height:20px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
+    )
+    .arg(windowBg)       // 1
+    .arg(textPrimary)    // 2
+    .arg(textSec)        // 3
+    .arg(accent)         // 4
+    .arg(border)         // 5
+    .arg(cardBg)         // 6
+    .arg(inputBg)        // 7
+    .arg(isLight ? "#f1f5f9" : "#21262d") // 8
+    );
+    
+    // Refresh cards
+    populateGallery();
 }
 
 void TemplateGalleryWidget::loadTemplates() {
@@ -172,12 +219,20 @@ void TemplateGalleryWidget::populateGallery() {
     int col = 0, row = 0;
     int maxCols = 4;
     
+    auto* theme = ThemeManager::theme();
+    const bool isLight = theme ? theme->type() == PCBTheme::Light : false;
+    const QString cardBg = isLight ? "#ffffff" : "#161b22";
+    const QString cardBorder = theme ? theme->panelBorder().name() : "#30363d";
+    const QString textPrimary = theme ? theme->textColor().name() : "#e6edf3";
+    const QString textSec = theme ? theme->textSecondary().name() : "#8b949e";
+    const QString accent = theme ? theme->accentColor().name() : "#58a6ff";
+
     for (const Template& tpl : m_filteredTemplates) {
         auto* card = new QFrame(this);
-        card->setStyleSheet(
-            "QFrame { background: #161b22; border: 1px solid #30363d; border-radius: 8px; "
-            "padding: 12px; } QFrame:hover { border-color: #58a6ff; }"
-        );
+        card->setStyleSheet(QString(
+            "QFrame { background: %1; border: 1px solid %2; border-radius: 8px; padding: 12px; }"
+            "QFrame:hover { border-color: %3; }"
+        ).arg(cardBg).arg(cardBorder).arg(accent));
         card->setFixedSize(220, 260);
         
         auto* cardLayout = new QVBoxLayout(card);
@@ -185,29 +240,32 @@ void TemplateGalleryWidget::populateGallery() {
         
         QLabel* thumbLabel = new QLabel(card);
         thumbLabel->setFixedSize(196, 120);
-        thumbLabel->setStyleSheet("background: #21262d; border-radius: 4px;");
+        thumbLabel->setStyleSheet(QString("background: %1; border-radius: 4px;").arg(isLight ? "#f1f5f9" : "#21262d"));
         thumbLabel->setAlignment(Qt::AlignCenter);
         
         if (QFile::exists(tpl.thumbnailPath)) {
             thumbLabel->setPixmap(QPixmap(tpl.thumbnailPath).scaled(196, 120, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         } else {
             thumbLabel->setText("📄");
-            thumbLabel->setStyleSheet("font-size: 48px; background: #21262d; border-radius: 4px; color: #8b949e;");
+            thumbLabel->setStyleSheet(QString("font-size: 48px; background: %1; border-radius: 4px; color: %2;")
+                                      .arg(isLight ? "#e2e8f0" : "#21262d")
+                                      .arg(textSec));
         }
         
         cardLayout->addWidget(thumbLabel);
         
         QLabel* nameLabel = new QLabel(tpl.name, card);
-        nameLabel->setStyleSheet("font-size: 14px; font-weight: bold; color: #e6edf3;");
+        nameLabel->setStyleSheet(QString("font-size: 14px; font-weight: bold; color: %1;").arg(textPrimary));
         nameLabel->setWordWrap(true);
         cardLayout->addWidget(nameLabel);
         
         QLabel* catLabel = new QLabel(tpl.category, card);
-        catLabel->setStyleSheet("font-size: 11px; color: #58a6ff; background: #21262d; padding: 2px 8px; border-radius: 10px;");
+        catLabel->setStyleSheet(QString("font-size: 11px; color: %1; background: %2; padding: 2px 8px; border-radius: 10px;")
+                                .arg(accent).arg(isLight ? "#e0f2fe" : "#21262d"));
         cardLayout->addWidget(catLabel);
         
         QLabel* descLabel = new QLabel(tpl.description, card);
-        descLabel->setStyleSheet("font-size: 11px; color: #8b949e;");
+        descLabel->setStyleSheet(QString("font-size: 11px; color: %1;").arg(textSec));
         descLabel->setWordWrap(true);
         descLabel->setMaximumHeight(40);
         cardLayout->addWidget(descLabel);

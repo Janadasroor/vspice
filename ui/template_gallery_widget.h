@@ -38,6 +38,7 @@ public:
 
     void loadTemplates();
     void setProjectDirectory(const QString& dir);
+    void updateTheme();
 
 signals:
     void templateSelected(const QString& schematicPath, const QString& netlistPath);
@@ -68,6 +69,8 @@ private:
     QWidget* m_cardContainer;
     QGridLayout* m_cardGrid;
     QMap<QString, QPushButton*> m_tryItButtons;
+    QLabel* m_titleLabel;
+    QLabel* m_subtitleLabel;
 };
 
 #endif // TEMPLATE_GALLERY_WIDGET_H

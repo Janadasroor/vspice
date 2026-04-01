@@ -25,9 +25,12 @@
 #include <QList>
 #include <QStatusBar>
 #include <QSplitter>
+#include <QPainter>
+#include <QPainterPath>
 #include "recent_projects.h"
 
-class LauncherTile; // Forward declaration
+class LauncherTile;
+class CollapsibleSection;
 
 class ProjectManager : public QMainWindow {
     Q_OBJECT
@@ -68,7 +71,6 @@ private slots:
 protected:
     void closeEvent(QCloseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
-    
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragMoveEvent(QDragMoveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
@@ -84,9 +86,9 @@ private:
 
     void launchSchematicEditor(const QString& projectPath = QString());
     void populateProjectTree(const QString& projectPath);
-    void addLauncherTile(QGridLayout* grid, int row, int col, 
-                         const QString& title, const QString& desc, 
-                         const QString& iconPath, 
+    void addLauncherTile(QGridLayout* grid, int row, int col,
+                         const QString& title, const QString& desc,
+                         const QString& iconPath,
                          void (ProjectManager::*slot)());
     QIcon createDocumentIcon(const QColor& accentColor, const QString& label) const;
     QIcon createFolderIcon(bool open = false) const;
@@ -96,23 +98,28 @@ private:
     // UI components
     QWidget* m_centralWidget;
     QSplitter* m_splitter;
-    QGridLayout* m_launcherGrid;
     QWidget* m_launcherScrollContent;
-    
+
+    // Three categorized grids
+    QGridLayout* m_launcherGrid;   // Design + Utility tiles
+    QGridLayout* m_importGrid;     // Import tiles (inside collapsible section)
+
     // Project Files Panel (Left)
     QWidget* m_projectPanel;
     QTreeWidget* m_projectTree;
-    
+
     // Launcher Area (Right)
     QWidget* m_launcherArea;
-    QList<LauncherTile*> m_launcherTiles;
+    QList<LauncherTile*> m_launcherTiles;   // Design + Utility tiles
+    QList<LauncherTile*> m_importTiles;     // Import tiles
+    CollapsibleSection* m_importSection;    // Collapsible import section
 
     // Current project state
     QStringList m_workspaceFolders;
     QString m_workspaceFilePath;
     bool m_workspaceDirty;
     QString m_pendingTemplateFile;
-    
+
     // Core methods
     void refreshProjectTree();
     void addFolderToTree(const QString& folderPath, class QTreeWidgetItem* parent = nullptr);
@@ -129,18 +136,23 @@ private:
     QAction* m_addFolderAction;
     QAction* m_exitAction;
     QAction* m_aboutAction;
-
 };
 
-// Launcher Tile - Large button with icon and description
-class LauncherTile : public QFrame {
+// ─────────────────────────────────────────────────────────────────────────────
+// LauncherTile — card with paintEvent-rendered accent stripe + hover glow
+// ─────────────────────────────────────────────────────────────────────────────
+class LauncherTile : public QWidget {
     Q_OBJECT
 public:
-    LauncherTile(const QString& iconPath, const QString& title, 
-                 const QString& description, QWidget* parent = nullptr);
-    
+    LauncherTile(const QString& iconPath, const QString& title,
+                 const QString& description,
+                 const QColor& accentColor = QColor("#3b82f6"),
+                 const QString& category = QString(),
+                 QWidget* parent = nullptr);
+
     void setIcon(const QIcon& icon);
     void setIconFromChar(const QString& character, const QColor& bgColor);
+    void setAccentColor(const QColor& color);
 
 signals:
     void clicked();
@@ -149,11 +161,47 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void enterEvent(QEnterEvent* event) override;
     void leaveEvent(QEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
 
 private:
     QLabel* m_iconLabel;
     QLabel* m_titleLabel;
     QLabel* m_descLabel;
+    QColor  m_accentColor;
+    bool    m_hovered;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CollapsibleSection — clickable header that shows/hides a grid of tiles
+// ─────────────────────────────────────────────────────────────────────────────
+class CollapsibleSection : public QWidget {
+    Q_OBJECT
+public:
+    CollapsibleSection(const QString& title, const QColor& accentColor,
+                       bool startCollapsed = true, QWidget* parent = nullptr);
+
+    QGridLayout* grid()  const { return m_grid; }
+    QWidget*     content() const { return m_content; }
+    QList<LauncherTile*>& tiles() { return m_tiles; }
+    bool isCollapsed() const { return m_collapsed; }
+    void updateCount(int n);
+
+signals:
+    void toggled(bool collapsed);
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override;
+
+private:
+    QWidget*     m_header;
+    QWidget*     m_content;
+    QGridLayout* m_grid;
+    QLabel*      m_arrowLabel;
+    QLabel*      m_countBadge;
+    bool         m_collapsed;
+    bool         m_hovered;
+    QColor       m_accentColor;
+    QList<LauncherTile*> m_tiles;
 };
 
 #endif // PROJECTMANAGER_H
