@@ -41,6 +41,8 @@ private slots:
     void onFileContextMenu(const QPoint& pos);
     void onFilterChanged(const QString& text);
     void onWorkspaceChanged(int index);
+    void onTimelineClicked();
+    void onCompareBranchesClicked();
 
 private:
     void setupUi();
@@ -93,6 +95,10 @@ private:
 
     // Status
     QLabel* m_statusLabel;
+
+    // Version control actions
+    QPushButton* m_timelineBtn;
+    QPushButton* m_compareBranchesBtn;
 
     QString m_filterText;
 };

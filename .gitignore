@@ -81,6 +81,7 @@ opencode.json
 ui-map/*
 ui-ux/*
 .qwen
+QWEN.md
 tests/DATA/*
 tests/docs/*
 viospicelib/*

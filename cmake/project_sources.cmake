@@ -104,6 +104,8 @@ set(SCHEMATIC_SOURCES
     schematic/ui/schematic_components_widget.h
     schematic/ui/library_browser_dialog.cpp
     schematic/ui/library_browser_dialog.h
+    ui/quick_open_dialog.cpp
+    ui/quick_open_dialog.h
     schematic/dialogs/component_properties_dialog.cpp
     schematic/dialogs/component_properties_dialog.h
     schematic/dialogs/generic_symbol_properties_dialog.cpp
@@ -476,6 +478,10 @@ set(UI_SOURCES
     ui/diff_viewer_dialog.h
     ui/branch_dialog.cpp
     ui/branch_dialog.h
+    ui/schematic_timeline_view.cpp
+    ui/schematic_timeline_view.h
+    ui/branch_comparison_dialog.cpp
+    ui/branch_comparison_dialog.h
 
     core/ui/project_audit_dialog.cpp
     ui/calculator_dialog.cpp

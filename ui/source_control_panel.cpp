@@ -1,5 +1,7 @@
 #include "source_control_panel.h"
 #include "schematic/dialogs/schematic_diff_dialog.h"
+#include "schematic_timeline_view.h"
+#include "branch_comparison_dialog.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include "diff_viewer_dialog.h"
@@ -24,6 +26,7 @@
 #include <QStyledItemDelegate>
 #include <QPainter>
 #include <QFileInfo>
+#include <QDirIterator>
 
 class SCFileDelegate : public QStyledItemDelegate {
     SourceControlManager& m_mgr;
@@ -324,6 +327,22 @@ void SourceControlPanel::setupUi() {
     m_statusLabel->setContentsMargins(8, 2, 8, 2);
     m_statusLabel->setStyleSheet("font-size: 10px; color: #888;");
     repoLayout->addWidget(m_statusLabel);
+
+    // --- Version control action buttons ---
+    auto* vcLayout = new QHBoxLayout;
+    vcLayout->setContentsMargins(0, 8, 0, 0);
+    vcLayout->setSpacing(8);
+    
+    m_timelineBtn = new QPushButton("Timeline", m_repoView);
+    m_timelineBtn->setToolTip("View commit timeline");
+    vcLayout->addWidget(m_timelineBtn);
+    
+    m_compareBranchesBtn = new QPushButton("Compare Branches", m_repoView);
+    m_compareBranchesBtn->setToolTip("Compare two branches");
+    vcLayout->addWidget(m_compareBranchesBtn);
+    
+    vcLayout->addStretch();
+    repoLayout->addLayout(vcLayout);
 
     mainLayout->addWidget(m_repoView);
 
@@ -840,4 +859,38 @@ void SourceControlPanel::applyTheme() {
             );
         }
     }
+}
+
+void SourceControlPanel::onTimelineClicked() {
+    QString workingDir = m_mgr.projectDir();
+    if (workingDir.isEmpty()) return;
+
+    SchematicTimelineView* timeline = new SchematicTimelineView(this);
+    timeline->setWorkingDir(workingDir);
+
+    QString projectDir = workingDir;
+    QDirIterator it(projectDir, {"*.sch", "*.flxsch"}, QDir::Files, QDirIterator::Subdirectories);
+    if (it.hasNext()) {
+        timeline->loadHistory(it.next());
+    }
+
+    timeline->show();
+}
+
+void SourceControlPanel::onCompareBranchesClicked() {
+    QString workingDir = m_mgr.projectDir();
+    if (workingDir.isEmpty()) return;
+
+    BranchComparisonDialog* dialog = new BranchComparisonDialog(workingDir, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    connect(dialog, &BranchComparisonDialog::mergeRequested, this, [this](const QString& source, const QString& target) {
+        Q_UNUSED(source);
+        Q_UNUSED(target);
+        // TODO: Implement merge with source/target parameters
+        // For now, just merge the source branch
+        m_mgr.mergeBranch(source);
+    });
+
+    dialog->exec();
 }

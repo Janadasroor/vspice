@@ -6,6 +6,8 @@
 #include "schematic_page_item.h"
 #include "schematic_item.h"
 #include "../../core/config_manager.h"
+#include "../../core/recent_projects.h"
+#include "../../ui/quick_open_dialog.h"
 #include <QTabBar>
 #include <QMenu>
 #include <QAction>
@@ -346,6 +348,12 @@ void SchematicEditor::setupTabShortcuts() {
     });
     addAction(duplicateTabAction);
 
+    // Ctrl+B: Quick Open dialog
+    QAction* quickOpenAction = new QAction("Quick Open", this);
+    quickOpenAction->setShortcut(QKeySequence("Ctrl+B"));
+    connect(quickOpenAction, &QAction::triggered, this, &SchematicEditor::showQuickOpenDialog);
+    addAction(quickOpenAction);
+
     // Alt+1 through Alt+9: Jump to specific tab
     for (int i = 1; i <= 9; ++i) {
         QAction* jumpAction = new QAction(QString("Jump to Tab %1").arg(i), this);
@@ -387,4 +395,81 @@ void SchematicEditor::setupTabBarSignals() {
             }
         }
     });
+}
+
+// ─── Quick Open Dialog (Ctrl+B) ────────────────────────────────────────────
+
+void SchematicEditor::showQuickOpenDialog() {
+    if (!m_quickOpenDialog) {
+        m_quickOpenDialog = new QuickOpenDialog(this);
+
+        // Connect to file selected signal
+        connect(m_quickOpenDialog, &QuickOpenDialog::fileSelected,
+                this, &SchematicEditor::onQuickOpenFileSelected);
+
+        // Connect to dialog closed signal
+        connect(m_quickOpenDialog, &QuickOpenDialog::dialogClosed, this, [this]() {
+            // Optional: cleanup or state reset
+        });
+
+        // Populate with recent projects
+        QStringList recentFiles = RecentProjects::instance().projects();
+
+        // Also add currently open files
+        for (int i = 0; i < m_workspaceTabs->count(); ++i) {
+            QWidget* widget = m_workspaceTabs->widget(i);
+            if (widget) {
+                QString filePath = widget->property("filePath").toString();
+                if (!filePath.isEmpty() && !recentFiles.contains(filePath)) {
+                    recentFiles.prepend(filePath);
+                }
+            }
+        }
+
+        m_quickOpenDialog->setRecentFiles(recentFiles);
+    }
+
+    // Update recent files before showing
+    QStringList recentFiles = RecentProjects::instance().projects();
+    for (int i = 0; i < m_workspaceTabs->count(); ++i) {
+        QWidget* widget = m_workspaceTabs->widget(i);
+        if (widget) {
+            QString filePath = widget->property("filePath").toString();
+            if (!filePath.isEmpty() && !recentFiles.contains(filePath)) {
+                recentFiles.prepend(filePath);
+            }
+        }
+    }
+    m_quickOpenDialog->setRecentFiles(recentFiles);
+
+    // Show dialog
+    m_quickOpenDialog->show();
+    m_quickOpenDialog->raise();
+    m_quickOpenDialog->activateWindow();
+}
+
+void SchematicEditor::onQuickOpenFileSelected(const QString& filePath) {
+    if (filePath.isEmpty()) return;
+
+    // Check if already open
+    for (int i = 0; i < m_workspaceTabs->count(); ++i) {
+        QWidget* widget = m_workspaceTabs->widget(i);
+        if (widget) {
+            QString openPath = widget->property("filePath").toString();
+            if (openPath == filePath) {
+                m_workspaceTabs->setCurrentIndex(i);
+                statusBar()->showMessage("Opened: " + filePath, 3000);
+                return;
+            }
+        }
+    }
+
+    // Open the file
+    if (QFile::exists(filePath)) {
+        openFile(filePath);
+        statusBar()->showMessage("Opened: " + filePath, 3000);
+    } else {
+        QMessageBox::warning(this, "File Not Found",
+            QString("The file no longer exists:\n%1").arg(filePath));
+    }
 }

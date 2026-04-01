@@ -3,6 +3,9 @@
 
 #include <QDialog>
 #include <QJsonObject>
+#include <QVector>
+#include <QList>
+#include <QComboBox>
 #include "../../ui/git_backend.h"
 
 class QListWidget;

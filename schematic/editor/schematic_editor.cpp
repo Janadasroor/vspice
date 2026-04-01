@@ -116,7 +116,8 @@ SchematicEditor::SchematicEditor(QWidget *parent)
       m_updatingProperties(false),
       m_hierarchyDock(nullptr),
       m_hierarchyTree(nullptr),
-      m_ercRules(SchematicERCRules::defaultRules())
+      m_ercRules(SchematicERCRules::defaultRules()),
+      m_quickOpenDialog(nullptr)
 {
     setWindowTitle("viospice - Schematic Editor");
     setMinimumSize(640, 480);

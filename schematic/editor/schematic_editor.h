@@ -353,6 +353,11 @@ private:
     void setupTabShortcuts();
     void setupTabBarSignals();
 
+    // Quick Open dialog (Ctrl+B)
+    void showQuickOpenDialog();
+    void onQuickOpenFileSelected(const QString& filePath);
+    class QuickOpenDialog* m_quickOpenDialog;
+
     // Closed tabs history for "Reopen Closed Tab"
     struct ClosedTabInfo {
         QString filePath;
