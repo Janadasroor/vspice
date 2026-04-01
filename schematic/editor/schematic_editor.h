@@ -338,6 +338,30 @@ private:
     QWidget* m_breadcrumbWidget;
     void updateBreadcrumbs();
     bool canReuseTab(int index) const;
+
+    // Tab enhancement features
+    void setupTabContextMenu();
+    void showTabContextMenu(const QPoint& pos);
+    void duplicateTab(int index);
+    void closeOtherTabs(int index);
+    void closeTabsToTheRight(int index);
+    void copyTabPath(int index);
+    void revealInExplorer(int index);
+    void reopenClosedTab();
+    void switchToTab(int offset);
+    void updateTabModifiedIndicator(int index, bool modified);
+    void setupTabShortcuts();
+    void setupTabBarSignals();
+
+    // Closed tabs history for "Reopen Closed Tab"
+    struct ClosedTabInfo {
+        QString filePath;
+        int scrollX;
+        int scrollY;
+        double zoomLevel;
+    };
+    QList<ClosedTabInfo> m_closedTabsHistory;
+    static constexpr int MAX_CLOSED_TABS_HISTORY = 10;
 };
 
 #endif // SCHEMATICEDITOR_H

@@ -60,6 +60,8 @@ public:
     // Auto-set the sheet number
     void setSheetInfo(int number, int total);
 
+    QSize pageSize() const { return m_pageSize; }
+
     enum { Type = UserType + 100 };
     int type() const override { return Type; }
 

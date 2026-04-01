@@ -96,6 +96,7 @@ set(SCHEMATIC_SOURCES
     schematic/editor/schematic_editor_actions.cpp
     schematic/editor/schematic_editor_file.cpp
     schematic/editor/schematic_editor_export.cpp
+    schematic/editor/schematic_editor_tabs.cpp
     schematic/editor/spice_directive_classifier.cpp
     schematic/editor/spice_directive_classifier.h
     schematic/editor/schematic_editor.h

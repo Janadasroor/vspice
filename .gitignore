@@ -80,6 +80,7 @@ benchmark_spice.sh
 opencode.json
 ui-map/*
 ui-ux/*
+.qwen
 tests/DATA/*
 tests/docs/*
 viospicelib/*

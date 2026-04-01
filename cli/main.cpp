@@ -1032,7 +1032,7 @@ bool runSymbolImport(const QStringList& args, const QCommandLineParser& parser) 
         }
         symbol = result.symbol;
     } else if (lowerIn.endsWith(".kicad_sym")) {
-        const QString symName = parser.value("name").trimmed();
+        const QString symName = parser.value("symbol-name").trimmed();
         if (symName.isEmpty()) {
             QStringList names = KicadSymbolImporter::getSymbolNames(inPath);
             names.sort(Qt::CaseInsensitive);
@@ -1294,8 +1294,8 @@ bool runSchematicRender(const QString& filePath, const QString& outPath, const Q
 bool runGenerateReport(const QString& schematicPath, const QString& outPath, const QCommandLineParser& parser) {
     SimReportGenerator generator;
     SimReportGenerator::ReportOptions opts;
-    opts.title = parser.value("title");
-    opts.author = parser.value("author");
+    opts.title = parser.value("report-title");
+    opts.author = parser.value("report-author");
     opts.includeSchematic = !parser.isSet("no-schematic");
     opts.includeWaveforms = !parser.isSet("no-waveforms");
     opts.includeMeasurements = !parser.isSet("no-measurements");
@@ -1350,8 +1350,8 @@ bool runGenerateReport(const QString& schematicPath, const QString& outPath, con
 }
 
 bool runShareSchematic(const QString& schematicPath, const QCommandLineParser& parser) {
-    QString title = parser.value("title");
-    QString description = parser.value("description");
+    QString title = parser.value("share-title");
+    QString description = parser.value("share-description");
     bool upload = parser.isSet("upload");
     bool copyToClipboard = parser.isSet("copy");
     
@@ -2310,8 +2310,10 @@ bool runNetlistRun(const QString& filePath, const QCommandLineParser& parser) {
     const bool exportRaw = parser.isSet("export-raw");
     const bool exportStats = parser.isSet("stats");
     const QStringList measureExprs = parser.values("measure");
+    const QStringList assertExprs = parser.values("assert");
     const bool exportMeasures = !measureExprs.isEmpty();
-    const bool exportRequested = exportRaw || exportStats || exportMeasures;
+    const bool runAssertions = !assertExprs.isEmpty();
+    const bool exportRequested = exportRaw || exportStats || exportMeasures || runAssertions;
     const QString measureFormat = parser.value("measure-format").trimmed().toLower();
     const bool measureFormatJson = (measureFormat == "json");
     if (!measureFormat.isEmpty() && measureFormat != "text" && measureFormat != "json") {
@@ -2485,6 +2487,106 @@ bool runNetlistRun(const QString& filePath, const QCommandLineParser& parser) {
                     }
                     out["measures"] = measArr;
                 }
+                
+                bool allAssertsPassed = true;
+                if (runAssertions) {
+                    QJsonArray assertArr;
+                    for (const auto& expr : assertExprs) {
+                        QJsonObject a;
+                        a["expr"] = expr;
+                        
+                        QRegularExpression re(R"(^(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$)");
+                        auto match = re.match(expr);
+                        if (!match.hasMatch()) {
+                            a["error"] = "Invalid assertion format. Use 'signal op value'";
+                            a["ok"] = false;
+                            allAssertsPassed = false;
+                            assertArr.append(a);
+                            continue;
+                        }
+                        
+                        QString leftExpr = match.captured(1).trimmed();
+                        QString op = match.captured(2);
+                        QString rightValStr = match.captured(3).trimmed();
+                        
+                        double rightVal = 0.0;
+                        if (!SimValueParser::parseSpiceNumber(rightValStr, rightVal)) {
+                            a["error"] = "Invalid value: " + rightValStr;
+                            a["ok"] = false;
+                            allAssertsPassed = false;
+                            assertArr.append(a);
+                            continue;
+                        }
+                        
+                        MeasureRequest req;
+                        QString perr;
+                        if (!parseMeasure(leftExpr, &req, &perr)) {
+                            a["error"] = perr;
+                            a["ok"] = false;
+                            allAssertsPassed = false;
+                            assertArr.append(a);
+                            continue;
+                        }
+                        
+                        const int varIndex = findVarIndex(data.varNames, req.signalName);
+                        if (varIndex < 0) {
+                            a["error"] = "Signal not found: " + req.signalName;
+                            a["ok"] = false;
+                            allAssertsPassed = false;
+                            assertArr.append(a);
+                            continue;
+                        }
+                        
+                        double actualVal = 0.0;
+                        bool valOk = false;
+                        if (req.type == MeasureType::At) {
+                            const int idx = nearestIndex(data.x, req.atTime);
+                            if (idx >= 0) {
+                                actualVal = (varIndex == 0) ? data.x[idx] : data.y[varIndex - 1][idx];
+                                valOk = true;
+                            }
+                        } else {
+                            const QVector<int>& samples = rangeIndices;
+                            if (!samples.isEmpty()) {
+                                const auto& vec = (varIndex == 0) ? data.x : data.y[varIndex - 1];
+                                double minV = vec[samples[0]], maxV = vec[samples[0]], sumV = 0.0, sumSqV = 0.0;
+                                for (int idx : samples) {
+                                    const double v = vec[idx];
+                                    if (v < minV) minV = v;
+                                    if (v > maxV) maxV = v;
+                                    sumV += v;
+                                    sumSqV += v * v;
+                                }
+                                if (req.type == MeasureType::Min) actualVal = minV;
+                                else if (req.type == MeasureType::Max) actualVal = maxV;
+                                else if (req.type == MeasureType::Pp) actualVal = (maxV - minV);
+                                else if (req.type == MeasureType::Rms) actualVal = std::sqrt(sumSqV / samples.size());
+                                else actualVal = (sumV / samples.size());
+                                valOk = true;
+                            }
+                        }
+                        
+                        if (!valOk) {
+                            a["error"] = "No data for measurement";
+                            a["ok"] = false;
+                            allAssertsPassed = false;
+                        } else {
+                            a["value"] = actualVal;
+                            bool result = false;
+                            if (op == "==") result = (std::abs(actualVal - rightVal) < 1e-12);
+                            else if (op == "!=") result = (std::abs(actualVal - rightVal) >= 1e-12);
+                            else if (op == ">") result = (actualVal > rightVal);
+                            else if (op == "<") result = (actualVal < rightVal);
+                            else if (op == ">=") result = (actualVal >= rightVal);
+                            else if (op == "<=") result = (actualVal <= rightVal);
+                            a["ok"] = result;
+                            if (!result) allAssertsPassed = false;
+                        }
+                        assertArr.append(a);
+                    }
+                    out["assertions"] = assertArr;
+                    out["ok"] = out["ok"].toBool() && allAssertsPassed;
+                }
             }
         }
         printJsonValue(out);
@@ -2496,6 +2598,95 @@ bool runNetlistRun(const QString& filePath, const QCommandLineParser& parser) {
             if (!line.isEmpty()) std::cout << line.toStdString() << std::endl;
         }
     }
+
+    bool allAssertsPassed = true;
+    if (okResult && runAssertions) {
+        RawData data;
+        QString err;
+        if (RawDataParser::loadRawAscii(rawPath, &data, &err)) {
+            const QVector<int> rangeIndices = filteredIndices(data, tStart, tEnd);
+            for (const auto& expr : assertExprs) {
+                QRegularExpression re(R"(^(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$)");
+                auto match = re.match(expr);
+                if (!match.hasMatch()) {
+                    std::cerr << "Assertion Error: Invalid format: " << expr.toStdString() << std::endl;
+                    allAssertsPassed = false;
+                    continue;
+                }
+                
+                QString leftExpr = match.captured(1).trimmed();
+                QString op = match.captured(2);
+                QString rightValStr = match.captured(3).trimmed();
+                double rightVal = 0.0;
+                SimValueParser::parseSpiceNumber(rightValStr, rightVal);
+                
+                MeasureRequest req;
+                QString perr;
+                if (!parseMeasure(leftExpr, &req, &perr)) {
+                    std::cerr << "Assertion Error: " << perr.toStdString() << " in " << expr.toStdString() << std::endl;
+                    allAssertsPassed = false;
+                    continue;
+                }
+                
+                const int varIndex = findVarIndex(data.varNames, req.signalName);
+                if (varIndex < 0) {
+                    std::cerr << "Assertion Error: Signal not found: " << req.signalName.toStdString() << std::endl;
+                    allAssertsPassed = false;
+                    continue;
+                }
+                
+                double actualVal = 0.0;
+                bool valOk = false;
+                if (req.type == MeasureType::At) {
+                    const int idx = nearestIndex(data.x, req.atTime);
+                    if (idx >= 0) {
+                        actualVal = (varIndex == 0) ? data.x[idx] : data.y[varIndex - 1][idx];
+                        valOk = true;
+                    }
+                } else {
+                    const QVector<int>& samples = rangeIndices;
+                    if (!samples.isEmpty()) {
+                        const auto& vec = (varIndex == 0) ? data.x : data.y[varIndex - 1];
+                        double minV = vec[samples[0]], maxV = vec[samples[0]], sumV = 0.0, sumSqV = 0.0;
+                        for (int idx : samples) {
+                            const double v = vec[idx];
+                            if (v < minV) minV = v;
+                            if (v > maxV) maxV = v;
+                            sumV += v;
+                            sumSqV += v * v;
+                        }
+                        if (req.type == MeasureType::Min) actualVal = minV;
+                        else if (req.type == MeasureType::Max) actualVal = maxV;
+                        else if (req.type == MeasureType::Pp) actualVal = (maxV - minV);
+                        else if (req.type == MeasureType::Rms) actualVal = std::sqrt(sumSqV / samples.size());
+                        else actualVal = (sumV / samples.size());
+                        valOk = true;
+                    }
+                }
+                
+                if (!valOk) {
+                    std::cerr << "Assertion Failed: " << expr.toStdString() << " (No data)" << std::endl;
+                    allAssertsPassed = false;
+                } else {
+                    bool result = false;
+                    if (op == "==") result = (std::abs(actualVal - rightVal) < 1e-12);
+                    else if (op == "!=") result = (std::abs(actualVal - rightVal) >= 1e-12);
+                    else if (op == ">") result = (actualVal > rightVal);
+                    else if (op == "<") result = (actualVal < rightVal);
+                    else if (op == ">=") result = (actualVal >= rightVal);
+                    else if (op == "<=") result = (actualVal <= rightVal);
+                    
+                    if (!result) {
+                        std::cerr << "Assertion Failed: " << expr.toStdString() << " (Actual: " << actualVal << ")" << std::endl;
+                        allAssertsPassed = false;
+                    } else if (!g_quiet) {
+                        std::cout << "Assertion Passed: " << expr.toStdString() << " (Value: " << actualVal << ")" << std::endl;
+                    }
+                }
+            }
+        }
+    }
+
     if (timedOut) {
         std::cerr << "Error: Simulation timed out." << std::endl;
         if (g_quiet && !parser.isSet("json")) _Exit(1);
@@ -3115,7 +3306,7 @@ void printSchema(const QString& command) {
         );
     } else if (command == "netlist-run") {
         setSchema(
-            QJsonObject{{"args", QJsonArray{"file.cir|file.flxsch"}}, {"options", QJsonObject{{"json", "bool"}, {"timeout", "string"}, {"analysis", "op|tran|ac"}, {"step", "string"}, {"stop", "string"}, {"export-raw", "csv|json"}, {"signal", "name (repeatable)"}, {"max-points", "int"}, {"base-signal", "name"}, {"stats", "bool"}, {"range", "t0:t1"}, {"measure", "expr (repeatable)"}}}},
+            QJsonObject{{"args", QJsonArray{"file.cir|file.flxsch"}}, {"options", QJsonObject{{"json", "bool"}, {"timeout", "string"}, {"analysis", "op|tran|ac"}, {"step", "string"}, {"stop", "string"}, {"export-raw", "csv|json"}, {"signal", "name (repeatable)"}, {"max-points", "int"}, {"base-signal", "name"}, {"stats", "bool"}, {"range", "t0:t1"}, {"measure", "expr (repeatable)"}, {"assert", "expr (repeatable)"}}}},
             QJsonObject{{"file", "string"}, {"ok", "bool"}, {"timeout", "bool"}, {"error", "string"}, {"log", "array[string]"}, {"rawPath", "string"}}
         );
     } else if (command == "raw-info") {
@@ -3411,7 +3602,7 @@ static void printCommandHelp(const QString& command) {
         std::cout << "  --export-raw csv|json  --signal <name> (repeatable)\n";
         std::cout << "  --max-points <n>  --base-signal <name>  --range t0:t1\n";
         std::cout << "  --stats  --measure <expr> (repeatable)  --measure-format text|json\n";
-        std::cout << "  --compat  --quiet  --json  --timeout <10s>\n";
+        std::cout << "  --assert <expr> (repeatable)  --compat  --quiet  --json  --timeout <10s>\n";
         return;
     }
     if (command == "raw-export") {
@@ -3501,32 +3692,32 @@ int main(int argc, char *argv[]) {
     QCommandLineOption probeListOption("list", "List available signals (schematic-probe)");
     QCommandLineOption probeAddOption("add", "Add probe (repeatable): V(net) or I(device)", "signal");
     QCommandLineOption probeAutoOption("auto", "Auto-probe all nets (schematic-probe)");
-    QCommandLineOption symbolNameOption("name", "Symbol name (for KiCad .kicad_sym import)", "name");
+    QCommandLineOption symbolNameOption("symbol-name", "Symbol name (for KiCad .kicad_sym import)", "symname");
     QCommandLineOption timeoutOption("timeout", "Netlist run timeout (e.g. 10s, 5000ms)", "time", "10s");
     QCommandLineOption formatOption(QStringList() << "f" << "format", "Output format (netlist: spice|json, raw-export: csv|json|parquet)", "format", "spice");
-    QCommandLineOption signalOption("signal", "Signal to export (repeatable, raw-export)", "name");
-    QCommandLineOption exportRawOption("export-raw", "Export raw data after netlist-run (csv|json)", "format");
-    QCommandLineOption maxPointsOption("max-points", "Limit exported samples (raw-export, netlist-run --export-raw)", "count");
-    QCommandLineOption baseSignalOption("base-signal", "Signal to drive decimation (raw-export, netlist-run --export-raw)", "name");
+    QCommandLineOption signalOption("signal", "Signal to export (repeatable, raw-export)", "signame");
+    QCommandLineOption exportRawOption("export-raw", "Export raw data after netlist-run (csv|json)", "rawformat");
+    QCommandLineOption maxPointsOption("max-points", "Limit exported samples (raw-export, netlist-run --export-raw)", "pointcount");
+    QCommandLineOption baseSignalOption("base-signal", "Signal to drive decimation (raw-export, netlist-run --export-raw)", "basesig");
     QCommandLineOption statsOption("stats", "Export signal statistics after netlist-run (min/max/avg/rms)");
-    QCommandLineOption rangeOption("range", "Limit exported samples to time window (t0:t1)", "t0:t1");
-    QCommandLineOption measureOption("measure", "Compute measurement (repeatable). Examples: V(net1)_max, I(V1)_rms, V(net1)@t=1ms", "expr");
-    QCommandLineOption measureFormatOption("measure-format", "Measure output format (text|json)", "format", "text");
-    QCommandLineOption assertOption("assert", "Fail if assertion is false (repeatable). Examples: \"V(OUT) > 4.5\", \"V(OUT)_min > 4.5\"", "expr");
+    QCommandLineOption rangeOption("range", "Limit exported samples to time window (t0:t1)", "trange");
+    QCommandLineOption measureOption("measure", "Compute measurement (repeatable). Examples: V(net1)_max, I(V1)_rms, V(net1)@t=1ms", "mexpr");
+    QCommandLineOption measureFormatOption("measure-format", "Measure output format (text|json)", "mformat", "text");
+    QCommandLineOption assertOption("assert", "Fail if assertion is false (repeatable). Examples: \"V(OUT) > 4.5\", \"V(OUT)_min > 4.5\"", "aexpr");
     QCommandLineOption summaryOption("summary", "Show concise summary (raw-info)");
 
     QCommandLineOption signalRegexOption("signal-regex", "Filter signals by regex (raw-export)", "pattern");
-    QCommandLineOption outOption("out", "Write output to file (schematic-netlist)", "file");
-    QCommandLineOption reportTitleOption("title", "Report title", "title", "VioSpice Design Review");
-    QCommandLineOption reportAuthorOption("author", "Report author", "author", "VioSpice");
+    QCommandLineOption outOption("out", "Write output to file (schematic-netlist)", "outfile");
+    QCommandLineOption reportTitleOption("report-title", "Report title", "rtitle", "VioSpice Design Review");
+    QCommandLineOption reportAuthorOption("report-author", "Report author", "rauthor", "VioSpice");
     QCommandLineOption noSchematicOption("no-schematic", "Exclude schematic section from report");
     QCommandLineOption noWaveformsOption("no-waveforms", "Exclude waveforms section from report");
     QCommandLineOption noMeasurementsOption("no-measurements", "Exclude measurements section from report");
     QCommandLineOption noNetlistOption("no-netlist", "Exclude netlist section from report");
-    QCommandLineOption rawFileOption("raw-file", "Simulation results file (.raw) to include in report", "file");
-    QCommandLineOption schematicPngOption("schematic-png", "Schematic image file (.png) to embed in report", "file");
-    QCommandLineOption shareTitleOption("title", "Share title", "title", "");
-    QCommandLineOption shareDescOption("description", "Share description", "desc", "");
+    QCommandLineOption rawFileOption("raw-file", "Simulation results file (.raw) to include in report", "rawfile");
+    QCommandLineOption schematicPngOption("schematic-png", "Schematic image file (.png) to embed in report", "pngfile");
+    QCommandLineOption shareTitleOption("share-title", "Share title", "stitle", "");
+    QCommandLineOption shareDescOption("share-description", "Share description", "sdesc", "");
     QCommandLineOption shareUploadOption("upload", "Upload to server instead of URL (share)");
     QCommandLineOption shareCopyOption("copy", "Copy URL to clipboard after sharing", "copy");
     QCommandLineOption shareServerOption("server", "Share server URL", "url", "http://localhost:8765");
@@ -3563,6 +3754,7 @@ int main(int argc, char *argv[]) {
     parser.addOption(rangeOption);
     parser.addOption(measureOption);
     parser.addOption(measureFormatOption);
+    parser.addOption(assertOption);
     parser.addOption(summaryOption);
     parser.addOption(signalRegexOption);
     parser.addOption(outOption);
@@ -3587,7 +3779,7 @@ int main(int argc, char *argv[]) {
     if (g_noColor) {
         qputenv("NO_COLOR", "1");
     }
-    const bool jsonRequested = parser.isSet(jsonOption) || app.arguments().contains("--json");
+    const bool jsonRequested = parser.isSet("json") || app.arguments().contains("--json");
     if (jsonRequested) {
         g_quiet = true;
     }
@@ -3825,7 +4017,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        if (parser.isSet(jsonOption)) {
+        if (parser.isSet("json")) {
             printJsonValue(resultsToJson(results));
             std::cout.flush();
             std::cerr.flush();

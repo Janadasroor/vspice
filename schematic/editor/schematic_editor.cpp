@@ -134,9 +134,14 @@ SchematicEditor::SchematicEditor(QWidget *parent)
     m_workspaceTabs->setTabsClosable(true);
     m_workspaceTabs->setMovable(true);
     m_workspaceTabs->setDocumentMode(true); // VS Code / Modern look
-    
+
     connect(m_workspaceTabs, &QTabWidget::currentChanged, this, &SchematicEditor::onTabChanged);
     connect(m_workspaceTabs, &QTabWidget::tabCloseRequested, this, &SchematicEditor::onTabCloseRequested);
+
+    // Setup tab enhancements
+    setupTabShortcuts();
+    setupTabBarSignals();
+    setupTabContextMenu();
 
     // Core setup
     createStatusBar();
@@ -294,6 +299,18 @@ bool SchematicEditor::event(QEvent* event) {
 }
 
 bool SchematicEditor::eventFilter(QObject* watched, QEvent* event) {
+    // Handle tab bar right-click for context menu
+    if (watched == m_workspaceTabs->tabBar()) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto* mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent && mouseEvent->button() == Qt::RightButton) {
+                showTabContextMenu(mouseEvent->pos());
+                return true;
+            }
+        }
+    }
+
+    // Handle mouse-follow placement mode
     if (m_mouseFollowPlacementActive && m_view && watched == m_view->viewport()) {
         if (event->type() == QEvent::MouseButtonPress) {
             auto* me = static_cast<QMouseEvent*>(event);
@@ -543,7 +560,24 @@ void SchematicEditor::closeTab(int index) {
         if (m_simulationPanel && scene) {
             m_simulationPanel->removeTabState(scene);
         }
-        
+
+        // Save to closed tabs history before removing
+        QString filePath = view->property("filePath").toString();
+        if (!filePath.isEmpty()) {
+            ClosedTabInfo info;
+            info.filePath = filePath;
+            info.scrollX = view->horizontalScrollBar()->value();
+            info.scrollY = view->verticalScrollBar()->value();
+            info.zoomLevel = view->transform().m11(); // Extract scale factor
+
+            m_closedTabsHistory.append(info);
+
+            // Limit history size
+            while (m_closedTabsHistory.size() > MAX_CLOSED_TABS_HISTORY) {
+                m_closedTabsHistory.removeFirst();
+            }
+        }
+
         m_workspaceTabs->removeTab(index);
         
         if (m_scene == scene) {
