@@ -19,6 +19,12 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QInputDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QProgressBar>
+#include "../../python/python_manager.h"
 
 namespace {
 
@@ -103,6 +109,26 @@ void SpiceSubcircuitImportDialog::setupUi() {
     mono.setPointSize(10);
     m_textEdit->setFont(mono);
     m_highlighter = new SpiceHighlighter(m_textEdit->document());
+    
+    // AI Generate Button row
+    auto* aiLayout = new QHBoxLayout();
+    m_aiGenerateBtn = new QPushButton("✨ Generate with Viora AI...", this);
+    m_aiGenerateBtn->setStyleSheet(
+        "QPushButton { background-color: #3b82f6; color: white; font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
+        "QPushButton:hover { background-color: #2563eb; }"
+        "QPushButton:disabled { background-color: #94a3b8; }"
+    );
+    m_progressBar = new QProgressBar(this);
+    m_progressBar->setRange(0, 0);
+    m_progressBar->setTextVisible(false);
+    m_progressBar->setMaximumHeight(4);
+    m_progressBar->hide();
+    
+    aiLayout->addWidget(m_aiGenerateBtn);
+    aiLayout->addStretch();
+    aiLayout->addWidget(m_progressBar, 1);
+    mainLayout->addLayout(aiLayout);
+
     mainLayout->addWidget(m_textEdit, 1);
 
     auto* formLayout = new QGridLayout();
@@ -163,6 +189,7 @@ void SpiceSubcircuitImportDialog::setupUi() {
     connect(m_textEdit, &QPlainTextEdit::textChanged, this, &SpiceSubcircuitImportDialog::updateFromText);
     connect(m_fileNameEdit, &QLineEdit::textChanged, this, &SpiceSubcircuitImportDialog::refreshPathPreview);
     connect(m_openSymbolEditorCheck, &QCheckBox::toggled, m_autoPlaceAfterSaveCheck, &QWidget::setEnabled);
+    connect(m_aiGenerateBtn, &QPushButton::clicked, this, &SpiceSubcircuitImportDialog::onAiGenerateClicked);
 }
 
 QString SpiceSubcircuitImportDialog::baseDirectory() const {
@@ -373,4 +400,100 @@ void SpiceSubcircuitImportDialog::setPreloadedNetlist(const QString& netlist) {
     if (m_textEdit) {
         m_textEdit->setPlainText(netlist);
     }
+}
+
+void SpiceSubcircuitImportDialog::onAiGenerateClicked() {
+    bool ok;
+    QString prompt = QInputDialog::getText(this, "Viora AI Subcircuit Generator",
+                                          "Enter the component you want to generate (e.g. 'LM741 op amp', 'IRFZ44N MOSFET'):",
+                                          QLineEdit::Normal, "", &ok);
+    if (!ok || prompt.trimmed().isEmpty()) return;
+
+    m_aiGenerateBtn->setEnabled(false);
+    m_progressBar->show();
+    m_statusLabel->setText("Viora AI is synthesizing your component model...");
+    m_aiResponseBuffer.clear();
+
+    if (m_aiProcess) {
+        m_aiProcess->kill();
+        m_aiProcess->deleteLater();
+    }
+
+    m_aiProcess = new QProcess(this);
+    m_aiProcess->setProcessEnvironment(PythonManager::getConfiguredEnvironment());
+
+    connect(m_aiProcess, &QProcess::readyReadStandardOutput, this, &SpiceSubcircuitImportDialog::onAiProcessReadyRead);
+    connect(m_aiProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &SpiceSubcircuitImportDialog::onAiProcessFinished);
+
+    QString scriptPath = QDir(PythonManager::getScriptsDir()).absoluteFilePath("gemini_query.py");
+    QString pythonExec = PythonManager::getPythonExecutable();
+
+    QStringList args;
+    args << scriptPath << prompt.trimmed() << "--mode" << "subcircuit";
+
+    m_aiProcess->start(pythonExec, args);
+}
+
+void SpiceSubcircuitImportDialog::onAiProcessReadyRead() {
+    m_aiResponseBuffer += QString::fromUtf8(m_aiProcess->readAllStandardOutput());
+}
+
+void SpiceSubcircuitImportDialog::onAiProcessFinished(int exitCode) {
+    m_progressBar->hide();
+    m_aiGenerateBtn->setEnabled(true);
+
+    if (exitCode != 0) {
+        m_statusLabel->setText("Error: AI generation failed.");
+        QMessageBox::critical(this, "AI Error", "The Viora AI process failed. Please check your internet connection and Gemini API key.");
+        return;
+    }
+
+    // Extraction logic for JSON
+    QString jsonStr = m_aiResponseBuffer.trimmed();
+    int start = jsonStr.indexOf('{');
+    int end = jsonStr.lastIndexOf('}');
+    if (start != -1 && end != -1 && end > start) {
+        jsonStr = jsonStr.mid(start, end - start + 1);
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(jsonStr.toUtf8());
+    if (doc.isNull() || !doc.isObject()) {
+        m_statusLabel->setText("Error: Failed to parse AI response.");
+        QMessageBox::critical(this, "Parse Error", "The AI returned an invalid response format.");
+        return;
+    }
+
+    QJsonObject root = doc.object();
+    QString subcktCode = root["subcircuit"].toString();
+    QJsonArray mapping = root["mapping"].toArray();
+
+    if (subcktCode.isEmpty()) {
+        m_statusLabel->setText("Error: AI returned empty subcircuit.");
+        return;
+    }
+
+    // 1. Set the text
+    m_textEdit->setPlainText(subcktCode);
+    
+    // 2. Trigger parsing (this populates m_pinTable rows)
+    updateFromText();
+
+    // 3. Override pin labels from AI mapping
+    for (int i = 0; i < mapping.size(); ++i) {
+        QJsonObject mapObj = mapping[i].toObject();
+        int pinNum = mapObj["num"].toInt();
+        QString pinLabel = mapObj["label"].toString();
+
+        // Find the row in m_pinTable where 'Subckt Pin' matches
+        // Actually, AI mapping num usually matches the order in .subckt line
+        // But let's be safe and match by row if possible, or just use the index if num aligns
+        if (i < m_pinTable->rowCount()) {
+            QTableWidgetItem* labelItem = m_pinTable->item(i, 2);
+            if (labelItem) {
+                labelItem->setText(pinLabel);
+            }
+        }
+    }
+
+    m_statusLabel->setText("Successfully generated '" + root["name"].toString() + "' model and pin mapping.");
 }

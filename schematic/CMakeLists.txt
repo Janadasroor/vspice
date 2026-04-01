@@ -18,6 +18,8 @@ target_sources(FluxSchematic PRIVATE
     ui/smart_probe_overlay.h
     ui/smart_probe_engine.cpp
     ui/smart_probe_engine.h
+    ui/smith_chart_widget.cpp
+    ui/smith_chart_widget.h
     dialogs/circuit_template_gallery.cpp
     dialogs/circuit_template_gallery.h
 )

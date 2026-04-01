@@ -3,6 +3,7 @@
 
 #include <QDialog>
 #include <QStringList>
+#include <QProcess>
 
 class QCheckBox;
 class QDialogButtonBox;
@@ -11,6 +12,8 @@ class QLineEdit;
 class QPlainTextEdit;
 class QTableWidget;
 class SpiceHighlighter;
+class QPushButton;
+class QProgressBar;
 
 class SpiceSubcircuitImportDialog : public QDialog {
     Q_OBJECT
@@ -45,6 +48,9 @@ public:
 private slots:
     void onAccepted();
     void updateFromText();
+    void onAiGenerateClicked();
+    void onAiProcessFinished(int exitCode);
+    void onAiProcessReadyRead();
 
 private:
     void setupUi();
@@ -68,6 +74,11 @@ private:
     QCheckBox* m_autoPlaceAfterSaveCheck;
     QDialogButtonBox* m_buttonBox;
     SpiceHighlighter* m_highlighter;
+    
+    QPushButton* m_aiGenerateBtn;
+    QProgressBar* m_progressBar;
+    QProcess* m_aiProcess = nullptr;
+    QString m_aiResponseBuffer;
 };
 
 #endif

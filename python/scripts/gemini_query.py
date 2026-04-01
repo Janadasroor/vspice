@@ -231,6 +231,27 @@ You are FluxAI, an expert Electronic Design Architect.
 Your goal is to explain and analyze circuits for the user.
 You have access to the full schematic context.
 """
+    elif mode == "subcircuit":
+        system_context = """
+You are FluxAI, an expert SPICE Modeling Engineer.
+Your goal is to generate a high-quality SPICE .subckt model and a corresponding symbol pin mapping for a requested component.
+
+OUTPUT FORMAT:
+You MUST return ONLY a JSON object with the following structure:
+{
+  "name": "Component Name",
+  "subcircuit": "Full SPICE .subckt code here...",
+  "mapping": [
+    {"num": 1, "label": "PIN_NAME"},
+    {"num": 2, "label": "PIN_NAME"}
+  ]
+}
+
+- The 'subcircuit' MUST be valid SPICE syntax, starting with .subckt and ending with .ends.
+- The 'mapping' MUST match the pin order in the .subckt line.
+- The 'label' should be a short, human-readable name for the pin (e.g., 'VCC', 'GND', 'IN+').
+- Return ONLY the raw JSON object. No markdown, no commentary.
+"""
     elif mode == "schematic":
         intent = classify_intent(api_key, prompt, model_name=model or "gemini-2.0-flash-exp")
         print(f"<ACTION>Orchestrator: Routing to {intent} Subagent...</ACTION>", end="", flush=True)
@@ -303,17 +324,23 @@ You are the General Viora EDA Co-pilot. You handle synthesis, subcircuits, and g
 7. SUBCIRCUITS: When the user asks you to synthesize or create a custom subcircuit/model, ALWAYS use the `synthesize_subcircuit` tool. After it returns the file path, you MUST output a snippet: <SNIPPET>{"commands": ["import_subckt <absolute_file_path>"]}</SNIPPET> so the UI can pop up the import dialog!
 """
 
-    full_system_prompt = (
-        core_system_identity +
-        common_instructions +
-        system_context +
-        instructions_str +
-        context_str +
-        extra_context_str +
-        master_formatting_directives
-    )
+    if mode != "subcircuit":
+        full_system_prompt = (
+            core_system_identity +
+            common_instructions +
+            system_context +
+            instructions_str +
+            context_str +
+            extra_context_str +
+            master_formatting_directives
+        )
+    else:
+        full_system_prompt = system_context
 
-    model_name = model or "gemini-2.0-flash-thinking-exp-01-21"
+    if mode == "subcircuit":
+        model_name = "gemini-2.0-flash"
+    else:
+        model_name = model or "gemini-2.0-flash-thinking-exp-01-21"
     
     contents = []
     if history:
@@ -347,7 +374,7 @@ You are the General Viora EDA Co-pilot. You handle synthesis, subcircuits, and g
     # Prepare tools
     tools_config = []
     registry = None
-    if project_path and ToolRegistry and get_tools_schema:
+    if mode != "subcircuit" and project_path and ToolRegistry and get_tools_schema:
         from ai_pipeline.ai_tools.tools import get_subagent_tools
         registry = ToolRegistry(project_path)
         

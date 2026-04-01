@@ -1163,9 +1163,9 @@ void SimulationPanel::updateCommandDisplay() {
         cmdParams.start = m_param1 ? m_param1->text() : QString("10");
         cmdParams.stop = m_param2 ? m_param2->text() : QString("1Meg");
         cmdParams.step = m_param3 ? m_param3->text() : QString("10");
-        cmdParams.rfPort1Source = m_param4 ? m_param4->text().toStdString() : "V1";
-        cmdParams.rfPort2Node = m_param5 ? m_param5->text().toStdString() : "OUT";
-        cmdParams.rfZ0 = m_param6 ? m_param6->text().toDouble() : 50.0;
+        cmdParams.rfPort1Source = m_param4 ? m_param4->text() : QString("V1");
+        cmdParams.rfPort2Node = m_param5 ? m_param5->text() : QString("OUT");
+        cmdParams.rfZ0 = m_param6 ? m_param6->text().trimmed() : "50";
     } else {
         cmdParams.type = SpiceNetlistGenerator::OP;
     }
@@ -2351,6 +2351,9 @@ void SimulationPanel::onRunSimulation() {
     const QString fStartText = m_param1->text().trimmed();
     const QString fStopText = m_param2->text().trimmed();
     const QString ptsText = m_param3->text().trimmed();
+    const QString rfPort1Text = m_param4->text().trimmed();
+    const QString rfPort2Text = m_param5->text().trimmed();
+    const QString rfZ0Text = m_param6->text().trimmed().isEmpty() ? "50" : m_param6->text().trimmed();
     const QString projectDir = m_projectDir;
     const QJsonObject snapshot = SchematicFileIO::serializeSceneToJson(m_scene, "A4");
 
@@ -2391,7 +2394,7 @@ void SimulationPanel::onRunSimulation() {
         SimManager::instance().runNetlistText(result.netlistText);
     });
 
-    watcher->setFuture(QtConcurrent::run([snapshot, projectDir, idx, tStop, tStep, fStartText, fStopText, ptsText]() {
+    watcher->setFuture(QtConcurrent::run([snapshot, projectDir, idx, tStop, tStep, fStartText, fStopText, ptsText, rfPort1Text, rfPort2Text, rfZ0Text]() {
         SimBuildResult result;
         QGraphicsScene tempScene;
         QString error;
@@ -2450,9 +2453,9 @@ void SimulationPanel::onRunSimulation() {
             params.start = fStartText.isEmpty() ? "10" : fStartText;
             params.stop = fStopText.isEmpty() ? "1Meg" : fStopText;
             params.step = ptsText.isEmpty() ? "10" : ptsText;
-            params.rfPort1Source = m_param4->text().trimmed();
-            params.rfPort2Node = m_param5->text().trimmed();
-            params.rfZ0 = m_param6->text().trimmed().isEmpty() ? "50" : m_param6->text().trimmed();
+            params.rfPort1Source = rfPort1Text;
+            params.rfPort2Node = rfPort2Text;
+            params.rfZ0 = rfZ0Text;
         } else {
             params.type = SpiceNetlistGenerator::OP;
         }
