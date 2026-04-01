@@ -1,25 +1,359 @@
 {
+  "inverting_opamp": {
+    "name": "Inverting Op-Amp",
+    "category": "amplifiers",
+    "description": "Classic inverting amplifier configuration. Gain = -R2/R1",
+    "tags": ["op-amp", "amplifier", "inverting", "analog"],
+    "schematic": "amplifiers/inverting_opamp.sch",
+    "netlist": "amplifiers/inverting_opamp.cir",
+    "parameters": [
+      {"name": "R1", "default": "1k", "label": "Input Resistor", "unit": "Ω"},
+      {"name": "R2", "default": "10k", "label": "Feedback Resistor", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
+  "non_inverting_opamp": {
+    "name": "Non-Inverting Op-Amp",
+    "category": "amplifiers",
+    "description": "Non-inverting amplifier. Gain = 1 + R2/R1",
+    "tags": ["op-amp", "amplifier", "non-inverting", "analog"],
+    "schematic": "amplifiers/non_inverting_opamp.sch",
+    "netlist": "amplifiers/non_inverting_opamp.cir",
+    "parameters": [
+      {"name": "R1", "default": "1k", "label": "Input Resistor", "unit": "Ω"},
+      {"name": "R2", "default": "10k", "label": "Feedback Resistor", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
+  "voltage_follower": {
+    "name": "Voltage Follower",
+    "category": "amplifiers",
+    "description": "Unity gain buffer. High input impedance, low output impedance",
+    "tags": ["op-amp", "buffer", "follower", "analog"],
+    "schematic": "amplifiers/voltage_follower.sch",
+    "netlist": "amplifiers/voltage_follower.cir",
+    "parameters": [
+      {"name": "V1", "default": "5", "label": "Input Voltage", "unit": "V"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "op"
+  },
+  "differential_amp": {
+    "name": "Differential Amplifier",
+    "category": "amplifiers",
+    "description": "Amplifies the difference between two input signals",
+    "tags": ["op-amp", "differential", "amplifier", "analog"],
+    "schematic": "amplifiers/differential_amp.sch",
+    "netlist": "amplifiers/differential_amp.cir",
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "Input Resistors", "unit": "Ω"},
+      {"name": "R2", "default": "10k", "label": "Feedback Resistors", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "op"
+  },
+  "instrumentation_amp": {
+    "name": "Instrumentation Amplifier",
+    "category": "amplifiers",
+    "description": "High gain differential amplifier with high CMRR",
+    "tags": ["op-amp", "instrumentation", "amplifier", "analog"],
+    "schematic": "amplifiers/instrumentation_amp.sch",
+    "netlist": "amplifiers/instrumentation_amp.cir",
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "Input Resistors", "unit": "Ω"},
+      {"name": "R2", "default": "10k", "label": "Gain Resistors", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "op"
+  },
+  "audio_amp": {
+    "name": "Audio Power Amplifier",
+    "category": "amplifiers",
+    "description": "Basic audio amplifier with output stage",
+    "tags": ["op-amp", "audio", "amplifier", "power"],
+    "schematic": "amplifiers/audio_amp.sch",
+    "netlist": "amplifiers/audio_amp.cir",
+    "parameters": [
+      {"name": "R1", "default": "1k", "label": "Input Resistor", "unit": "Ω"},
+      {"name": "R2", "default": "10k", "label": "Feedback Resistor", "unit": "Ω"},
+      {"name": "Rload", "default": "8", "label": "Load Resistor", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
   "rc_high_pass": {
     "name": "RC High-Pass Filter",
     "category": "filters",
-    "description": "First-order RC high-pass filter. Cutoff frequency: f = 1/(2πRC)",
+    "description": "First-order RC high-pass filter. Blocks DC, passes AC",
     "tags": ["rc", "filter", "high-pass", "analog"],
+    "schematic": "filters/rc_high_pass.sch",
+    "netlist": "filters/rc_high_pass.cir",
     "parameters": [
       {"name": "R1", "default": "10k", "label": "Resistor", "unit": "Ω"},
-      {"name": "C1", "default": "1u", "label": "Capacitor", "unit": "F"}
+      {"name": "C1", "default": "0.01u", "label": "Capacitor", "unit": "F"}
     ],
     "hasSimulation": true,
     "simulationType": "ac"
   },
+  "rc_low_pass": {
+    "name": "RC Low-Pass Filter",
+    "category": "filters",
+    "description": "First-order RC low-pass filter. Passes DC, blocks high freq",
+    "tags": ["rc", "filter", "low-pass", "analog"],
+    "schematic": "filters/rc_low_pass.sch",
+    "netlist": "filters/rc_low_pass.cir",
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "Resistor", "unit": "Ω"},
+      {"name": "C1", "default": "0.01u", "label": "Capacitor", "unit": "F"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "ac"
+  },
+  "sallen_key_lp": {
+    "name": "Sallen-Key Low-Pass",
+    "category": "filters",
+    "description": "2nd order Sallen-Key low-pass filter. ~1kHz cutoff",
+    "tags": ["filter", "sallen-key", "low-pass", "butterworth"],
+    "schematic": "filters/sallen_key_lp.sch",
+    "netlist": "filters/sallen_key_lp.cir",
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "R1", "unit": "Ω"},
+      {"name": "R2", "default": "10k", "label": "R2", "unit": "Ω"},
+      {"name": "C1", "default": "0.01u", "label": "C1", "unit": "F"},
+      {"name": "C2", "default": "0.01u", "label": "C2", "unit": "F"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "ac"
+  },
+  "sallen_key_hp": {
+    "name": "Sallen-Key High-Pass",
+    "category": "filters",
+    "description": "2nd order Sallen-Key high-pass filter. ~1kHz cutoff",
+    "tags": ["filter", "sallen-key", "high-pass", "butterworth"],
+    "schematic": "filters/sallen_key_hp.sch",
+    "netlist": "filters/sallen_key_hp.cir",
+    "parameters": [
+      {"name": "C1", "default": "0.01u", "label": "C1", "unit": "F"},
+      {"name": "C2", "default": "0.01u", "label": "C2", "unit": "F"},
+      {"name": "R1", "default": "10k", "label": "R1", "unit": "Ω"},
+      {"name": "R2", "default": "10k", "label": "R2", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "ac"
+  },
+  "butterworth_lp": {
+    "name": "Butterworth Low-Pass",
+    "category": "filters",
+    "description": "3rd order Butterworth low-pass filter. Flat passband",
+    "tags": ["filter", "butterworth", "low-pass", "active"],
+    "schematic": "filters/butterworth_lp.sch",
+    "netlist": "filters/butterworth_lp.cir",
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "R1", "unit": "Ω"},
+      {"name": "R2", "default": "10k", "label": "R2", "unit": "Ω"},
+      {"name": "R3", "default": "10k", "label": "R3", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "ac"
+  },
+  "rc_ladder": {
+    "name": "RC Ladder Filter",
+    "category": "filters",
+    "description": "5th order RC ladder low-pass filter",
+    "tags": ["filter", "rc", "ladder", "low-pass"],
+    "schematic": "filters/rc_ladder.sch",
+    "netlist": "filters/rc_ladder.cir",
+    "parameters": [
+      {"name": "R1", "default": "1k", "label": "R1", "unit": "Ω"},
+      {"name": "C1", "default": "0.1u", "label": "C1", "unit": "F"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "ac"
+  },
+  "colpitts_oscillator": {
+    "name": "Colpitts Oscillator",
+    "category": "oscillators",
+    "description": "LC oscillator using capacitive divider. ~1MHz",
+    "tags": ["oscillator", "colpitts", "lc", "rf"],
+    "schematic": "oscillators/colpitts_oscillator.sch",
+    "netlist": "oscillators/colpitts_oscillator.cir",
+    "parameters": [
+      {"name": "L1", "default": "10u", "label": "Inductor", "unit": "H"},
+      {"name": "C1", "default": "0.01u", "label": "C1", "unit": "F"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
+  "wien_bridge": {
+    "name": "Wien Bridge Oscillator",
+    "category": "oscillators",
+    "description": "Audio frequency oscillator with Wien bridge feedback",
+    "tags": ["oscillator", "wien-bridge", "audio", "analog"],
+    "schematic": "oscillators/wien_bridge.sch",
+    "netlist": "oscillators/wien_bridge.cir",
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "R1", "unit": "Ω"},
+      {"name": "C1", "default": "0.016u", "label": "C1", "unit": "F"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
+  "crystal_oscillator": {
+    "name": "Crystal Oscillator",
+    "category": "oscillators",
+    "description": "High stability crystal oscillator. 32kHz",
+    "tags": ["oscillator", "crystal", "precision", "rtc"],
+    "schematic": "oscillators/crystal_oscillator.sch",
+    "netlist": "oscillators/crystal_oscillator.cir",
+    "parameters": [
+      {"name": "R1", "default": "1M", "label": "Feedback Resistor", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
+  "buck_converter": {
+    "name": "Buck Converter",
+    "category": "power",
+    "description": "Step-down switching regulator. 12V → 5V",
+    "tags": ["power", "buck", "switching", "regulator", "dc-dc"],
+    "schematic": "power/buck_converter.sch",
+    "netlist": "power/buck_converter.cir",
+    "parameters": [
+      {"name": "Vin", "default": "12", "label": "Input Voltage", "unit": "V"},
+      {"name": "L1", "default": "100u", "label": "Inductor", "unit": "H"},
+      {"name": "C1", "default": "100u", "label": "Output Capacitor", "unit": "F"},
+      {"name": "R1", "default": "10", "label": "Load Resistor", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
+  "boost_converter": {
+    "name": "Boost Converter",
+    "category": "power",
+    "description": "Step-up switching regulator. 5V → 12V",
+    "tags": ["power", "boost", "switching", "regulator", "dc-dc"],
+    "schematic": "power/boost_converter.sch",
+    "netlist": "power/boost_converter.cir",
+    "parameters": [
+      {"name": "Vin", "default": "5", "label": "Input Voltage", "unit": "V"},
+      {"name": "L1", "default": "100u", "label": "Inductor", "unit": "H"},
+      {"name": "C1", "default": "100u", "label": "Output Capacitor", "unit": "F"},
+      {"name": "R1", "default": "100", "label": "Load Resistor", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
+  "linear_regulator": {
+    "name": "Linear Voltage Regulator",
+    "category": "power",
+    "description": "Simple linear regulator using transistor. 12V → 5V",
+    "tags": ["power", "regulator", "linear", "voltage"],
+    "schematic": "power/linear_regulator.sch",
+    "netlist": "power/linear_regulator.cir",
+    "parameters": [
+      {"name": "Vin", "default": "12", "label": "Input Voltage", "unit": "V"},
+      {"name": "R1", "default": "1k", "label": "Base Resistor", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "op"
+  },
+  "h_bridge": {
+    "name": "H-Bridge Motor Driver",
+    "category": "power",
+    "description": "Full H-bridge for bidirectional motor control",
+    "tags": ["power", "h-bridge", "motor", "driver", "pwm"],
+    "schematic": "power/h_bridge.sch",
+    "netlist": "power/h_bridge.cir",
+    "parameters": [
+      {"name": "V1", "default": "12", "label": "Supply Voltage", "unit": "V"},
+      {"name": "L1", "default": "100u", "label": "Motor Inductance", "unit": "H"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
+  "astable_555": {
+    "name": "Astable 555 Timer",
+    "category": "timers",
+    "description": "Free-running oscillator using 555. Square wave output",
+    "tags": ["555", "timer", "astable", "oscillator", "square-wave"],
+    "schematic": "timers/astable_555.sch",
+    "netlist": "timers/astable_555.cir",
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "Timing Resistor", "unit": "Ω"},
+      {"name": "C1", "default": "0.1u", "label": "Timing Capacitor", "unit": "F"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
+  "monostable_555": {
+    "name": "Monostable 555 Timer",
+    "category": "timers",
+    "description": "One-shot pulse generator using 555",
+    "tags": ["555", "timer", "monostable", "one-shot", "pulse"],
+    "schematic": "timers/monostable_555.sch",
+    "netlist": "timers/monostable_555.cir",
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "Timing Resistor", "unit": "Ω"},
+      {"name": "C1", "default": "0.1u", "label": "Timing Capacitor", "unit": "F"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
+  "pwm_555": {
+    "name": "PWM Generator (555)",
+    "category": "timers",
+    "description": "Pulse width modulation using 555 timer",
+    "tags": ["555", "pwm", "timer", "modulation", "duty-cycle"],
+    "schematic": "timers/pwm_555.sch",
+    "netlist": "timers/pwm_555.cir",
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "R1", "unit": "Ω"},
+      {"name": "R2", "default": "10k", "label": "R2", "unit": "Ω"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
   "voltage_divider": {
     "name": "Voltage Divider",
     "category": "basics",
-    "description": "Basic voltage divider circuit. Output: Vout = Vin * R2/(R1+R2)",
+    "description": "Basic voltage divider. Vout = Vin * R2/(R1+R2)",
     "tags": ["voltage", "divider", "basics", "analog"],
+    "schematic": "basics/voltage_divider.sch",
+    "netlist": "basics/voltage_divider.cir",
     "parameters": [
       {"name": "R1", "default": "10k", "label": "Top Resistor", "unit": "Ω"},
       {"name": "R2", "default": "10k", "label": "Bottom Resistor", "unit": "Ω"},
       {"name": "V1", "default": "10", "label": "Input Voltage", "unit": "V"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "op"
+  },
+  "rc_phase_shift": {
+    "name": "RC Phase Shift Oscillator",
+    "category": "basics",
+    "description": "4-stage RC phase shift oscillator",
+    "tags": ["rc", "oscillator", "phase-shift", "analog"],
+    "schematic": "basics/rc_phase_shift.sch",
+    "netlist": "basics/rc_phase_shift.cir",
+    "parameters": [
+      {"name": "R1", "default": "10k", "label": "Resistors", "unit": "Ω"},
+      {"name": "C1", "default": "0.01u", "label": "Capacitors", "unit": "F"}
+    ],
+    "hasSimulation": true,
+    "simulationType": "tran"
+  },
+  "wheatstone_bridge": {
+    "name": "Wheatstone Bridge",
+    "category": "basics",
+    "description": "Precision resistance measurement bridge",
+    "tags": ["wheatstone", "bridge", "sensor", "measurement"],
+    "schematic": "basics/wheatstone_bridge.sch",
+    "netlist": "basics/wheatstone_bridge.cir",
+    "parameters": [
+      {"name": "R1", "default": "100", "label": "Bridge Resistors", "unit": "Ω"},
+      {"name": "R5", "default": "50", "label": "Unknown Resistor", "unit": "Ω"}
     ],
     "hasSimulation": true,
     "simulationType": "op"

@@ -1,6 +1,7 @@
 #include "project_manager.h"
 #include "help_window.h"
 #include "developer_help_window.h"
+#include "template_gallery_widget.h"
 #include "../core/ui/project_audit_dialog.h"
 #include "schematic_editor.h"
 #include "symbol_editor.h"
@@ -657,6 +658,11 @@ QWidget* ProjectManager::createLauncherArea() {
     createAndStoreTile("Calculator Tools", "Resistance, trace width, and impedance calculators", ":/icons/calculator_tools.png", &ProjectManager::openCalculatorTools);
     createAndStoreTile("Plugins Manager", "Manage extensions, importers, and add-ons", ":/icons/plugins_manager.png", &ProjectManager::openPluginsManager);
     createAndStoreTile("Help Documentation", "Software guides, tutorials, and documentation", ":/icons/tool_search.svg", &ProjectManager::showHelp);
+
+    // Add Circuit Templates Gallery
+    TemplateGalleryWidget* templateGallery = new TemplateGalleryWidget(m_launcherScrollContent);
+    connect(templateGallery, &TemplateGalleryWidget::openSchematicRequested, this, &ProjectManager::openSchematicFromTemplate);
+    layout->addWidget(templateGallery, 1);
 
     layout->addLayout(m_launcherGrid);
     layout->addStretch();
@@ -1496,8 +1502,11 @@ void ProjectManager::createMenuBar() {
     prefsMenu->addAction("Settings", this, &ProjectManager::onSettings);
 
     QMenu* helpMenu = menuBar()->addMenu("&Help");
-    helpMenu->addAction("&Help & Guides", this, &ProjectManager::showHelp, QKeySequence::HelpContents);
-    helpMenu->addAction("&Developer Documentation", this, &ProjectManager::showDeveloperHelp, QKeySequence("Ctrl+Shift+F1"));
+    QAction* helpAction = helpMenu->addAction("&Help & Guides", this, &ProjectManager::showHelp);
+    helpAction->setShortcut(QKeySequence::HelpContents);
+
+    QAction* devHelpAction = helpMenu->addAction("&Developer Documentation", this, &ProjectManager::showDeveloperHelp);
+    devHelpAction->setShortcut(QKeySequence("Ctrl+Shift+F1"));
     helpMenu->addAction("Project &Health Audit...", this, &ProjectManager::onProjectAudit);
     m_aboutAction = helpMenu->addAction("&About viospice", this, &ProjectManager::showAbout);
 }
@@ -1620,6 +1629,21 @@ void ProjectManager::openSchematicEditor() {
         if (m_workspaceFolders.isEmpty()) return;
     }
     
+    launchSchematicEditor();
+}
+
+void ProjectManager::openSchematicFromTemplate(const QString& filePath) {
+    if (m_workspaceFolders.isEmpty()) {
+        int ret = QMessageBox::question(this, "No Folders in Workspace", 
+            "No folders are currently in the workspace. Do you want to add a folder?",
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (ret == QMessageBox::Yes) {
+             addFolderToWorkspace();
+        }
+        if (m_workspaceFolders.isEmpty()) return;
+    }
+    
+    m_pendingTemplateFile = filePath;
     launchSchematicEditor();
 }
 

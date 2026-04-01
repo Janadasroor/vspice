@@ -449,6 +449,9 @@ endif()
 # =============================================================================
 set(UI_SOURCES
     ui/project_manager.cpp
+    ui/project_manager.h
+    ui/template_gallery_widget.cpp
+    ui/template_gallery_widget.h
     ui/csv_viewer.cpp
     ui/csv_viewer.h
     ui/help_window.cpp

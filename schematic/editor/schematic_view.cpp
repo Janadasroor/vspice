@@ -761,9 +761,15 @@ void SchematicView::mouseMoveEvent(QMouseEvent *event) {
             // Find connected components for context
             QString context;
             if (m_netManager) {
-                QStringList conns = m_netManager->connectedComponents(hoveredNet);
-                if (!conns.isEmpty()) {
-                    context = conns.join(", ");
+                QList<SchematicItem*> conns = m_netManager->getItemsForNet(hoveredNet);
+                QStringList componentRefs;
+                for (auto* item : conns) {
+                    if (!item->reference().isEmpty()) {
+                        componentRefs.append(item->reference());
+                    }
+                }
+                if (!componentRefs.isEmpty()) {
+                    context = componentRefs.join(", ");
                 }
             }
             

@@ -42,6 +42,7 @@ private slots:
     void addFolderToWorkspace();
     void openProject(const QString& path);
     void openSchematicEditor();
+    void openSchematicFromTemplate(const QString& filePath);
     void openSymbolEditor();
     void openCalculatorTools();
     void openPluginsManager();
@@ -110,6 +111,7 @@ private:
     QStringList m_workspaceFolders;
     QString m_workspaceFilePath;
     bool m_workspaceDirty;
+    QString m_pendingTemplateFile;
     
     // Core methods
     void refreshProjectTree();
