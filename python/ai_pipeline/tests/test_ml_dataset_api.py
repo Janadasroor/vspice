@@ -412,6 +412,56 @@ class SimulationDatasetServiceTest(unittest.TestCase):
         self.assertEqual(doubled["2.0"], 4.0)
         self.assertEqual(doubled["4.0"], 2.0)
 
+    def test_run_job_marks_result_filter_rejections(self):
+        result = self.service.run_job(
+            {
+                "schematic_path": str(self.schematic_path),
+                "analysis": "tran",
+                "signals": ["V(out)"],
+                "measures": ["max V(out)"],
+                "result_filters": [
+                    {"measure": "max V(out)", "op": "<", "target": {"value": 4.0}},
+                ],
+            }
+        )
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["result_filters"]["rule_count"], 1)
+        self.assertFalse(result["result_filters"]["evaluations"][0]["passed"])
+
+    def test_run_batch_can_discard_filtered_records(self):
+        output_path = Path(self.temp_dir.name) / "filtered_batch.jsonl"
+        result = self.service.run_batch(
+            jobs=[
+                {
+                    "schematic_path": str(self.schematic_path),
+                    "analysis": "tran",
+                    "signals": ["V(out)"],
+                    "measures": ["max V(out)"],
+                    "result_filters": [{"measure": "max V(out)", "op": ">=", "target": {"value": 4.0}}],
+                    "discard_filtered": True,
+                },
+                {
+                    "schematic_path": str(self.schematic_path),
+                    "analysis": "tran",
+                    "signals": ["V(out)"],
+                    "measures": ["max V(out)"],
+                    "result_filters": [{"measure": "max V(out)", "op": ">", "target": {"value": 4.0}}],
+                    "discard_filtered": True,
+                },
+            ],
+            concurrency=2,
+            output_path=str(output_path),
+            inline_results=False,
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["filtered_count"], 1)
+        self.assertEqual(result["accepted_count"], 1)
+        lines = output_path.read_text(encoding="utf-8").strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        record = json.loads(lines[0])
+        self.assertTrue(record["accepted"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -73,6 +73,13 @@ Example request:
       "step": "5u",
       "signals": ["V(out)"],
       "measures": ["avg V(out)", "rms V(out)"],
+      "result_filters": [
+        {
+          "measure": "rms V(out)",
+          "op": ">=",
+          "target": {"value": 0.1}
+        }
+      ],
       "labels": {
         "ratio": 0.5
       }
@@ -234,6 +241,18 @@ Derived labels:
   - `{"value":2}`
 - supported expression operators:
   - `add`, `sub`, `mul`, `div`, `pow`, `min`, `max`, `abs`
+
+Result filters:
+
+- result filters are evaluated after measures, stats, and derived labels are computed
+- each record gets:
+  - `accepted`: `true` or `false`
+  - `result_filters`: rule evaluation summary
+- with `discard_filtered: true`, rejected records are omitted from JSONL batch output
+- supported sources on the left side:
+  - `measure`, `stat`, `label`, `param`, `value`
+- example:
+  - `{"measure":"rms V(out)","op":">=","target":{"value":0.1}}`
 
 ## Notes
 

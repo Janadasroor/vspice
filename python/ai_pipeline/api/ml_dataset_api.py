@@ -798,6 +798,51 @@ def _apply_derived_labels(
     return computed
 
 
+def _normalize_result_filter_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(rule, dict):
+        raise ValueError("each result filter must be an object")
+    if "left" in rule and "right" in rule and "op" in rule:
+        return dict(rule)
+    supported = ("param", "label", "measure", "stat", "value")
+    for key in supported:
+        if key in rule and "op" in rule and "target" in rule:
+            return {"left": {key: rule[key]}, "op": rule["op"], "right": rule["target"]}
+    raise ValueError("result filter must define either left/op/right or <source>/op/target")
+
+
+def _evaluate_result_filters(
+    result_filters: List[Dict[str, Any]],
+    *,
+    labels: Dict[str, Any],
+    metadata: Dict[str, Any],
+    measures: List[Dict[str, Any]],
+    stats: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    normalized_rules = [_normalize_result_filter_rule(rule) for rule in list(result_filters or [])]
+    evaluations = []
+    all_passed = True
+    for rule in normalized_rules:
+        left = _resolve_derived_operand(
+            rule.get("left"),
+            labels=labels,
+            metadata=metadata,
+            measures=measures,
+            stats=stats,
+        )
+        right = _resolve_derived_operand(
+            rule.get("right"),
+            labels=labels,
+            metadata=metadata,
+            measures=measures,
+            stats=stats,
+        )
+        passed = _evaluate_constraint_rule({"left": {"value": left}, "op": rule["op"], "right": {"value": right}}, {})
+        evaluations.append({"rule": rule, "passed": passed, "left": left, "right": right})
+        if not passed:
+            all_passed = False
+    return {"passed": all_passed, "rule_count": len(normalized_rules), "evaluations": evaluations}
+
+
 def _select_combos(
     combos: List[tuple],
     sampling: Optional[Dict[str, Any]],
@@ -898,6 +943,8 @@ class SimulationDatasetService:
         normalized["tags"] = dict(normalized.get("tags") or {})
         normalized["metadata"] = dict(normalized.get("metadata") or {})
         normalized["derived_labels"] = list(normalized.get("derived_labels") or [])
+        normalized["result_filters"] = list(normalized.get("result_filters") or [])
+        normalized["discard_filtered"] = bool(normalized.get("discard_filtered", False))
         normalized["timeout_seconds"] = normalized.get("timeout_seconds")
         normalized["max_points"] = normalized.get("max_points")
         normalized["base_signal"] = normalized.get("base_signal")
@@ -949,6 +996,13 @@ class SimulationDatasetService:
             measures=measures,
             stats=stats,
         )
+        filter_summary = _evaluate_result_filters(
+            normalized["result_filters"],
+            labels=computed_labels,
+            metadata=normalized["metadata"],
+            measures=measures,
+            stats=stats,
+        )
 
         completed_at = time.time()
         return {
@@ -971,6 +1025,9 @@ class SimulationDatasetService:
             "labels": computed_labels,
             "tags": normalized["tags"],
             "metadata": normalized["metadata"],
+            "accepted": filter_summary["passed"],
+            "result_filters": filter_summary,
+            "discard_filtered": normalized["discard_filtered"],
             "artifacts": {
                 "netlist": netlist_json,
                 "simulation": simulation_json,
@@ -992,6 +1049,7 @@ class SimulationDatasetService:
         results: List[Dict[str, Any]] = []
         completed = 0
         failures = 0
+        filtered_counter = [0]
         write_lock = threading.Lock()
 
         if output_path:
@@ -1016,12 +1074,20 @@ class SimulationDatasetService:
                     "tags": dict(job.get("tags") or {}),
                     "metadata": dict(job.get("metadata") or {}),
                     "error": str(exc),
+                    "accepted": False,
+                    "result_filters": {"passed": False, "rule_count": 0, "evaluations": []},
+                    "discard_filtered": bool(job.get("discard_filtered", False)),
                     "artifacts": {
                         "netlist": None,
                         "simulation": None,
                     },
                 }
-            if output_path:
+            should_write = True
+            if record.get("ok", False) and not record.get("accepted", True):
+                filtered_counter[0] += 1
+                if record.get("discard_filtered", False):
+                    should_write = False
+            if output_path and should_write:
                 with write_lock:
                     with open(output_path, "a", encoding="utf-8") as handle:
                         handle.write(json.dumps(record, ensure_ascii=True) + "\n")
@@ -1048,6 +1114,8 @@ class SimulationDatasetService:
             "job_count": len(jobs),
             "completed_count": completed,
             "failure_count": failures,
+            "filtered_count": filtered_counter[0],
+            "accepted_count": completed - failures - filtered_counter[0],
             "duration_seconds": round(finished_at - started_at, 6),
             "output_path": os.path.abspath(output_path) if output_path else None,
         }
