@@ -1,11 +1,13 @@
 import json
+import os
 from pathlib import Path
+import time
 import threading
 import traceback
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .ml_dataset_api import SimulationDatasetService, VioCmdRunner, _utc_now_iso
@@ -141,6 +143,45 @@ class InMemoryJobStore:
         return str(self._persist_path) if self._persist_path else None
 
 
+class FixedWindowRateLimiter:
+    def __init__(self, limit: Optional[int] = None, window_seconds: int = 60) -> None:
+        self._limit = int(limit) if limit is not None else None
+        self._window_seconds = max(1, int(window_seconds))
+        self._lock = threading.Lock()
+        self._buckets: Dict[str, Dict[str, Any]] = {}
+
+    def check(self, key: str) -> Dict[str, Any]:
+        if self._limit is None or self._limit <= 0:
+            return {"allowed": True, "limit": self._limit, "remaining": None, "reset_at": None}
+        now = time.time()
+        with self._lock:
+            bucket = self._buckets.get(key)
+            if not bucket or now >= bucket["reset_at"]:
+                bucket = {"count": 0, "reset_at": now + self._window_seconds}
+                self._buckets[key] = bucket
+            if bucket["count"] >= self._limit:
+                return {
+                    "allowed": False,
+                    "limit": self._limit,
+                    "remaining": 0,
+                    "reset_at": bucket["reset_at"],
+                }
+            bucket["count"] += 1
+            remaining = max(0, self._limit - bucket["count"])
+            return {
+                "allowed": True,
+                "limit": self._limit,
+                "remaining": remaining,
+                "reset_at": bucket["reset_at"],
+            }
+
+
+class SecurityConfig(BaseModel):
+    api_key: Optional[str] = None
+    rate_limit: Optional[int] = None
+    rate_window_seconds: int = 60
+
+
 def _start_background_job(
     store: InMemoryJobStore,
     kind: str,
@@ -168,14 +209,47 @@ def _start_background_job(
     return record
 
 
-def create_app(cli_path: Optional[str] = None, job_store_path: Optional[str] = None) -> FastAPI:
+def create_app(
+    cli_path: Optional[str] = None,
+    job_store_path: Optional[str] = None,
+    api_key: Optional[str] = None,
+    rate_limit: Optional[int] = None,
+    rate_window_seconds: int = 60,
+) -> FastAPI:
     service = SimulationDatasetService(VioCmdRunner(cli_path))
     job_store = InMemoryJobStore(job_store_path)
+    security = SecurityConfig(
+        api_key=api_key or os.environ.get("VIOSPICE_ML_API_KEY"),
+        rate_limit=rate_limit if rate_limit is not None else (
+            int(os.environ["VIOSPICE_ML_RATE_LIMIT"]) if os.environ.get("VIOSPICE_ML_RATE_LIMIT") else None
+        ),
+        rate_window_seconds=rate_window_seconds if rate_window_seconds is not None else (
+            int(os.environ.get("VIOSPICE_ML_RATE_WINDOW_SECONDS", "60"))
+        ),
+    )
+    rate_limiter = FixedWindowRateLimiter(security.rate_limit, security.rate_window_seconds)
     app = FastAPI(
         title="VioSpice ML Dataset API",
-        version="0.4.0",
+        version="0.5.0",
         description="ASGI/OpenAPI wrapper for VioSpice ML-oriented simulation, batch generation, and sweep dataset workflows.",
     )
+
+    def require_access(request: Request, x_api_key: Optional[str] = Header(default=None)) -> None:
+        if security.api_key and x_api_key != security.api_key:
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+        client_host = request.client.host if request.client else "unknown"
+        key = x_api_key or client_host
+        limit_state = rate_limiter.check(key)
+        if not limit_state["allowed"]:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "message": "Rate limit exceeded",
+                    "limit": limit_state["limit"],
+                    "remaining": limit_state["remaining"],
+                    "reset_at": limit_state["reset_at"],
+                },
+            )
 
     @app.get("/api/ml/health")
     def health() -> Dict[str, Any]:
@@ -186,10 +260,14 @@ def create_app(cli_path: Optional[str] = None, job_store_path: Optional[str] = N
             "cli_path": service.runner.cli_path,
             "async_jobs": True,
             "job_store_path": job_store.persist_path,
+            "auth_enabled": bool(security.api_key),
+            "rate_limit": security.rate_limit,
+            "rate_window_seconds": security.rate_window_seconds,
         }
 
     @app.post("/api/ml/simulate")
-    def simulate(request: SimulateRequest) -> Dict[str, Any]:
+    def simulate(request: SimulateRequest, http_request: Request, x_api_key: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        require_access(http_request, x_api_key)
         try:
             sample = service.run_job(request.dict())
         except Exception as exc:
@@ -197,7 +275,8 @@ def create_app(cli_path: Optional[str] = None, job_store_path: Optional[str] = N
         return {"ok": sample.get("ok", False), "sample": sample}
 
     @app.post("/api/ml/batch")
-    def batch(request: BatchRequest) -> Dict[str, Any]:
+    def batch(request: BatchRequest, http_request: Request, x_api_key: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        require_access(http_request, x_api_key)
         try:
             return service.run_batch(
                 jobs=request.jobs,
@@ -210,14 +289,16 @@ def create_app(cli_path: Optional[str] = None, job_store_path: Optional[str] = N
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/ml/sweep")
-    def sweep(request: SweepRequest) -> Dict[str, Any]:
+    def sweep(request: SweepRequest, http_request: Request, x_api_key: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        require_access(http_request, x_api_key)
         try:
             return service.run_sweep(request.dict())
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/ml/jobs/simulate", response_model=AsyncJobAccepted)
-    def simulate_async(request: SimulateRequest) -> Dict[str, Any]:
+    def simulate_async(request: SimulateRequest, http_request: Request, x_api_key: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        require_access(http_request, x_api_key)
         record = _start_background_job(job_store, "simulate", request.dict(), service.run_job)
         return {
             "ok": True,
@@ -228,7 +309,8 @@ def create_app(cli_path: Optional[str] = None, job_store_path: Optional[str] = N
         }
 
     @app.post("/api/ml/jobs/batch", response_model=AsyncJobAccepted)
-    def batch_async(request: BatchRequest) -> Dict[str, Any]:
+    def batch_async(request: BatchRequest, http_request: Request, x_api_key: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        require_access(http_request, x_api_key)
         payload = request.dict()
         record = _start_background_job(
             job_store,
@@ -251,7 +333,8 @@ def create_app(cli_path: Optional[str] = None, job_store_path: Optional[str] = N
         }
 
     @app.post("/api/ml/jobs/sweep", response_model=AsyncJobAccepted)
-    def sweep_async(request: SweepRequest) -> Dict[str, Any]:
+    def sweep_async(request: SweepRequest, http_request: Request, x_api_key: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        require_access(http_request, x_api_key)
         record = _start_background_job(job_store, "sweep", request.dict(), service.run_sweep)
         return {
             "ok": True,
@@ -262,7 +345,8 @@ def create_app(cli_path: Optional[str] = None, job_store_path: Optional[str] = N
         }
 
     @app.get("/api/ml/jobs/{job_id}")
-    def get_job(job_id: str) -> Dict[str, Any]:
+    def get_job(job_id: str, http_request: Request, x_api_key: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        require_access(http_request, x_api_key)
         record = job_store.get_job(job_id)
         if not record:
             raise HTTPException(status_code=404, detail=f"job '{job_id}' not found")

@@ -29,7 +29,12 @@ python3 python/scripts/ml_dataset_api.py --port 8787 --cli-path ./build/vio-cmd
 For OpenAPI docs and ASGI deployment:
 
 ```bash
-python3 python/scripts/fastapi_ml_dataset_api.py --port 8790 --job-store /tmp/viospice-ml-jobs.json
+python3 python/scripts/fastapi_ml_dataset_api.py \
+  --port 8790 \
+  --job-store /tmp/viospice-ml-jobs.json \
+  --api-key your-secret-key \
+  --rate-limit 120 \
+  --rate-window-seconds 60
 ```
 
 Then use:
@@ -52,6 +57,15 @@ Persistent async jobs:
 
 - use `--job-store /path/to/jobs.json` to persist async job state
 - on restart, previously `queued` or `running` jobs are repaired to `failed` with an interruption error so clients do not wait indefinitely
+
+Authentication and rate limiting:
+
+- use `--api-key <secret>` to require `X-API-Key: <secret>` on all ML endpoints except `/api/ml/health`
+- use `--rate-limit <n>` and `--rate-window-seconds <s>` for fixed-window request limiting
+- the same settings can be provided by environment variables:
+  - `VIOSPICE_ML_API_KEY`
+  - `VIOSPICE_ML_RATE_LIMIT`
+  - `VIOSPICE_ML_RATE_WINDOW_SECONDS`
 
 ## Endpoints
 
