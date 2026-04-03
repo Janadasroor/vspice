@@ -37,6 +37,10 @@ public:
 
     void setPen(const QPen& pen) { m_pen = pen; update(); }
     QPen pen() const { return m_pen; }
+    void setSimulationNetColorOverride(const QColor& color);
+    void clearSimulationNetColorOverride();
+    bool hasSimulationNetColorOverride() const { return m_hasSimulationColorOverride; }
+    QColor simulationNetColorOverride() const { return m_simulationNetColorOverride; }
 
     // Wire type management
     void setWireType(WireType type) { m_wireType = type; updatePen(); update(); }
@@ -75,6 +79,8 @@ private:
     QList<JumpOver> m_jumpOvers;
     double m_voltage = 0.0;
     bool m_hasVoltage = false;
+    QColor m_simulationNetColorOverride;
+    bool m_hasSimulationColorOverride = false;
 };
 
 #endif // WIREITEM_H

@@ -2,6 +2,7 @@
 #include "footprint_library.h"
 #include "footprint_commands.h"
 #include "kicad_footprint_importer.h"
+#include "ui/footprint_wizard_dialog.h"
 #include "../core/theme_manager.h"
 #include "../core/config_manager.h"
 #include "../pcb/ui/pcb_3d_window.h"
@@ -846,6 +847,12 @@ void FootprintEditor::createToolBar() {
     QAction* zoomFit = m_toolbar->addAction(QIcon(":/icons/view_fit.svg"), "Zoom Fit");
     connect(zoomFit, &QAction::triggered, this, &FootprintEditor::onZoomFit);
     
+    QAction* wizardAction = m_toolbar->addAction("🔧 Wizard");
+    wizardAction->setToolTip("Footprint Wizard — auto-generate standard packages");
+    wizardAction->setShortcut(QKeySequence("Ctrl+W"));
+    connect(wizardAction, &QAction::triggered, this, &FootprintEditor::onOpenWizard);
+    connect(zoomFit, &QAction::triggered, this, &FootprintEditor::onZoomFit);
+    
     m_toolbar->addSeparator();
 
     // Grid Selector 
@@ -1350,6 +1357,11 @@ void FootprintEditor::onZoomOut() { m_view->scale(1/1.2, 1/1.2); }
 void FootprintEditor::onZoomFit() { 
     if (m_scene->items().isEmpty()) m_view->fitInView(QRectF(-5, -5, 10, 10), Qt::KeepAspectRatio);
     else m_view->fitInView(m_scene->itemsBoundingRect(), Qt::KeepAspectRatio); 
+}
+
+void FootprintEditor::onOpenWizard() {
+    FootprintWizardDialog* wizard = new FootprintWizardDialog(this, this);
+    wizard->exec();
 }
 
 void FootprintEditor::onGridSizeChanged(const QString& size) {

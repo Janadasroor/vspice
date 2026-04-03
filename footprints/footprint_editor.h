@@ -76,6 +76,7 @@ private slots:
     void onZoomIn();
     void onZoomOut();
     void onZoomFit();
+    void onOpenWizard();
     
     // Alignment tools
     void onAlignLeft();

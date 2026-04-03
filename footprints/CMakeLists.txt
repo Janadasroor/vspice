@@ -26,9 +26,15 @@ set(FOOTPRINTS_SOURCES
     kicad_footprint_importer.cpp
     kicad_footprint_importer.h
 
+    # Wizard
+    footprint_wizard.cpp
+    footprint_wizard.h
+
     # UI
     ui/footprint_editor_view.cpp
     ui/footprint_editor_view.h
+    ui/footprint_wizard_dialog.cpp
+    ui/footprint_wizard_dialog.h
 )
 
 add_library(FluxFootprints STATIC ${FOOTPRINTS_SOURCES})

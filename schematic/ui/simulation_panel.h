@@ -18,6 +18,8 @@
 #include <QMap>
 #include <QPair>
 #include <QVariantMap>
+#include <QVector>
+#include <QPointer>
 #include <atomic>
 #include <QDateTime>
 #include "../../simulator/bridge/sim_manager.h"
@@ -29,6 +31,7 @@
 class QGraphicsScene;
 class SchematicEditor;
 class NetManager;
+class SimulationNetTableItem;
 
 class SimulationPanel : public QWidget {
     Q_OBJECT
@@ -171,6 +174,8 @@ private:
     QStringList connectedNetsForItem(class SchematicItem* item, bool updateNets = true) const;
     void appendDerivedPowerWaveforms(SimResults& results) const;
     void appendEfficiencySummary(SimResults& results) const;
+    void updateTransientNetTableOverlay(const SimResults& results);
+    void clearTransientNetTableOverlay(QGraphicsScene* scene = nullptr);
     void refreshEfficiencyReport(const SimResults& results);
     void refreshSteppedMeasurementControls(const SimResults& results);
     void rebuildSteppedMeasurementPlot(const SimResults& results);
@@ -258,6 +263,7 @@ private:
     QWidget* m_efficiencyTab = nullptr;
     QLabel* m_efficiencySummaryLabel = nullptr;
     QTableWidget* m_efficiencyTable = nullptr;
+    QCheckBox* m_autoNetTableCheck = nullptr;
     
     QString m_lastNetlistPath;
     QCheckBox* m_overlayPreviousRun;
@@ -299,6 +305,7 @@ private:
 
     // Per-tab oscilloscope state persistence
     QMap<QGraphicsScene*, TabOscilloscopeState> m_tabStates;
+    QMap<QGraphicsScene*, QPointer<SimulationNetTableItem>> m_netTableItems;
 };
 
 #endif // SIMULATION_PANEL_H

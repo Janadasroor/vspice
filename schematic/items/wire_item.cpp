@@ -109,6 +109,18 @@ void WireItem::setPoints(const QList<QPointF>& points) {
     }
 }
 
+void WireItem::setSimulationNetColorOverride(const QColor& color) {
+    m_simulationNetColorOverride = color;
+    m_hasSimulationColorOverride = true;
+    update();
+}
+
+void WireItem::clearSimulationNetColorOverride() {
+    m_hasSimulationColorOverride = false;
+    m_simulationNetColorOverride = QColor();
+    update();
+}
+
 QRectF WireItem::boundingRect() const {
     if (m_points.isEmpty()) return QRectF();
     QRectF rect(m_points.first(), QSizeF(1, 1));
@@ -151,7 +163,9 @@ void WireItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, 
     }
 
     QPen mainPen = m_pen;
-    if (m_hasVoltage) {
+    if (m_hasSimulationColorOverride) {
+        mainPen.setColor(m_simulationNetColorOverride);
+    } else if (m_hasVoltage) {
         // Live voltage coloration:
         // 0V or less -> Blue/GND
         // 5V or more -> Bright Red

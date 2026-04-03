@@ -268,6 +268,8 @@ set(SCHEMATIC_SOURCES
     schematic/items/smart_signal_item.h
     schematic/items/smart_signal_item.cpp
     schematic/items/simulation_overlay_item.h
+    schematic/items/simulation_net_table_item.cpp
+    schematic/items/simulation_net_table_item.h
     schematic/items/signal_generator_item.cpp
     schematic/items/signal_generator_item.h
     schematic/items/logic_analyzer_item.cpp

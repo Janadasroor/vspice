@@ -2,12 +2,15 @@
 #include "../items/voltage_source_item.h"
 #include "../items/schematic_spice_directive_item.h"
 #include "../items/schematic_page_item.h"
+#include "../items/simulation_net_table_item.h"
+#include "../items/wire_item.h"
 #include "../../simulator/core/sim_value_parser.h"
 #include "simulator/core/raw_data_parser.h"
 #include "waveform_viewer.h"
 #include "simulation_log_dialog.h"
 #include "../../simulator/bridge/sim_audio_engine.h"
 #include "../../core/theme_manager.h"
+#include "../../core/config_manager.h"
 #include "../../core/simulation_manager.h"
 #include "../io/netlist_generator.h"
 #include "../items/schematic_item.h"
@@ -62,6 +65,14 @@ struct SimBuildResult {
     QStringList diagnostics;
     QString netlistText;
 };
+
+struct WaveformStats {
+    double average = 0.0;
+    double rms = 0.0;
+    double minimum = 0.0;
+    double maximum = 0.0;
+    bool valid = false;
+};
 }
 #include <QInputDialog>
 #include <QJsonArray>
@@ -80,6 +91,53 @@ struct SimBuildResult {
 #include "../../simulator/bridge/sim_schematic_bridge.h"
 
 namespace {
+QVector<QColor> transientNetPalette() {
+    return {
+        QColor("#38bdf8"),
+        QColor("#f59e0b"),
+        QColor("#ef4444"),
+        QColor("#22c55e"),
+        QColor("#a855f7"),
+        QColor("#f97316"),
+        QColor("#14b8a6"),
+        QColor("#eab308"),
+        QColor("#ec4899"),
+        QColor("#6366f1"),
+        QColor("#84cc16"),
+        QColor("#06b6d4")
+    };
+}
+
+QString canonicalWaveformNetName(const QString& rawName) {
+    const QString trimmed = rawName.trimmed();
+    if (trimmed.startsWith("V(", Qt::CaseInsensitive) && trimmed.endsWith(')')) {
+        return trimmed.mid(2, trimmed.size() - 3).trimmed();
+    }
+    return trimmed;
+}
+
+WaveformStats computeWaveformStats(const SimWaveform& wave) {
+    WaveformStats stats;
+    if (wave.yData.empty()) return stats;
+
+    stats.minimum = wave.yData.front();
+    stats.maximum = wave.yData.front();
+    double sum = 0.0;
+    double energy = 0.0;
+    for (double value : wave.yData) {
+        sum += value;
+        energy += value * value;
+        stats.minimum = std::min(stats.minimum, value);
+        stats.maximum = std::max(stats.maximum, value);
+    }
+
+    const double count = static_cast<double>(wave.yData.size());
+    stats.average = sum / count;
+    stats.rms = std::sqrt(energy / count);
+    stats.valid = true;
+    return stats;
+}
+
 QString axisLabelFromSchema(const std::string& axisName) {
     if (axisName == "time_s") return "Time (s)";
     if (axisName == "frequency_hz") return "Frequency (Hz)";
@@ -697,6 +755,146 @@ void SimulationPanel::refreshEfficiencyReport(const SimResults& results) {
             .arg(QString::number(rowDef.value, 'f', rowDef.unit == "%" ? 2 : 6))
             .arg(rowDef.unit)));
     }
+}
+
+void SimulationPanel::clearTransientNetTableOverlay(QGraphicsScene* scene) {
+    QGraphicsScene* targetScene = scene ? scene : m_scene;
+    if (!targetScene) return;
+
+    for (QGraphicsItem* item : targetScene->items()) {
+        if (auto* wire = dynamic_cast<WireItem*>(item)) {
+            wire->clearSimulationNetColorOverride();
+        }
+    }
+}
+
+void SimulationPanel::updateTransientNetTableOverlay(const SimResults& results) {
+    if (!m_scene || !m_netManager || results.analysisType != SimAnalysisType::Transient) return;
+    if (!m_autoNetTableCheck || !m_autoNetTableCheck->isChecked()) return;
+
+    m_netManager->updateNets(m_scene);
+
+    QMap<QString, const SimWaveform*> voltageWaves;
+    QMap<QString, QString> displayNames;
+    for (const auto& wave : results.waveforms) {
+        const QString rawName = QString::fromStdString(wave.name).trimmed();
+        if (rawName.startsWith("I(", Qt::CaseInsensitive) ||
+            rawName.startsWith("P(", Qt::CaseInsensitive)) {
+            continue;
+        }
+        const QString netName = canonicalWaveformNetName(rawName);
+        const QString normalizedName = netName.trimmed().toUpper();
+        if (!normalizedName.isEmpty() && !voltageWaves.contains(normalizedName)) {
+            voltageWaves.insert(normalizedName, &wave);
+            displayNames.insert(normalizedName, netName);
+        }
+    }
+
+    QStringList netNames = m_netManager->netNames();
+    std::sort(netNames.begin(), netNames.end(), [](const QString& a, const QString& b) {
+        const bool autoA = a.startsWith("AutoNet", Qt::CaseInsensitive);
+        const bool autoB = b.startsWith("AutoNet", Qt::CaseInsensitive);
+        if (autoA != autoB) return !autoA;
+        return a.localeAwareCompare(b) < 0;
+    });
+
+    const QVector<QColor> palette = transientNetPalette();
+    QVector<SimulationNetTableItem::Row> rows;
+    int colorIndex = 0;
+    for (const QString& netName : netNames) {
+        const QString normalizedName = netName.trimmed().toUpper();
+        const auto it = voltageWaves.constFind(normalizedName);
+        if (it == voltageWaves.constEnd()) continue;
+
+        const WaveformStats stats = computeWaveformStats(*it.value());
+        if (!stats.valid) continue;
+
+        SimulationNetTableItem::Row row;
+        row.netName = netName;
+        row.color = palette[colorIndex % palette.size()];
+        row.average = stats.average;
+        row.rms = stats.rms;
+        row.minimum = stats.minimum;
+        row.maximum = stats.maximum;
+        rows.append(row);
+        ++colorIndex;
+    }
+
+    if (rows.isEmpty()) {
+        QStringList fallbackNames = displayNames.keys();
+        std::sort(fallbackNames.begin(), fallbackNames.end(), [](const QString& a, const QString& b) {
+            return a.localeAwareCompare(b) < 0;
+        });
+
+        for (const QString& normalizedName : fallbackNames) {
+            const auto it = voltageWaves.constFind(normalizedName);
+            if (it == voltageWaves.constEnd()) continue;
+
+            const WaveformStats stats = computeWaveformStats(*it.value());
+            if (!stats.valid) continue;
+
+            SimulationNetTableItem::Row row;
+            row.netName = displayNames.value(normalizedName, normalizedName);
+            row.color = palette[colorIndex % palette.size()];
+            row.average = stats.average;
+            row.rms = stats.rms;
+            row.minimum = stats.minimum;
+            row.maximum = stats.maximum;
+            rows.append(row);
+            ++colorIndex;
+        }
+    }
+
+    if (rows.isEmpty()) return;
+
+    clearTransientNetTableOverlay(m_scene);
+    for (const auto& row : rows) {
+        QString matchedNetName = row.netName;
+        if (!m_netManager->getWiresInNet(matchedNetName).isEmpty()) {
+            for (WireItem* wire : m_netManager->getWiresInNet(matchedNetName)) {
+                if (wire) wire->setSimulationNetColorOverride(row.color);
+            }
+            continue;
+        }
+
+        for (const QString& candidateNet : netNames) {
+            if (candidateNet.compare(row.netName, Qt::CaseInsensitive) != 0) continue;
+            matchedNetName = candidateNet;
+            break;
+        }
+
+        for (WireItem* wire : m_netManager->getWiresInNet(matchedNetName)) {
+            if (wire) wire->setSimulationNetColorOverride(row.color);
+        }
+    }
+
+    SimulationNetTableItem* tableItem = m_netTableItems.value(m_scene, nullptr);
+    if (!tableItem) {
+        for (QGraphicsItem* item : m_scene->items()) {
+            if (auto* existing = dynamic_cast<SimulationNetTableItem*>(item)) {
+                tableItem = existing;
+                break;
+            }
+        }
+    }
+
+    if (!tableItem) {
+        tableItem = new SimulationNetTableItem();
+        const QRectF bounds = m_scene->itemsBoundingRect();
+        tableItem->setPos(bounds.isValid() ? bounds.topLeft() + QPointF(40.0, 40.0) : QPointF(40.0, 40.0));
+        m_scene->addItem(tableItem);
+        connect(tableItem, &SimulationNetTableItem::deleteRequested, this, [this, scene = m_scene]() {
+            clearTransientNetTableOverlay(scene);
+            m_netTableItems.remove(scene);
+        });
+        connect(tableItem, &QObject::destroyed, this, [this, scene = m_scene]() {
+            if (m_netTableItems.value(scene) == nullptr) return;
+            m_netTableItems.remove(scene);
+        });
+    }
+
+    tableItem->setRows(rows);
+    m_netTableItems[m_scene] = tableItem;
 }
 
 void SimulationPanel::addProbe(const QString& signalName) {
@@ -1782,6 +1980,9 @@ void SimulationPanel::setupUI() {
     m_steadyCheck = new QCheckBox("Stop at steady state");
     m_steadyTolEdit = new QLineEdit();
     m_steadyDelayEdit = new QLineEdit();
+    m_autoNetTableCheck = new QCheckBox("Auto net table on transient run");
+    m_autoNetTableCheck->setChecked(
+        ConfigManager::instance().toolProperty("SimulationPanel", "showTransientNetTable", true).toBool());
     for(auto* l : {m_param1, m_param2, m_param3, m_param4, m_param5, m_param6}) l->setStyleSheet("QLineEdit { background: #121214; color: #fff; border: 1px solid #333; }");
     for (auto* l : {m_steadyTolEdit, m_steadyDelayEdit}) l->setStyleSheet("QLineEdit { background: #121214; color: #fff; border: 1px solid #333; }");
     m_steadyTolEdit->setPlaceholderText("0.01");
@@ -1796,6 +1997,7 @@ void SimulationPanel::setupUI() {
     configForm->addRow("P4/Src:", m_param4);
     configForm->addRow("P5/Node:", m_param5);
     configForm->addRow("Z0:", m_param6);
+    configForm->addRow("Overlay:", m_autoNetTableCheck);
     sidebarLayout->addWidget(configFrame);
 
     QLabel* generatorsLabel = new QLabel("SOURCE GENERATORS");
@@ -2125,6 +2327,9 @@ void SimulationPanel::setupUI() {
     connect(m_steadyCheck, &QCheckBox::toggled, this, &SimulationPanel::updateSchematicDirective);
     connect(m_steadyTolEdit, &QLineEdit::textChanged, this, &SimulationPanel::updateSchematicDirective);
     connect(m_steadyDelayEdit, &QLineEdit::textChanged, this, &SimulationPanel::updateSchematicDirective);
+    connect(m_autoNetTableCheck, &QCheckBox::toggled, this, [](bool enabled) {
+        ConfigManager::instance().setToolProperty("SimulationPanel", "showTransientNetTable", enabled);
+    });
     connect(m_param1, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
     connect(m_param2, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
     connect(m_param3, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
@@ -2828,6 +3033,7 @@ void SimulationPanel::onSimResultsReady(const SimResults& results) {
     appendDerivedPowerWaveforms(effectiveResults);
     appendEfficiencySummary(effectiveResults);
     refreshEfficiencyReport(effectiveResults);
+    updateTransientNetTableOverlay(effectiveResults);
 
     if (m_hasLastResults) {
         m_previousResults = std::move(m_lastResults);
