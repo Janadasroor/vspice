@@ -171,6 +171,7 @@ private:
     QStringList connectedNetsForItem(class SchematicItem* item, bool updateNets = true) const;
     void appendDerivedPowerWaveforms(SimResults& results) const;
     void appendEfficiencySummary(SimResults& results) const;
+    void refreshEfficiencyReport(const SimResults& results);
     void refreshSteppedMeasurementControls(const SimResults& results);
     void rebuildSteppedMeasurementPlot(const SimResults& results);
 
@@ -254,6 +255,9 @@ private:
     QWidget* m_scopeContainer = nullptr;
     SmithChartWidget* m_smithChart = nullptr;
     QWidget* m_rfTab = nullptr;
+    QWidget* m_efficiencyTab = nullptr;
+    QLabel* m_efficiencySummaryLabel = nullptr;
+    QTableWidget* m_efficiencyTable = nullptr;
     
     QString m_lastNetlistPath;
     QCheckBox* m_overlayPreviousRun;

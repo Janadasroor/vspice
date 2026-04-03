@@ -655,6 +655,50 @@ void SimulationPanel::appendEfficiencySummary(SimResults& results) const {
             .toStdString());
 }
 
+void SimulationPanel::refreshEfficiencyReport(const SimResults& results) {
+    if (!m_efficiencySummaryLabel || !m_efficiencyTable) return;
+
+    m_efficiencyTable->setRowCount(0);
+
+    auto lookup = [&](const char* key) -> const std::map<std::string, double>::const_iterator {
+        return results.measurements.find(key);
+    };
+
+    const auto inIt = lookup("eff_input_power_w");
+    const auto outIt = lookup("eff_output_power_w");
+    const auto etaIt = lookup("efficiency_pct");
+
+    if (inIt == results.measurements.end() ||
+        outIt == results.measurements.end() ||
+        etaIt == results.measurements.end()) {
+        m_efficiencySummaryLabel->setText("No efficiency summary available for this run.");
+        return;
+    }
+
+    m_efficiencySummaryLabel->setText(
+        QString("Transient steady-state efficiency estimate: %1%")
+            .arg(QString::number(etaIt->second, 'f', 2)));
+
+    const struct RowDef {
+        QString label;
+        double value;
+        QString unit;
+    } rows[] = {
+        {"Input Power", inIt->second, "W"},
+        {"Output Power", outIt->second, "W"},
+        {"Efficiency", etaIt->second, "%"}
+    };
+
+    for (const RowDef& rowDef : rows) {
+        const int row = m_efficiencyTable->rowCount();
+        m_efficiencyTable->insertRow(row);
+        m_efficiencyTable->setItem(row, 0, new QTableWidgetItem(rowDef.label));
+        m_efficiencyTable->setItem(row, 1, new QTableWidgetItem(QString("%1 %2")
+            .arg(QString::number(rowDef.value, 'f', rowDef.unit == "%" ? 2 : 6))
+            .arg(rowDef.unit)));
+    }
+}
+
 void SimulationPanel::addProbe(const QString& signalName) {
     if (signalName.isEmpty()) return;
     
@@ -1086,6 +1130,8 @@ void SimulationPanel::clearResults() {
     m_realTimePointCounter = 0;
     if (m_timelineSlider) m_timelineSlider->setValue(0);
     if (m_timelineLabel) m_timelineLabel->setText("t = 0");
+    if (m_efficiencyTable) m_efficiencyTable->setRowCount(0);
+    if (m_efficiencySummaryLabel) m_efficiencySummaryLabel->setText("No efficiency summary available for this run.");
 }
 
 void SimulationPanel::setTargetScene(QGraphicsScene* scene, NetManager* netManager, const QString& projectDir, bool clearState) {
@@ -2017,6 +2063,27 @@ void SimulationPanel::setupUI() {
     m_smithChart = new SmithChartWidget();
     rfLayout->addWidget(m_smithChart);
     m_viewTabs->addTab(m_rfTab, "RF Analysis");
+
+    m_efficiencyTab = new QWidget();
+    auto* efficiencyLayout = new QVBoxLayout(m_efficiencyTab);
+    efficiencyLayout->setContentsMargins(8, 8, 8, 8);
+    efficiencyLayout->setSpacing(8);
+    m_efficiencySummaryLabel = new QLabel("No efficiency summary available for this run.");
+    m_efficiencySummaryLabel->setWordWrap(true);
+    m_efficiencySummaryLabel->setStyleSheet("QLabel { color: #d1d5db; font-size: 12px; padding: 4px; }");
+    efficiencyLayout->addWidget(m_efficiencySummaryLabel);
+    m_efficiencyTable = new QTableWidget(0, 2);
+    m_efficiencyTable->setHorizontalHeaderLabels({"Metric", "Value"});
+    m_efficiencyTable->horizontalHeader()->setStretchLastSection(true);
+    m_efficiencyTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    m_efficiencyTable->verticalHeader()->hide();
+    m_efficiencyTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_efficiencyTable->setStyleSheet(QString(
+        "QTableWidget { background: %1; border: 1px solid %2; color: %3; font-size: 10px; }"
+        "QHeaderView::section { background: %4; border: 1px solid %2; color: %3; padding: 3px; }"
+    ).arg(bg, borderColor, textColor, panelBg));
+    efficiencyLayout->addWidget(m_efficiencyTable, 1);
+    m_viewTabs->addTab(m_efficiencyTab, "Efficiency");
     
     m_waveformViewer = new WaveformViewer();
     m_scopeContainer = m_waveformViewer;
@@ -2760,6 +2827,7 @@ void SimulationPanel::onSimResultsReady(const SimResults& results) {
     SimResults effectiveResults = results;
     appendDerivedPowerWaveforms(effectiveResults);
     appendEfficiencySummary(effectiveResults);
+    refreshEfficiencyReport(effectiveResults);
 
     if (m_hasLastResults) {
         m_previousResults = std::move(m_lastResults);
@@ -3180,6 +3248,8 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
     m_signalList->blockSignals(true);
     m_signalList->clear();
     if (m_measurementsTable) m_measurementsTable->setRowCount(0);
+    if (m_efficiencyTable) m_efficiencyTable->setRowCount(0);
+    if (m_efficiencySummaryLabel) m_efficiencySummaryLabel->setText("No efficiency summary available for this run.");
 
     if (results.waveforms.empty()) {
         refreshSteppedMeasurementControls(results);
