@@ -83,6 +83,7 @@ private slots:
     void onFilterChanged();
     void onOpenCommandPalette();
     void onAutoRoute();
+    void onLengthMatching();
     
     // Alignment slots
     void onAlignLeft();

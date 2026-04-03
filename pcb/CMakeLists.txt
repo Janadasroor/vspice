@@ -36,6 +36,7 @@ set(PCB_SOURCES
     models/copper_pour_model.h
     models/drc_types.cpp
     models/drc_types.h
+    models/length_match_types.h
 
     # Tools
     tools/pcb_tool.cpp
@@ -84,6 +85,12 @@ set(PCB_SOURCES
     analysis/pcb_ratsnest_manager.h
     analysis/pcb_auto_router.cpp
     analysis/pcb_auto_router.h
+    analysis/length_match_manager.cpp
+    analysis/length_match_manager.h
+    analysis/length_measurement_engine.cpp
+    analysis/length_measurement_engine.h
+    analysis/serpentine_generator.cpp
+    analysis/serpentine_generator.h
 
     # DRC
     drc/pcb_drc.cpp
@@ -124,6 +131,8 @@ set(PCB_SOURCES
     dialogs/pick_place_export_dialog.h
     dialogs/auto_router_dialog.cpp
     dialogs/auto_router_dialog.h
+    dialogs/length_matching_dialog.cpp
+    dialogs/length_matching_dialog.h
 
     # Import
     import/netlist_importer.cpp

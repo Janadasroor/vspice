@@ -28,7 +28,8 @@ public:
         ThermalRelief,           // Missing thermal relief
         BoardEdgeClearance,      // Items too close to board edge
         ViaInPad,                 // Via placed directly on a pad
-        FloatingCopper           // Copper without a net
+        FloatingCopper,           // Copper without a net
+        LengthToleranceViolation  // Net length outside tolerance
     };
 
     DRCViolation() = default;

@@ -15,6 +15,7 @@
 #include "../dialogs/netlist_import_dialog.h"
 #include "../dialogs/pick_place_export_dialog.h"
 #include "../dialogs/auto_router_dialog.h"
+#include "../dialogs/length_matching_dialog.h"
 #include "../gerber/gerber_exporter.h"
 #include "../manufacturing/manufacturing_exporter.h"
 #include "../mcad/mcad_exporter.h"
@@ -358,6 +359,10 @@ void MainWindow::createMenuBar() {
     QAction* autoRouteAction = toolsMenu->addAction("🚀 Auto-Router...");
     autoRouteAction->setShortcut(QKeySequence("Ctrl+Shift+R"));
     connect(autoRouteAction, &QAction::triggered, this, &MainWindow::onAutoRoute);
+
+    QAction* lengthMatchAction = toolsMenu->addAction("📏 Length Matching...");
+    lengthMatchAction->setShortcut(QKeySequence("Ctrl+Shift+L"));
+    connect(lengthMatchAction, &QAction::triggered, this, &MainWindow::onLengthMatching);
 
     toolsMenu->addSeparator();
     QAction* paletteAction = toolsMenu->addAction("Command Palette...");
@@ -3347,5 +3352,15 @@ void MainWindow::onAutoRoute() {
     }
 
     AutoRouterDialog* dlg = new AutoRouterDialog(m_scene, this);
+    dlg->exec();
+}
+
+void MainWindow::onLengthMatching() {
+    if (!m_scene) {
+        QMessageBox::warning(this, "No PCB Scene", "Open or create a PCB board first.");
+        return;
+    }
+
+    LengthMatchingDialog* dlg = new LengthMatchingDialog(m_scene, this);
     dlg->exec();
 }

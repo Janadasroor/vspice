@@ -27,6 +27,7 @@ QString DRCViolation::typeString() const {
         case BoardEdgeClearance: return "Edge Clearance";
         case ViaInPad: return "Via In Pad";
         case FloatingCopper: return "Floating Copper";
+        case LengthToleranceViolation: return "Length Tolerance";
         default: return "Unknown";
     }
 }
