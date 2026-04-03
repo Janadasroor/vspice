@@ -294,5 +294,6 @@ Typical fields to use in training:
 ## 10. Where to look next
 
 - API reference: [ML_DATASET_API.md](/home/jnd/qt_projects/viospice/docs/ML_DATASET_API.md)
+- ready-to-run examples: [examples/ml_api/README.md](/home/jnd/qt_projects/viospice/examples/ml_api/README.md)
 - FastAPI docs: `/docs`
 - OpenAPI schema: `/openapi.json`

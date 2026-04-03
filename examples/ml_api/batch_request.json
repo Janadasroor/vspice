@@ -1,0 +1,25 @@
+{
+  "concurrency": 8,
+  "output_path": "/tmp/viospice-datasets/manual_batch.jsonl",
+  "jobs": [
+    {
+      "schematic_path": "/home/jnd/qt_projects/viospice/templates/circuits/basics/voltage_divider.sch",
+      "analysis": "tran",
+      "stop": "5m",
+      "step": "5u",
+      "signals": ["ALL"],
+      "measures": ["avg ALL", "rms ALL"],
+      "result_filters": [
+        {
+          "measure": "rms ALL",
+          "op": ">=",
+          "target": {"value": 0.0001}
+        }
+      ],
+      "labels": {
+        "family": "divider",
+        "ratio": 0.5
+      }
+    }
+  ]
+}

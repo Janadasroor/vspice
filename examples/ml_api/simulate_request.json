@@ -1,0 +1,24 @@
+{
+  "schematic_path": "/home/jnd/qt_projects/viospice/templates/circuits/basics/voltage_divider.sch",
+  "analysis": "tran",
+  "stop": "10m",
+  "step": "10u",
+  "signals": ["ALL"],
+  "measures": ["avg ALL", "max ALL"],
+  "derived_labels": [
+    {
+      "name": "avg_out_normalized",
+      "expression": {
+        "op": "div",
+        "left": {"measure": "avg ALL"},
+        "right": {"value": 5.0}
+      }
+    }
+  ],
+  "labels": {
+    "family": "divider"
+  },
+  "tags": {
+    "split": "debug"
+  }
+}

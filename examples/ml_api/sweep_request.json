@@ -1,0 +1,49 @@
+{
+  "template_schematic_path": "/home/jnd/qt_projects/viospice/templates/circuits/basics/voltage_divider.sch",
+  "variant_dir": "/tmp/viospice-variants/divider",
+  "output_path": "/tmp/viospice-datasets/divider_sweep.jsonl",
+  "concurrency": 8,
+  "sampling": {
+    "mode": "random",
+    "sample_count": 16,
+    "seed": 42
+  },
+  "split_ratios": {
+    "train": 0.8,
+    "val": 0.1,
+    "test": 0.1
+  },
+  "job_template": {
+    "analysis": "tran",
+    "stop": "2m",
+    "step": "10u",
+    "signals": ["ALL"],
+    "measures": ["avg ALL", "max ALL"],
+    "derived_labels": [
+      {
+        "name": "avg_to_vin_ratio",
+        "expression": {
+          "op": "div",
+          "left": {"measure": "avg ALL"},
+          "right": {"param": "vin_dc"}
+        }
+      }
+    ],
+    "result_filters": [
+      {
+        "measure": "max ALL",
+        "op": ">=",
+        "target": {"value": 0.001}
+      }
+    ],
+    "discard_filtered": true
+  },
+  "parameters": [
+    {
+      "name": "vin_dc",
+      "target": {"json_path": "items[0].dcVoltage"},
+      "linspace": {"start": 1.8, "stop": 5.0, "count": 8},
+      "value_format": "{value:.2f}"
+    }
+  ]
+}
