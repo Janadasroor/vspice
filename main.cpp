@@ -12,6 +12,10 @@
 #include "simulator/bridge/model_library_manager.h"
 #include "simulator/bridge/flux_sim_bridge.h"
 #include "core/flux_script_engine.h"
+#include "pcb/editor/mainwindow.h"
+#include "pcb/factories/pcb_item_registry.h"
+#include "pcb/tools/pcb_tool_registry_builtin.h"
+#include "footprints/footprint_library.h"
 
 
 #include <QApplication>
@@ -98,13 +102,19 @@ int main(int argc, char *argv[])
     // Initialize systems
     SchematicItemRegistry::registerBuiltInItems();
     SchematicToolRegistryBuiltIn::registerBuiltInTools();
+    PCBItemRegistry::registerBuiltInItems();
+    PCBToolRegistryBuiltIn::registerBuiltInTools();
+
+    // Initialize symbol, footprint, and model libraries
+    SymbolLibraryManager::instance();
+    FootprintLibraryManager::instance();
 
     // Set up loading logic
     auto startMainApp = [&a, &fileToOpen, server](SplashScreen* s) {
         auto openFile = [](const QString& path) {
             QFileInfo fi(path);
             QString ext = fi.suffix().toLower();
-            
+
             if (ext == "cir" || ext == "sp" || ext == "spice" || ext == "txt") {
                 NetlistEditor* netEditor = new NetlistEditor();
                 netEditor->setAttribute(Qt::WA_DeleteOnClose);
@@ -134,6 +144,18 @@ int main(int argc, char *argv[])
                 viewer->loadFile(path);
                 viewer->show();
                 return (QWidget*)viewer;
+            } else if (ext == "pcb" || ext == "kicad_pcb" || ext == "pcbdoc") {
+                MainWindow* pcbEditor = new MainWindow();
+                pcbEditor->setAttribute(Qt::WA_DeleteOnClose);
+                pcbEditor->openFile(path);
+                pcbEditor->show();
+                return (QWidget*)pcbEditor;
+            } else if (ext == "fp" || ext == "mod" || ext == "kicad_mod") {
+                // Open footprint editor - would need to add loadFootprint method
+                SymbolEditor* fpEditor = new SymbolEditor(); // TODO: Create FootprintEditor
+                fpEditor->setAttribute(Qt::WA_DeleteOnClose);
+                fpEditor->show();
+                return (QWidget*)fpEditor;
             } else {
                 SchematicEditor* schEditor = new SchematicEditor();
                 schEditor->setAttribute(Qt::WA_DeleteOnClose);
@@ -178,14 +200,18 @@ int main(int argc, char *argv[])
 
     QObject::connect(&SymbolLibraryManager::instance(), &SymbolLibraryManager::progressUpdated, splash, updateSplash);
     QObject::connect(&ModelLibraryManager::instance(), &ModelLibraryManager::progressUpdated, splash, updateSplash);
+    QObject::connect(&FootprintLibraryManager::instance(), &FootprintLibraryManager::progressUpdated, splash, updateSplash);
 
     QFuture<void> future = QtConcurrent::run([splash, startMainApp]() {
         // Step 1: Load Symbols
         SymbolLibraryManager::instance().loadUserLibraries(QDir::homePath() + "/ViospiceLib/sym");
-        
+
         // Step 2: Load Models
         ModelLibraryManager::instance().reload();
-        
+
+        // Step 3: Load Footprints
+        FootprintLibraryManager::instance().loadUserLibraries(QDir::homePath() + "/ViospiceLib/footprints");
+
         // Finalize properly on UI thread
         QMetaObject::invokeMethod(qApp, [startMainApp, splash]() {
             startMainApp(splash);

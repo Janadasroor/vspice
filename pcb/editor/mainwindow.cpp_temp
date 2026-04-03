@@ -1,0 +1,79 @@
+void MainWindow::applyECO(const ECOPackage& package) {
+    if (!m_scene) return;
+
+    statusBar()->showMessage("🔄 Applying ECO from Schematic...", 3000);
+    
+    QMap<QString, ComponentItem*> existingComps;
+    for (auto* item : m_scene->items()) {
+        if (ComponentItem* comp = dynamic_cast<ComponentItem*>(item)) {
+            existingComps[comp->name()] = comp;
+        }
+    }
+
+    int newCount = 0;
+    QPointF gridStart(0, 0);
+    int row = 0, col = 0;
+    QList<ComponentItem*> newItems;
+
+    for (const auto& ecoComp : package.components) {
+        if (!existingComps.contains(ecoComp.reference)) {
+            // Space items by 20mm instead of 150mm
+            QPointF pos = gridStart + QPointF(col * 20, row * 20);
+            ComponentItem* newComp = new ComponentItem(pos, ecoComp.footprint);
+            newComp->setName(ecoComp.reference);
+            m_scene->addItem(newComp);
+            existingComps[ecoComp.reference] = newComp;
+            newItems.append(newComp);
+            newCount++;
+            col++;
+            if (col > 5) { col = 0; row++; }
+        }
+    }
+    
+    int netCount = 0;
+    for (const auto& net : package.nets) {
+        auto getPadPos = [&](const ECOPin& pin) -> QPointF {
+            if (!existingComps.contains(pin.componentRef)) return QPointF();
+            ComponentItem* c = existingComps[pin.componentRef];
+            
+            // Find pads via child items
+            QList<PadItem*> pads;
+            for (auto* child : c->childItems()) {
+                if (PadItem* p = dynamic_cast<PadItem*>(child)) {
+                    pads.append(p);
+                }
+            }
+            
+            // Simplified matching: assume pad index matches pin name (1-based)
+            int idx = -1;
+            bool ok;
+            int pinNum = pin.pinName.toInt(&ok);
+            if (ok && pinNum > 0) idx = pinNum - 1;
+            
+            if (idx >= 0 && idx < pads.size()) return c->mapToScene(pads[idx]->pos());
+            
+            return c->pos();
+        };
+
+        ECOPin firstPin = net.pins.first();
+        QPointF p1 = getPadPos(firstPin);
+        if (p1.isNull()) continue;
+
+        for (int i = 1; i < net.pins.size(); ++i) {
+            QPointF p2 = getPadPos(net.pins[i]);
+            if (!p2.isNull() && p1 != p2) {
+                m_scene->addItem(new RatsnestItem(p1, p2));
+            }
+        }
+        netCount++;
+    }
+
+    statusBar()->showMessage(QString("✅ ECO Applied: %1 new parts, %2 active nets").arg(newCount).arg(netCount), 5000);
+    
+    // Zoom to fit new items if any
+    if (!newItems.isEmpty() && m_view) {
+        m_view->centerOn(newItems.first());
+    }
+
+    PCBRatsnestManager::instance().update();
+}

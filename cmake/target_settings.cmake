@@ -15,6 +15,8 @@ set(VIORAEDA_COMMON_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/python
     ${CMAKE_CURRENT_SOURCE_DIR}/simulator
+    ${CMAKE_CURRENT_SOURCE_DIR}/footprints
+    ${CMAKE_CURRENT_SOURCE_DIR}/pcb
 )
 list(REMOVE_DUPLICATES VIORAEDA_COMMON_INCLUDE_DIRS)
 
@@ -41,6 +43,8 @@ set(VIORAEDA_APP_LINK_LIBS
     FluxSchematicUI
     FluxUI
     FluxScript
+    FluxFootprints
+    VioraPCBCore
     ${VIORAEDA_QT_LINK_LIBS}
 )
 
@@ -51,6 +55,8 @@ set(VIORAEDA_CLI_LINK_LIBS
     FluxSchematicUI
     FluxUI
     FluxScript
+    FluxFootprints
+    VioraPCBCore
     ${VIORAEDA_QT_LINK_LIBS}
 )
 

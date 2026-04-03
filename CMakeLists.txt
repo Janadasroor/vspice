@@ -49,6 +49,8 @@ add_subdirectory(symbols)
 add_subdirectory(ui)
 add_subdirectory(simulator)
 add_subdirectory(python)
+add_subdirectory(footprints)
+add_subdirectory(pcb)
 
 if(BUILD_TESTING)
     add_executable(test_spice_directive_netlist schematic/tests/test_spice_directive_netlist.cpp)
@@ -113,6 +115,8 @@ if(BUILD_VIOSPICE_CLI)
         FluxScript
         FluxScriptManager
         FluxUI
+        FluxFootprints
+        VioraPCBCore
     )
 
 
@@ -133,16 +137,18 @@ if(BUILD_VIOSPICE_APP)
         resources/resources.qrc
     )
 
-    target_link_libraries(viospice PRIVATE 
+    target_link_libraries(viospice PRIVATE
         FluxUI
-        FluxSchematicUI 
-        FluxSchematicCore 
-        FluxSymbols 
+        FluxSchematicUI
+        FluxSchematicCore
+        FluxSymbols
         FluxSimulator
         FluxCore
         FluxUI # Link twice if there are circular dependencies
         FluxScript
         FluxScriptManager
+        FluxFootprints
+        VioraPCBCore
     )
 
 

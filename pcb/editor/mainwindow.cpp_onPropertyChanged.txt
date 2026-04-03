@@ -1,0 +1,170 @@
+void MainWindow::onPropertyChanged(const QString& name, const QVariant& value) {
+    QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.isEmpty()) {
+        // If no items are selected, check if we are editing tool properties
+        if (m_view && m_view->currentTool()) {
+            m_view->currentTool()->setToolProperty(name, value);
+        }
+        return;
+    }
+    
+    m_undoStack->beginMacro(QString("Change PCB Property: %1").arg(name));
+
+    for (QGraphicsItem* gItem : selected) {
+        PCBItem* item = dynamic_cast<PCBItem*>(gItem);
+        if (!item) continue;
+
+        QVariant oldValue;
+        bool found = false;
+
+        if (name == "ID") { /* Read-only */ }
+        else if (name == "Name") { oldValue = item->name(); found = true; }
+        else if (name == "Net") { oldValue = item->netName(); found = true; }
+        else if (name == "Layer") { oldValue = item->layer(); found = true; }
+        else if (name == "Locked") { oldValue = item->isLocked(); found = true; }
+        else if (name == "Width (mm)") {
+            if (TraceItem* trace = dynamic_cast<TraceItem*>(item)) {
+                oldValue = trace->width();
+                found = true;
+            }
+        }
+        else if (name == "Start X (mm)" || name == "Start Y (mm)") {
+            if (TraceItem* trace = dynamic_cast<TraceItem*>(item)) {
+                oldValue = (name == "Start X (mm)") ? trace->startPoint().x() : trace->startPoint().y();
+                found = true;
+            }
+        }
+        else if (name == "End X (mm)" || name == "End Y (mm)") {
+            if (TraceItem* trace = dynamic_cast<TraceItem*>(item)) {
+                oldValue = (name == "End X (mm)") ? trace->endPoint().x() : trace->endPoint().y();
+                found = true;
+            }
+        }
+        else if (name == "Position X (mm)" || name == "Position Y (mm)") {
+            oldValue = (name == "Position X (mm)") ? item->pos().x() : item->pos().y();
+            found = true;
+        }
+        else if (name == "Rotation (deg)") {
+            oldValue = item->rotation();
+            found = true;
+        }
+        else if (selected.size() == 1) {
+            if (name == "Pad Shape") {
+                if (PadItem* pad = dynamic_cast<PadItem*>(item)) {
+                    oldValue = pad->padShape();
+                    found = true;
+                }
+            }
+            else if (name == "Size X (mm)" || name == "Size Y (mm)") {
+                if (PadItem* pad = dynamic_cast<PadItem*>(item)) {
+                    oldValue = (name == "Size X (mm)") ? pad->size().width() : pad->size().height();
+                    found = true;
+                }
+            }
+            else if (name == "Diameter (mm)") {
+                if (ViaItem* via = dynamic_cast<ViaItem*>(item)) {
+                    oldValue = via->diameter();
+                    found = true;
+                }
+            }
+            else if (name == "Drill Size (mm)") {
+                if (PadItem* pad = dynamic_cast<PadItem*>(item)) {
+                    oldValue = pad->drillSize();
+                    found = true;
+                } else if (ViaItem* via = dynamic_cast<ViaItem*>(item)) {
+                    oldValue = via->drillSize();
+                    found = true;
+                }
+            }
+            else if (name == "Clearance (mm)") {
+                if (CopperPourItem* pour = dynamic_cast<CopperPourItem*>(item)) {
+                    oldValue = pour->clearance();
+                    found = true;
+                }
+            }
+            else if (name == "Pour Type") {
+                if (CopperPourItem* pour = dynamic_cast<CopperPourItem*>(item)) {
+                    oldValue = static_cast<int>(pour->pourType());
+                    found = true;
+                }
+            }
+            else if (name == "Hatch Width (mm)") {
+                if (CopperPourItem* pour = dynamic_cast<CopperPourItem*>(item)) {
+                    oldValue = pour->hatchWidth();
+                    found = true;
+                }
+            }
+            else if (name == "Solid") {
+                if (CopperPourItem* pour = dynamic_cast<CopperPourItem*>(item)) {
+                    oldValue = pour->isSolid();
+                    found = true;
+                }
+            }
+            else if (name == "Use Thermal Reliefs") {
+                if (CopperPourItem* pour = dynamic_cast<CopperPourItem*>(item)) {
+                    oldValue = pour->useThermalReliefs();
+                    found = true;
+                }
+            }
+            else if (name == "Thermal Spoke Width (mm)") {
+                if (CopperPourItem* pour = dynamic_cast<CopperPourItem*>(item)) {
+                    oldValue = pour->thermalSpokeWidth();
+                    found = true;
+                }
+            }
+            else if (name == "Thermal Spoke Count") {
+                if (CopperPourItem* pour = dynamic_cast<CopperPourItem*>(item)) {
+                    oldValue = QString::number(pour->thermalSpokeCount());
+                    found = true;
+                }
+            }
+        }
+
+        if (found && oldValue != value) {
+            if (m_undoStack) {
+                m_undoStack->push(new PCBPropertyCommand(m_scene, item, name, oldValue, value));
+            } else {
+                // Manual fallback
+                if (name == "Name") item->setName(value.toString());
+                else if (name == "Net") item->setNetName(value.toString());
+                else if (name == "Layer") item->setLayer(value.toInt());
+                else if (name == "Locked") item->setLocked(value.toBool());
+                else if (name == "Width (mm)") {
+                    if (TraceItem* trace = dynamic_cast<TraceItem*>(item)) trace->setWidth(value.toDouble());
+                }
+                else if (name == "Position X (mm)") item->setX(value.toDouble());
+                else if (name == "Position Y (mm)") item->setY(value.toDouble());
+                else if (name == "Rotation (deg)") item->setRotation(value.toDouble());
+                else if (name == "Pad Shape") {
+                    if (PadItem* pad = dynamic_cast<PadItem*>(item)) pad->setPadShape(value.toString());
+                }
+                else if (name == "Diameter (mm)") {
+                    if (ViaItem* via = dynamic_cast<ViaItem*>(item)) via->setDiameter(value.toDouble());
+                }
+                else if (name == "Use Thermal Reliefs") {
+                    if (CopperPourItem* pour = dynamic_cast<CopperPourItem*>(item)) pour->setUseThermalReliefs(value.toBool() || value.toString() == "True");
+                }
+                else if (name == "Thermal Spoke Width (mm)") {
+                    if (CopperPourItem* pour = dynamic_cast<CopperPourItem*>(item)) pour->setThermalSpokeWidth(value.toDouble());
+                }
+                else if (name == "Thermal Spoke Count") {
+                    if (CopperPourItem* pour = dynamic_cast<CopperPourItem*>(item)) pour->setThermalSpokeCount(value.toInt());
+                }
+            }
+            
+            // Sync tool default values with the last edited item properties
+            if (m_view && m_view->currentTool()) {
+                if (name == "Width (mm)") {
+                    m_view->currentTool()->setToolProperty("Trace Width (mm)", value);
+                    updateOptionsBar("Trace");
+                } else if (name == "Layer") {
+                    m_view->currentTool()->setToolProperty("Active Layer", value);
+                    updateOptionsBar("Trace");
+                }
+            }
+        }
+        item->update();
+    }
+
+    m_undoStack->endMacro();
+}

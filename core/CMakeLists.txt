@@ -13,12 +13,24 @@ target_link_libraries(FluxCore PUBLIC FluxScript)
 
 # Headless library for Clean Architecture models and engines
 set(HEADLESS_SOURCES
+    # Schematic models
     ../schematic/models/schematic_item_model.h
     ../schematic/models/wire_model.h
     ../schematic/models/schematic_component_model.h
     ../schematic/models/schematic_page_model.h
     ../schematic/models/erc_engine.h
     ../schematic/analysis/netlist_engine.h
+    # PCB models
+    ../pcb/models/drc_types.h
+    ../pcb/models/drc_types.cpp
+    ../pcb/models/trace_model.h
+    ../pcb/models/via_model.h
+    ../pcb/models/pad_model.h
+    ../pcb/models/component_model.h
+    ../pcb/models/copper_pour_model.h
+    ../pcb/models/board_model.h
+    ../pcb/analysis/connectivity_engine.h
+    ../pcb/analysis/drc_engine.h
     sync_manager.h
 )
 add_library(FluxHeadless STATIC ${HEADLESS_SOURCES})

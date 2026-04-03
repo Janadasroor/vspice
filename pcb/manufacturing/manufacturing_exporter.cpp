@@ -1,0 +1,157 @@
+#include "manufacturing_exporter.h"
+
+#include "../gerber/gerber_exporter.h"
+#include "../items/component_item.h"
+#include "../items/pad_item.h"
+#include "../items/pcb_item.h"
+#include "../items/trace_item.h"
+#include "../items/via_item.h"
+#include "../layers/pcb_layer.h"
+
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QGraphicsScene>
+#include <QTextStream>
+
+bool ManufacturingExporter::exportIPC2581(QGraphicsScene* scene, const QString& filePath, QString* error) {
+    if (!scene) {
+        if (error) *error = "Invalid scene.";
+        return false;
+    }
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        if (error) *error = "Cannot open IPC-2581 output file.";
+        return false;
+    }
+
+    QTextStream out(&file);
+    out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    out << "<IPC-2581 revision=\"B\" xmlns=\"http://webstds.ipc.org/2581\">\n";
+    out << "  <Header>\n";
+    out << "    <Source software=\"Viora EDA\" version=\"0.2\"/>\n";
+    out << "    <Date>" << QDateTime::currentDateTimeUtc().toString(Qt::ISODate) << "</Date>\n";
+    out << "  </Header>\n";
+
+    out << "  <Stackup>\n";
+    const auto stackup = PCBLayerManager::instance().stackup();
+    for (const auto& layer : stackup.stack) {
+        out << "    <Layer name=\"" << layer.name << "\" type=\"" << layer.type
+            << "\" thicknessMm=\"" << layer.thickness << "\" material=\"" << layer.material
+            << "\" er=\"" << layer.dielectricConstant << "\" copperWeightOz=\"" << layer.copperWeightOz
+            << "\"/>\n";
+    }
+    out << "    <Finish type=\"" << stackup.surfaceFinish << "\"/>\n";
+    out << "  </Stackup>\n";
+
+    out << "  <Components>\n";
+    for (QGraphicsItem* g : scene->items()) {
+        if (ComponentItem* comp = dynamic_cast<ComponentItem*>(g)) {
+            out << "    <Component id=\"" << comp->idString()
+                << "\" ref=\"" << comp->name()
+                << "\" footprint=\"" << comp->componentType()
+                << "\" x=\"" << comp->pos().x()
+                << "\" y=\"" << comp->pos().y()
+                << "\" rot=\"" << comp->rotation()
+                << "\"/>\n";
+        }
+    }
+    out << "  </Components>\n";
+
+    out << "  <Copper>\n";
+    for (QGraphicsItem* g : scene->items()) {
+        if (TraceItem* tr = dynamic_cast<TraceItem*>(g)) {
+            out << "    <Trace id=\"" << tr->idString()
+                << "\" net=\"" << tr->netName()
+                << "\" layer=\"" << tr->layer()
+                << "\" width=\"" << tr->width()
+                << "\" x1=\"" << tr->startPoint().x()
+                << "\" y1=\"" << tr->startPoint().y()
+                << "\" x2=\"" << tr->endPoint().x()
+                << "\" y2=\"" << tr->endPoint().y()
+                << "\"/>\n";
+        } else if (ViaItem* via = dynamic_cast<ViaItem*>(g)) {
+            out << "    <Via id=\"" << via->idString()
+                << "\" net=\"" << via->netName()
+                << "\" x=\"" << via->pos().x()
+                << "\" y=\"" << via->pos().y()
+                << "\" diameter=\"" << via->diameter()
+                << "\" drill=\"" << via->drillSize()
+                << "\" startLayer=\"" << via->startLayer()
+                << "\" endLayer=\"" << via->endLayer()
+                << "\" microvia=\"" << (via->isMicrovia() ? "true" : "false")
+                << "\"/>\n";
+        } else if (PadItem* pad = dynamic_cast<PadItem*>(g)) {
+            out << "    <Pad id=\"" << pad->idString()
+                << "\" net=\"" << pad->netName()
+                << "\" x=\"" << pad->pos().x()
+                << "\" y=\"" << pad->pos().y()
+                << "\" sx=\"" << pad->size().width()
+                << "\" sy=\"" << pad->size().height()
+                << "\" layer=\"" << pad->layer()
+                << "\"/>\n";
+        }
+    }
+    out << "  </Copper>\n";
+    out << "</IPC-2581>\n";
+    return true;
+}
+
+bool ManufacturingExporter::exportODBppPackage(QGraphicsScene* scene, const QString& outputDirectory, QString* error) {
+    if (!scene) {
+        if (error) *error = "Invalid scene.";
+        return false;
+    }
+    if (outputDirectory.isEmpty()) {
+        if (error) *error = "Output directory is empty.";
+        return false;
+    }
+
+    QDir root(outputDirectory);
+    if (!root.exists() && !root.mkpath(".")) {
+        if (error) *error = "Cannot create output directory.";
+        return false;
+    }
+
+    const QString jobDir = root.filePath("odbpp_job");
+    QDir().mkpath(jobDir + "/steps/pcb/layers");
+    QDir().mkpath(jobDir + "/steps/pcb/drill");
+
+    QFile matrix(jobDir + "/matrix");
+    if (!matrix.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        if (error) *error = "Cannot write ODB++ matrix file.";
+        return false;
+    }
+    QTextStream m(&matrix);
+    m << "# ODB++ matrix generated by Viora EDA\n";
+    m << "# name,type,side\n";
+
+    GerberExportSettings settings;
+    settings.outputDirectory = jobDir + "/steps/pcb/layers";
+
+    for (const PCBLayer& l : PCBLayerManager::instance().layers()) {
+        if (l.type() != PCBLayer::Copper &&
+            l.type() != PCBLayer::Silkscreen &&
+            l.type() != PCBLayer::Soldermask &&
+            l.type() != PCBLayer::EdgeCuts) {
+            continue;
+        }
+        const QString safe = QString(l.name()).replace(" ", "_");
+        const QString layerFile = jobDir + "/steps/pcb/layers/" + safe + ".gbr";
+        GerberExporter::exportLayer(scene, l.id(), layerFile, settings);
+        m << safe << "," << l.typeString() << "," << l.sideString() << "\n";
+    }
+
+    GerberExporter::generateDrillFile(scene, jobDir + "/steps/pcb/drill/drills.drl");
+
+    QFile info(jobDir + "/README.txt");
+    if (info.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream i(&info);
+        i << "Viora EDA ODB++ package (folder form)\n";
+        i << "Generated: " << QDateTime::currentDateTimeUtc().toString(Qt::ISODate) << "\n";
+    }
+
+    return true;
+}
