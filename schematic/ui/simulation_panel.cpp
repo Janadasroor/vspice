@@ -802,6 +802,7 @@ void SimulationPanel::updateTransientNetTableOverlay(const SimResults& results) 
     qDebug() << "[NetTable] voltage wave count:" << voltageWaves.size();
 
     QStringList netNames = m_netManager->netNames();
+    netNames.detach();
     std::sort(netNames.begin(), netNames.end(), [](const QString& a, const QString& b) {
         const bool autoA = a.startsWith("AutoNet", Qt::CaseInsensitive);
         const bool autoB = b.startsWith("AutoNet", Qt::CaseInsensitive);
@@ -834,6 +835,7 @@ void SimulationPanel::updateTransientNetTableOverlay(const SimResults& results) 
     if (rows.isEmpty()) {
         qDebug() << "[NetTable] no direct net matches, using waveform fallback";
         QStringList fallbackNames = displayNames.keys();
+        fallbackNames.detach();
         std::sort(fallbackNames.begin(), fallbackNames.end(), [](const QString& a, const QString& b) {
             return a.localeAwareCompare(b) < 0;
         });

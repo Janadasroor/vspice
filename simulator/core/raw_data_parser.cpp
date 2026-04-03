@@ -284,6 +284,15 @@ SimResults RawData::toSimResults() const {
     res.analysisType = analysisType;
     res.xAxisName = varNames.isEmpty() ? "time" : varNames[0].toStdString();
 
+    if (!varNames.isEmpty()) {
+        const QString axisName = varNames[0].trimmed().toUpper();
+        if (axisName == "TIME" && res.analysisType == SimAnalysisType::OP && numPoints > 1) {
+            res.analysisType = SimAnalysisType::Transient;
+        } else if ((axisName == "FREQ" || axisName == "FREQUENCY") && res.analysisType == SimAnalysisType::OP && numPoints > 1) {
+            res.analysisType = SimAnalysisType::AC;
+        }
+    }
+
     // Auto-detect S-Parameter analysis from vector names if it was labeled as AC
     if (res.analysisType == SimAnalysisType::AC) {
         for (const auto& name : varNames) {
