@@ -24,6 +24,21 @@ Optional:
 python3 python/scripts/ml_dataset_api.py --port 8787 --cli-path ./build/vio-cmd
 ```
 
+## FastAPI Packaging
+
+For OpenAPI docs and ASGI deployment:
+
+```bash
+python3 python/scripts/fastapi_ml_dataset_api.py --port 8790
+```
+
+Then use:
+
+- `http://localhost:8790/docs`
+- `http://localhost:8790/openapi.json`
+
+Install the additional API dependencies from [requirements.txt](/home/jnd/qt_projects/viospice/python/requirements.txt) first if they are not already present.
+
 ## Endpoints
 
 ### `GET /api/ml/health`

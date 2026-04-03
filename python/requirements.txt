@@ -2,3 +2,5 @@ google-genai
 google-adk
 numpy
 numba
+fastapi
+uvicorn
