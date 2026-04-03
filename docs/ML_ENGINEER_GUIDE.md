@@ -243,7 +243,33 @@ Job states:
 
 When complete, the job record includes the final result payload.
 
-## 7. Read the dataset
+## 7. Generate a ready-made classification dataset
+
+If you want a real labeled dataset immediately, use the built-in voltage-divider classification endpoint. It runs `vio-cmd netlist-run` across a parameter grid and writes JSONL records with `labels.class_id`.
+
+```bash
+curl -X POST http://localhost:8790/api/ml/examples/voltage-divider-classification \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: your-secret-key' \
+  -d @examples/ml_api/voltage_divider_classification_request.json
+```
+
+Async version:
+
+```bash
+curl -X POST http://localhost:8790/api/ml/jobs/examples/voltage-divider-classification \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: your-secret-key' \
+  -d @examples/ml_api/voltage_divider_classification_request.json
+```
+
+The generated labels are:
+
+- `0` for `vout_ratio < 0.35`
+- `1` for `0.35 <= vout_ratio < 0.65`
+- `2` for `vout_ratio >= 0.65`
+
+## 8. Read the dataset
 
 Each line in the JSONL output is a record. Example Python loader:
 
@@ -288,6 +314,15 @@ That script:
 - trains a small MLP regressor
 - prints train and validation loss per epoch
 
+Classification example:
+
+```bash
+python3 examples/ml_api/generate_voltage_divider_classification_dataset.py
+python3 examples/ml_api/train_classifier.py
+```
+
+The classification example generates a real voltage-divider dataset with `vio-cmd netlist-run`, assigns `labels.class_id` from the simulated `vout_ratio`, and then trains on that JSONL.
+
 Notebook version:
 
 ```bash
@@ -306,7 +341,7 @@ Typical fields to use in training:
   - `accepted`
   - `result_filters`
 
-## 8. Recommended workflow
+## 9. Recommended workflow
 
 1. Start with `POST /api/ml/simulate` on one schematic.
 2. Confirm signal names, measures, derived labels, and waveform sizes.
@@ -315,7 +350,7 @@ Typical fields to use in training:
 5. Use async sweep submission for long runs.
 6. Train from JSONL records using `labels` as targets and waveforms or stats as features.
 
-## 9. Practical tips
+## 10. Practical tips
 
 - Prefer `max_points` to control waveform size before training.
 - Use `sampling.mode=random` when exhaustive cartesian expansion is too large.
@@ -324,7 +359,7 @@ Typical fields to use in training:
 - Use `discard_filtered: true` when you only want accepted samples in the final JSONL.
 - Persist async jobs with `--job-store` if runs may survive server restarts.
 
-## 10. Where to look next
+## 11. Where to look next
 
 - API reference: [ML_DATASET_API.md](/home/jnd/qt_projects/viospice/docs/ML_DATASET_API.md)
 - ready-to-run examples: [examples/ml_api/README.md](/home/jnd/qt_projects/viospice/examples/ml_api/README.md)

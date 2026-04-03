@@ -16,6 +16,8 @@
 #include "../dialogs/pick_place_export_dialog.h"
 #include "../dialogs/auto_router_dialog.h"
 #include "../dialogs/length_matching_dialog.h"
+#include "../dialogs/pcb_diff_viewer.h"
+#include "../analysis/pcb_diff_engine.h"
 #include "../gerber/gerber_exporter.h"
 #include "../manufacturing/manufacturing_exporter.h"
 #include "../mcad/mcad_exporter.h"
@@ -57,6 +59,7 @@
 #include <QHBoxLayout>
 #include <QFileInfo>
 #include <QFileDialog>
+#include <QDir>
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QHeaderView>
@@ -363,6 +366,10 @@ void MainWindow::createMenuBar() {
     QAction* lengthMatchAction = toolsMenu->addAction("📏 Length Matching...");
     lengthMatchAction->setShortcut(QKeySequence("Ctrl+Shift+L"));
     connect(lengthMatchAction, &QAction::triggered, this, &MainWindow::onLengthMatching);
+
+    QAction* compareBoardAction = toolsMenu->addAction("🔍 Compare Board...");
+    compareBoardAction->setShortcut(QKeySequence("Ctrl+Shift+D"));
+    connect(compareBoardAction, &QAction::triggered, this, &MainWindow::onCompareBoard);
 
     toolsMenu->addSeparator();
     QAction* paletteAction = toolsMenu->addAction("Command Palette...");
@@ -3363,4 +3370,33 @@ void MainWindow::onLengthMatching() {
 
     LengthMatchingDialog* dlg = new LengthMatchingDialog(m_scene, this);
     dlg->exec();
+}
+
+void MainWindow::onCompareBoard() {
+    if (!m_scene) {
+        QMessageBox::warning(this, "No PCB Scene", "Open or create a PCB board first.");
+        return;
+    }
+
+    // Require current board to be saved
+    if (m_currentFilePath.isEmpty() || !QFileInfo::exists(m_currentFilePath)) {
+        QMessageBox::information(this, "Unsaved Board",
+            "Please save the current board first, then compare with another file.\n\n"
+            "Use File → Save, then Tools → Compare Board...");
+        return;
+    }
+
+    // Let user select board B
+    QString boardB = QFileDialog::getOpenFileName(this, "Select Board to Compare Against",
+                                                   "", "PCB Files (*.pcb);;All Files (*)");
+    if (boardB.isEmpty()) return;
+
+    QString boardA = m_currentFilePath;
+
+    // Run diff engine
+    DiffReport report = PCBDiffEngine::compareFiles(boardA, boardB, PCBDiffEngine::CompareOptions());
+
+    // Show diff viewer
+    PCBDiffViewer* viewer = new PCBDiffViewer(report, m_scene, nullptr, this);
+    viewer->exec();
 }

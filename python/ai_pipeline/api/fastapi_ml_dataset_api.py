@@ -55,6 +55,15 @@ class SweepRequest(_BasePayloadModel):
     inline_results: bool = False
 
 
+class VoltageDividerClassificationRequest(_BasePayloadModel):
+    output_path: Optional[str] = None
+    netlist_dir: Optional[str] = None
+    vin_values: List[float] = Field(default_factory=list)
+    r1_values: List[int] = Field(default_factory=list)
+    r2_values: List[int] = Field(default_factory=list)
+    inline_results: bool = False
+
+
 class AsyncJobAccepted(BaseModel):
     ok: bool = True
     job_id: str
@@ -296,6 +305,18 @@ def create_app(
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/api/ml/examples/voltage-divider-classification")
+    def voltage_divider_classification(
+        request: VoltageDividerClassificationRequest,
+        http_request: Request,
+        x_api_key: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        require_access(http_request, x_api_key)
+        try:
+            return service.run_voltage_divider_classification_dataset(request.dict())
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/ml/jobs/simulate", response_model=AsyncJobAccepted)
     def simulate_async(request: SimulateRequest, http_request: Request, x_api_key: Optional[str] = Header(default=None)) -> Dict[str, Any]:
         require_access(http_request, x_api_key)
@@ -336,6 +357,27 @@ def create_app(
     def sweep_async(request: SweepRequest, http_request: Request, x_api_key: Optional[str] = Header(default=None)) -> Dict[str, Any]:
         require_access(http_request, x_api_key)
         record = _start_background_job(job_store, "sweep", request.dict(), service.run_sweep)
+        return {
+            "ok": True,
+            "job_id": record["job_id"],
+            "status": record["status"],
+            "created_at": record["created_at"],
+            "kind": record["kind"],
+        }
+
+    @app.post("/api/ml/jobs/examples/voltage-divider-classification", response_model=AsyncJobAccepted)
+    def voltage_divider_classification_async(
+        request: VoltageDividerClassificationRequest,
+        http_request: Request,
+        x_api_key: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        require_access(http_request, x_api_key)
+        record = _start_background_job(
+            job_store,
+            "voltage-divider-classification",
+            request.dict(),
+            service.run_voltage_divider_classification_dataset,
+        )
         return {
             "ok": True,
             "job_id": record["job_id"],

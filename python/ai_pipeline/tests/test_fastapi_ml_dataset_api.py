@@ -24,9 +24,11 @@ class FastApiMlDatasetApiTest(unittest.TestCase):
         self.assertIn("/api/ml/simulate", paths)
         self.assertIn("/api/ml/batch", paths)
         self.assertIn("/api/ml/sweep", paths)
+        self.assertIn("/api/ml/examples/voltage-divider-classification", paths)
         self.assertIn("/api/ml/jobs/simulate", paths)
         self.assertIn("/api/ml/jobs/batch", paths)
         self.assertIn("/api/ml/jobs/sweep", paths)
+        self.assertIn("/api/ml/jobs/examples/voltage-divider-classification", paths)
         self.assertIn("/api/ml/jobs/{job_id}", paths)
 
     def test_job_store_persists_and_repairs_inflight_jobs(self):

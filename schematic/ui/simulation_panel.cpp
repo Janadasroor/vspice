@@ -583,6 +583,78 @@ void SimulationPanel::appendDerivedPowerWaveforms(SimResults& results) const {
     }
 }
 
+void SimulationPanel::appendEfficiencySummary(SimResults& results) const {
+    if (!m_scene || results.analysisType != SimAnalysisType::Transient) return;
+
+    auto findWave = [&](const QString& name) -> const SimWaveform* {
+        for (const auto& wave : results.waveforms) {
+            if (QString::fromStdString(wave.name).compare(name, Qt::CaseInsensitive) == 0) {
+                return &wave;
+            }
+        }
+        return nullptr;
+    };
+
+    auto averageTail = [](const SimWaveform* wave) -> double {
+        if (!wave || wave->yData.empty()) return 0.0;
+        const size_t count = wave->yData.size();
+        const size_t begin = (count > 10) ? (count * 9) / 10 : 0;
+        double sum = 0.0;
+        size_t used = 0;
+        for (size_t i = begin; i < count; ++i) {
+            sum += wave->yData[i];
+            ++used;
+        }
+        return used ? (sum / static_cast<double>(used)) : 0.0;
+    };
+
+    QStringList voltageSources;
+    QStringList loadRefs;
+    for (QGraphicsItem* gi : m_scene->items()) {
+        auto* item = dynamic_cast<SchematicItem*>(gi);
+        if (!item) continue;
+        const QString ref = item->reference().trimmed();
+        if (ref.isEmpty()) continue;
+        if (ref.startsWith('V', Qt::CaseInsensitive)) {
+            if (findWave(QString("P(%1)").arg(ref))) voltageSources.append(ref);
+        } else if (ref.compare("RLOAD", Qt::CaseInsensitive) == 0 ||
+                   ref.startsWith('I', Qt::CaseInsensitive)) {
+            if (findWave(QString("P(%1)").arg(ref))) loadRefs.append(ref);
+        }
+    }
+
+    if (voltageSources.size() != 1 || loadRefs.size() != 1) return;
+
+    const QString inputRef = voltageSources.first();
+    const QString outputRef = loadRefs.first();
+    const SimWaveform* inputWave = findWave(QString("P(%1)").arg(inputRef));
+    const SimWaveform* outputWave = findWave(QString("P(%1)").arg(outputRef));
+    if (!inputWave || !outputWave) return;
+
+    const double inputAvgRaw = averageTail(inputWave);
+    const double outputAvgRaw = averageTail(outputWave);
+    const double inputPower = std::abs(inputAvgRaw);
+    const double outputPower = std::abs(outputAvgRaw);
+    if (inputPower <= 0.0 || outputPower <= 0.0) return;
+
+    const double efficiencyPct = (outputPower / inputPower) * 100.0;
+    results.measurements["eff_input_power_w"] = inputPower;
+    results.measurements["eff_output_power_w"] = outputPower;
+    results.measurements["efficiency_pct"] = efficiencyPct;
+
+    results.measurementMetadata["eff_input_power_w"] = {"Input Power", "W"};
+    results.measurementMetadata["eff_output_power_w"] = {"Output Power", "W"};
+    results.measurementMetadata["efficiency_pct"] = {"Efficiency", "%"};
+    results.diagnostics.push_back(
+        QString("Efficiency summary: input=%1 W, output=%2 W, eta=%3 % using %4 as source and %5 as load.")
+            .arg(inputPower, 0, 'g', 6)
+            .arg(outputPower, 0, 'g', 6)
+            .arg(efficiencyPct, 0, 'g', 5)
+            .arg(inputRef)
+            .arg(outputRef)
+            .toStdString());
+}
+
 void SimulationPanel::addProbe(const QString& signalName) {
     if (signalName.isEmpty()) return;
     
@@ -1072,6 +1144,9 @@ void SimulationPanel::updateSchematicDirective() {
         // Use raw text to preserve suffixes like 'u', 'm' etc.
         cmdParams.stop = m_param2 ? m_param2->text().trimmed() : "10m";
         cmdParams.step = m_param1 ? m_param1->text().trimmed() : "1u";
+        cmdParams.transientSteady = m_steadyCheck && m_steadyCheck->isChecked();
+        cmdParams.steadyStateTol = m_steadyTolEdit ? m_steadyTolEdit->text().trimmed() : QString();
+        cmdParams.steadyStateDelay = m_steadyDelayEdit ? m_steadyDelayEdit->text().trimmed() : QString();
         
         // Fallbacks if empty
         if (cmdParams.stop.isEmpty()) cmdParams.stop = "10m";
@@ -1160,6 +1235,9 @@ void SimulationPanel::updateCommandDisplay() {
         cmdParams.start = "0";
         cmdParams.stop = m_param2 ? m_param2->text() : QString("10m");
         cmdParams.step = m_param1 ? m_param1->text() : QString("1u");
+        cmdParams.transientSteady = m_steadyCheck && m_steadyCheck->isChecked();
+        cmdParams.steadyStateTol = m_steadyTolEdit ? m_steadyTolEdit->text().trimmed() : QString();
+        cmdParams.steadyStateDelay = m_steadyDelayEdit ? m_steadyDelayEdit->text().trimmed() : QString();
     } else if (idx == 1) {
         cmdParams.type = SpiceNetlistGenerator::OP;
     } else if (idx == 2) {
@@ -1199,6 +1277,12 @@ void SimulationPanel::parseCommandText(const QString& command, bool skipTypeOver
             m_param2->blockSignals(true);
             m_param1->setText(parts[1]);
             m_param2->setText(parts[2]);
+            if (m_steadyCheck) m_steadyCheck->setChecked(parts.contains("steady"));
+            if (parts.size() >= 4 && parts[3] != "steady" && m_param3) {
+                m_param3->blockSignals(true);
+                m_param3->setText(parts[3]);
+                m_param3->blockSignals(false);
+            }
             m_param1->blockSignals(false);
             m_param2->blockSignals(false);
         }
@@ -1649,11 +1733,20 @@ void SimulationPanel::setupUI() {
     m_param4 = new QLineEdit();
     m_param5 = new QLineEdit();
     m_param6 = new QLineEdit("50");
+    m_steadyCheck = new QCheckBox("Stop at steady state");
+    m_steadyTolEdit = new QLineEdit();
+    m_steadyDelayEdit = new QLineEdit();
     for(auto* l : {m_param1, m_param2, m_param3, m_param4, m_param5, m_param6}) l->setStyleSheet("QLineEdit { background: #121214; color: #fff; border: 1px solid #333; }");
+    for (auto* l : {m_steadyTolEdit, m_steadyDelayEdit}) l->setStyleSheet("QLineEdit { background: #121214; color: #fff; border: 1px solid #333; }");
+    m_steadyTolEdit->setPlaceholderText("0.01");
+    m_steadyDelayEdit->setPlaceholderText("0");
     
     configForm->addRow("Step/Start:", m_param1);
     configForm->addRow("Stop:", m_param2);
     configForm->addRow("Start/Pts:", m_param3);
+    configForm->addRow("Steady:", m_steadyCheck);
+    configForm->addRow("ssTol:", m_steadyTolEdit);
+    configForm->addRow("ssDelay:", m_steadyDelayEdit);
     configForm->addRow("P4/Src:", m_param4);
     configForm->addRow("P5/Node:", m_param5);
     configForm->addRow("Z0:", m_param6);
@@ -1962,9 +2055,15 @@ void SimulationPanel::setupUI() {
     connect(m_param1, &QLineEdit::textChanged, this, &SimulationPanel::updateSchematicDirective);
     connect(m_param2, &QLineEdit::textChanged, this, &SimulationPanel::updateSchematicDirective);
     connect(m_param3, &QLineEdit::textChanged, this, &SimulationPanel::updateSchematicDirective);
+    connect(m_steadyCheck, &QCheckBox::toggled, this, &SimulationPanel::updateSchematicDirective);
+    connect(m_steadyTolEdit, &QLineEdit::textChanged, this, &SimulationPanel::updateSchematicDirective);
+    connect(m_steadyDelayEdit, &QLineEdit::textChanged, this, &SimulationPanel::updateSchematicDirective);
     connect(m_param1, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
     connect(m_param2, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
     connect(m_param3, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
+    connect(m_steadyCheck, &QCheckBox::toggled, this, &SimulationPanel::updateCommandDisplay);
+    connect(m_steadyTolEdit, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
+    connect(m_steadyDelayEdit, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
     connect(m_commandLine, &QLineEdit::editingFinished, this, [this]() {
         parseCommandText(m_commandLine->text());
     });
@@ -2034,17 +2133,22 @@ void SimulationPanel::onAnalysisChanged(int index) {
         setLabel(m_param1, "Step:");
         setLabel(m_param2, "Stop Time:");
         setLabel(m_param3, "Start Time:");
+        setLabel(m_steadyTolEdit, "ssTol:");
+        setLabel(m_steadyDelayEdit, "ssDelay:");
         m_param1->setVisible(true); m_param2->setVisible(true); m_param3->setVisible(true);
+        m_steadyCheck->setVisible(true); m_steadyTolEdit->setVisible(true); m_steadyDelayEdit->setVisible(true);
         m_param4->setVisible(false); m_param5->setVisible(false); m_param6->setVisible(false);
         m_param1->setText("1u"); m_param2->setText("10m"); m_param3->setText("0");
     } else if (index == 1) { // DC OP
         m_param1->setVisible(false); m_param2->setVisible(false); m_param3->setVisible(false);
+        m_steadyCheck->setVisible(false); m_steadyTolEdit->setVisible(false); m_steadyDelayEdit->setVisible(false);
         m_param4->setVisible(false); m_param5->setVisible(false); m_param6->setVisible(false);
     } else if (index == 2) { // AC Sweep
         setLabel(m_param1, "Start Freq:");
         setLabel(m_param2, "Stop Freq:");
         setLabel(m_param3, "Points/Dec:");
         m_param1->setVisible(true); m_param2->setVisible(true); m_param3->setVisible(true);
+        m_steadyCheck->setVisible(false); m_steadyTolEdit->setVisible(false); m_steadyDelayEdit->setVisible(false);
         m_param4->setVisible(false); m_param5->setVisible(false); m_param6->setVisible(false);
         m_param1->setText("10"); m_param2->setText("1Meg"); m_param3->setText("10");
     } else if (index == 3) { // RF S-Parameter
@@ -2055,12 +2159,14 @@ void SimulationPanel::onAnalysisChanged(int index) {
         setLabel(m_param5, "Port 2 Node:");
         setLabel(m_param6, "Ref Z0:");
         m_param1->setVisible(true); m_param2->setVisible(true); m_param3->setVisible(true);
+        m_steadyCheck->setVisible(false); m_steadyTolEdit->setVisible(false); m_steadyDelayEdit->setVisible(false);
         m_param4->setVisible(true); m_param5->setVisible(true); m_param6->setVisible(true);
         m_param1->setText("10"); m_param2->setText("1Meg"); m_param3->setText("10");
         m_param4->setText("V1"); m_param5->setText("OUT"); m_param6->setText("50");
     } else if (index == 4) { // Monte Carlo
         setLabel(m_param1, "Runs:");
         m_param1->setVisible(true); m_param2->setVisible(false); m_param3->setVisible(false);
+        m_steadyCheck->setVisible(false); m_steadyTolEdit->setVisible(false); m_steadyDelayEdit->setVisible(false);
         m_param4->setVisible(false); m_param5->setVisible(false); m_param6->setVisible(false);
         m_param1->setText("10");
     } else if (index == 5) { // Parametric Sweep
@@ -2070,17 +2176,20 @@ void SimulationPanel::onAnalysisChanged(int index) {
         setLabel(m_param4, "Stop:");
         setLabel(m_param5, "Steps:");
         m_param1->setVisible(true); m_param2->setVisible(true); m_param3->setVisible(true);
+        m_steadyCheck->setVisible(false); m_steadyTolEdit->setVisible(false); m_steadyDelayEdit->setVisible(false);
         m_param4->setVisible(true); m_param5->setVisible(true); m_param6->setVisible(false);
         m_param1->setText("R1"); m_param2->setText("resistance"); m_param3->setText("1k");
         m_param4->setText("10k"); m_param5->setText("10");
     } else if (index == 6) { // Sensitivity
         setLabel(m_param1, "Target Signal:");
         m_param1->setVisible(true); m_param2->setVisible(false); m_param3->setVisible(false);
+        m_steadyCheck->setVisible(false); m_steadyTolEdit->setVisible(false); m_steadyDelayEdit->setVisible(false);
         m_param4->setVisible(false); m_param5->setVisible(false); m_param6->setVisible(false);
         m_param1->setText("V(Out)");
     } else if (index == 7) { // Real-time
         setLabel(m_param1, "Update (ms):");
         m_param1->setVisible(true); m_param2->setVisible(false); m_param3->setVisible(false);
+        m_steadyCheck->setVisible(false); m_steadyTolEdit->setVisible(false); m_steadyDelayEdit->setVisible(false);
         m_param4->setVisible(false); m_param5->setVisible(false); m_param6->setVisible(false);
         m_param1->setText("100");
     }
@@ -2288,6 +2397,9 @@ void SimulationPanel::setAnalysisConfig(const AnalysisConfig& cfg) {
         if (idx == 0) {
             if (cfg.step > 0) m_param1->setText(QString::number(cfg.step, 'g', 10));
             if (cfg.stop > 0) m_param2->setText(QString::number(cfg.stop, 'g', 10));
+            if (m_steadyCheck) m_steadyCheck->setChecked(cfg.transientSteady);
+            if (m_steadyTolEdit) m_steadyTolEdit->setText(cfg.steadyStateTol > 0.0 ? QString::number(cfg.steadyStateTol, 'g', 12) : QString());
+            if (m_steadyDelayEdit) m_steadyDelayEdit->setText(cfg.steadyStateDelay > 0.0 ? QString::number(cfg.steadyStateDelay, 'g', 12) : QString());
         } else if (idx == 2) {
             const double fStart = (cfg.fStart > 0.0) ? cfg.fStart : 10.0;
             const double fStop = (cfg.fStop > 0.0) ? cfg.fStop : 1e6;
@@ -2324,6 +2436,9 @@ SimulationPanel::AnalysisConfig SimulationPanel::getAnalysisConfig() const {
         cfg.type = SimAnalysisType::Transient;
         cfg.step = parseValue(m_param1 ? m_param1->text() : QString(), 1e-6);
         cfg.stop = parseValue(m_param2 ? m_param2->text() : QString(), 10e-3);
+        cfg.transientSteady = m_steadyCheck && m_steadyCheck->isChecked();
+        cfg.steadyStateTol = parseValue(m_steadyTolEdit ? m_steadyTolEdit->text() : QString(), 0.0);
+        cfg.steadyStateDelay = parseValue(m_steadyDelayEdit ? m_steadyDelayEdit->text() : QString(), 0.0);
     } else if (idx == 1) {
         cfg.type = SimAnalysisType::OP;
     } else if (idx == 2) {
@@ -2396,6 +2511,9 @@ void SimulationPanel::onRunSimulation() {
     const QString rfPort1Text = m_param4->text().trimmed();
     const QString rfPort2Text = m_param5->text().trimmed();
     const QString rfZ0Text = m_param6->text().trimmed().isEmpty() ? "50" : m_param6->text().trimmed();
+    const bool steadyEnabled = m_steadyCheck && m_steadyCheck->isChecked();
+    const QString steadyTolText = m_steadyTolEdit ? m_steadyTolEdit->text().trimmed() : QString();
+    const QString steadyDelayText = m_steadyDelayEdit ? m_steadyDelayEdit->text().trimmed() : QString();
     const QString projectDir = m_projectDir;
     const QJsonObject snapshot = SchematicFileIO::serializeSceneToJson(m_scene, "A4");
 
@@ -2443,7 +2561,7 @@ void SimulationPanel::onRunSimulation() {
         SimManager::instance().runNetlistText(result.netlistText);
     });
 
-    watcher->setFuture(QtConcurrent::run([snapshot, projectDir, idx, tStop, tStep, fStartText, fStopText, ptsText, rfPort1Text, rfPort2Text, rfZ0Text]() {
+    watcher->setFuture(QtConcurrent::run([snapshot, projectDir, idx, tStop, tStep, fStartText, fStopText, ptsText, rfPort1Text, rfPort2Text, rfZ0Text, steadyEnabled, steadyTolText, steadyDelayText]() {
         SimBuildResult result;
         QGraphicsScene tempScene;
         QString error;
@@ -2492,6 +2610,9 @@ void SimulationPanel::onRunSimulation() {
             params.start = "0";
             params.stop = QString::number(tStop);
             params.step = QString::number(tStep);
+            params.transientSteady = steadyEnabled;
+            params.steadyStateTol = steadyTolText;
+            params.steadyStateDelay = steadyDelayText;
         } else if (idx == 1) {
             params.type = SpiceNetlistGenerator::OP;
         } else if (idx == 2) {
@@ -2596,8 +2717,12 @@ QString SimulationPanel::generateSpiceNetlist() {
     
     if (typeIndex == 0) {
         params.type = SpiceNetlistGenerator::Transient;
+        params.start = "0";
         params.stop = m_param2->text();
         params.step = m_param1->text();
+        params.transientSteady = m_steadyCheck && m_steadyCheck->isChecked();
+        params.steadyStateTol = m_steadyTolEdit ? m_steadyTolEdit->text().trimmed() : QString();
+        params.steadyStateDelay = m_steadyDelayEdit ? m_steadyDelayEdit->text().trimmed() : QString();
     } else if (typeIndex == 1) {
         params.type = SpiceNetlistGenerator::OP;
     } else if (typeIndex == 2) {
@@ -2634,6 +2759,7 @@ void SimulationPanel::onSimResultsReady(const SimResults& results) {
 
     SimResults effectiveResults = results;
     appendDerivedPowerWaveforms(effectiveResults);
+    appendEfficiencySummary(effectiveResults);
 
     if (m_hasLastResults) {
         m_previousResults = std::move(m_lastResults);

@@ -20,6 +20,9 @@ public:
         double stop = 10e-3;
         double step = 1e-6;
         double start = 0;
+        bool transientSteady = false;
+        double steadyStateTol = 0.0;
+        double steadyStateDelay = 0.0;
         double fStart = 10;
         double fStop = 1e6;
         int pts = 100;
@@ -58,6 +61,9 @@ private:
     QLineEdit* m_param4;
     QLineEdit* m_param5;
     QLineEdit* m_param6;
+    QCheckBox* m_steadyCheck;
+    QLineEdit* m_steadyTolEdit;
+    QLineEdit* m_steadyDelayEdit;
 };
 
 #endif // SIMULATION_SETUP_DIALOG_H

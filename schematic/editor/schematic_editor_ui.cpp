@@ -1540,6 +1540,9 @@ void SchematicEditor::createDockWidgets() {
         pCfg.type = m_simConfig.type;
         pCfg.stop = m_simConfig.stop;
         pCfg.step = m_simConfig.step;
+        pCfg.transientSteady = m_simConfig.transientSteady;
+        pCfg.steadyStateTol = m_simConfig.steadyStateTol;
+        pCfg.steadyStateDelay = m_simConfig.steadyStateDelay;
         pCfg.fStart = m_simConfig.fStart;
         pCfg.fStop = m_simConfig.fStop;
         pCfg.pts = m_simConfig.pts;
@@ -1923,6 +1926,9 @@ void SchematicEditor::onOpenSimulationSetup() {
             pCfg.type = m_simConfig.type;
             pCfg.stop = m_simConfig.stop;
             pCfg.step = m_simConfig.step;
+            pCfg.transientSteady = m_simConfig.transientSteady;
+            pCfg.steadyStateTol = m_simConfig.steadyStateTol;
+            pCfg.steadyStateDelay = m_simConfig.steadyStateDelay;
             pCfg.fStart = m_simConfig.fStart;
             pCfg.fStop = m_simConfig.fStop;
             pCfg.pts = m_simConfig.pts;
@@ -1994,6 +2000,9 @@ bool SchematicEditor::editDirectiveWithSimulationSetup(const QString& currentCom
         pCfg.type = m_simConfig.type;
         pCfg.stop = m_simConfig.stop;
         pCfg.step = m_simConfig.step;
+        pCfg.transientSteady = m_simConfig.transientSteady;
+        pCfg.steadyStateTol = m_simConfig.steadyStateTol;
+        pCfg.steadyStateDelay = m_simConfig.steadyStateDelay;
         pCfg.fStart = m_simConfig.fStart;
         pCfg.fStop = m_simConfig.fStop;
         pCfg.pts = m_simConfig.pts;
@@ -2267,6 +2276,9 @@ void SchematicEditor::onRunSimulation() {
         m_simConfig.type = cfg.type;
         m_simConfig.stop = cfg.stop;
         m_simConfig.step = cfg.step;
+        m_simConfig.transientSteady = cfg.transientSteady;
+        m_simConfig.steadyStateTol = cfg.steadyStateTol;
+        m_simConfig.steadyStateDelay = cfg.steadyStateDelay;
         m_simConfig.fStart = cfg.fStart;
         m_simConfig.fStop = cfg.fStop;
         m_simConfig.pts = cfg.pts;
@@ -2282,6 +2294,9 @@ void SchematicEditor::onRunSimulation() {
         config.tStart = 0;
         config.tStop = m_simConfig.stop;
         config.tStep = m_simConfig.step;
+        config.transientStopAtSteadyState = m_simConfig.transientSteady;
+        config.transientSteadyStateTol = m_simConfig.steadyStateTol;
+        config.transientSteadyStateDelay = m_simConfig.steadyStateDelay;
         config.transientStorageMode = SimTransientStorageMode::AutoDecimate;
         config.transientMaxStoredPoints = 50000;
     } else if (m_simConfig.type == SimAnalysisType::OP) {

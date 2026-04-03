@@ -87,3 +87,7 @@ tests/docs/*
 viospicelib/*
 .log
 .qtcreator/project.json
+test_netlist.json
+*.pcb
+TESTING.md
+ 

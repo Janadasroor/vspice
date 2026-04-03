@@ -160,6 +160,28 @@ class VioCmdRunner:
             raise RuntimeError(result.stderr.strip() or "simulate failed")
         return self._parse_json_output(result)
 
+    def netlist_run(
+        self,
+        netlist_path: str,
+        analysis: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
+        include_stats: bool = True,
+    ) -> Dict[str, Any]:
+        cmd = [
+            self.cli_path,
+            "netlist-run",
+            netlist_path,
+            "--json",
+        ]
+        if analysis:
+            cmd.extend(["--analysis", analysis])
+        if include_stats:
+            cmd.append("--stats")
+        result = self._run(cmd, timeout=timeout_seconds)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "netlist-run failed")
+        return self._parse_json_output(result)
+
 
 def _parse_spice_number(value: Optional[str]) -> Optional[float]:
     if value is None:
@@ -239,6 +261,24 @@ def _format_generated_value(
     if fmt:
         return fmt.format(value=number)
     return number
+
+
+def _find_stat_by_name(stats: List[Dict[str, Any]], name: str) -> Dict[str, Any]:
+    normalized = str(name).strip().upper()
+    for stat in list(stats or []):
+        if str(stat.get("name", "")).strip().upper() == normalized:
+            return stat
+    raise KeyError(f"stat not found: {name}")
+
+
+def _split_name_for_index(index: int, total: int) -> str:
+    train_cutoff = int(total * 0.8)
+    val_cutoff = int(total * 0.9)
+    if index < train_cutoff:
+        return "train"
+    if index < val_cutoff:
+        return "val"
+    return "test"
 
 
 def _expand_parameter_values(param: Dict[str, Any]) -> List[Any]:
@@ -930,6 +970,23 @@ class SimulationDatasetService:
         self.runner = runner or VioCmdRunner()
 
     @staticmethod
+    def _spice_resistance(value_ohms: int) -> str:
+        if value_ohms >= 1000:
+            scaled = value_ohms / 1000.0
+            if math.isclose(scaled, round(scaled), rel_tol=0.0, abs_tol=1e-12):
+                return f"{int(round(scaled))}k"
+            return f"{scaled:g}k"
+        return str(value_ohms)
+
+    @staticmethod
+    def _classify_voltage_divider_ratio(ratio: float) -> int:
+        if ratio < 0.35:
+            return 0
+        if ratio < 0.65:
+            return 1
+        return 2
+
+    @staticmethod
     def _normalize_job(job: Dict[str, Any]) -> Dict[str, Any]:
         normalized = dict(job)
         normalized["job_id"] = str(normalized.get("job_id") or uuid.uuid4())
@@ -1266,6 +1323,135 @@ class SimulationDatasetService:
             "manifests": expanded["manifests"],
         }
 
+    def run_voltage_divider_classification_dataset(self, request: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        payload = dict(request or {})
+        output_path = Path(str(payload.get("output_path") or "/tmp/viospice-datasets/voltage_divider_classifier.jsonl"))
+        netlist_dir = Path(str(payload.get("netlist_dir") or "/tmp/viospice-netlists/voltage_divider_classifier"))
+        vin_values = [float(item) for item in list(payload.get("vin_values") or [1.8, 3.3, 5.0, 12.0])]
+        r1_values = [int(item) for item in list(payload.get("r1_values") or [470, 1000, 2200, 4700, 10000])]
+        r2_values = [int(item) for item in list(payload.get("r2_values") or [470, 1000, 2200, 4700, 10000])]
+        inline_results = bool(payload.get("inline_results", False))
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        netlist_dir.mkdir(parents=True, exist_ok=True)
+        combos = [(vin, r1, r2) for vin in vin_values for r1 in r1_values for r2 in r2_values]
+        records: List[Dict[str, Any]] = []
+        class_counts = {0: 0, 1: 0, 2: 0}
+
+        with open(output_path, "w", encoding="utf-8") as handle:
+            for index, (vin_dc, r1_ohms, r2_ohms) in enumerate(combos):
+                split = _split_name_for_index(index, len(combos))
+                netlist_path = netlist_dir / f"divider_{index:05d}.cir"
+                netlist_text = "\n".join(
+                    [
+                        "* generated voltage divider classifier sample",
+                        f"V1 in 0 DC {vin_dc}",
+                        f"R1 in out {self._spice_resistance(r1_ohms)}",
+                        f"R2 out 0 {self._spice_resistance(r2_ohms)}",
+                        ".op",
+                        ".end",
+                        "",
+                    ]
+                )
+                netlist_path.write_text(netlist_text, encoding="utf-8")
+                simulation = self.runner.netlist_run(str(netlist_path), analysis="op", include_stats=True)
+                stats = list(simulation.get("stats") or [])
+                out_stat = _find_stat_by_name(stats, "V(OUT)")
+                current_stat = _find_stat_by_name(stats, "I(V1)")
+                vout = float(out_stat.get("avg", 0.0))
+                ratio = vout / vin_dc if vin_dc else 0.0
+                class_id = self._classify_voltage_divider_ratio(ratio)
+                class_counts[class_id] += 1
+                record = {
+                    "job_id": f"divider-{index:05d}",
+                    "ok": bool(simulation.get("ok", False)),
+                    "created_at": _utc_now_iso(),
+                    "duration_seconds": 0.0,
+                    "source": {
+                        "kind": "netlist-run",
+                        "netlist_path": str(netlist_path.resolve()),
+                        "analysis": "op",
+                        "signals": ["V(OUT)", "I(V1)"],
+                    },
+                    "labels": {
+                        "class_id": class_id,
+                        "vout_ratio": ratio,
+                        "vout_avg": vout,
+                    },
+                    "tags": {
+                        "family": "voltage_divider",
+                        "split": split,
+                        "task": "classification",
+                    },
+                    "metadata": {
+                        "split": split,
+                        "sweep_values": {
+                            "vin_dc": vin_dc,
+                            "r1_ohms": r1_ohms,
+                            "r2_ohms": r2_ohms,
+                        },
+                        "class_rule": {
+                            "class_0": "vout_ratio < 0.35",
+                            "class_1": "0.35 <= vout_ratio < 0.65",
+                            "class_2": "vout_ratio >= 0.65",
+                        },
+                    },
+                    "accepted": True,
+                    "result_filters": {"passed": True, "rule_count": 0, "evaluations": []},
+                    "discard_filtered": False,
+                    "artifacts": {
+                        "netlist": netlist_text,
+                        "simulation": simulation,
+                        "waveforms": [],
+                        "stats": [
+                            {
+                                "name": "ALL",
+                                "avg": vout,
+                                "max": vout,
+                                "min": vout,
+                                "rms": vout,
+                            },
+                            {
+                                "name": "I(V1)",
+                                "avg": float(current_stat.get("avg", 0.0)),
+                                "max": float(current_stat.get("max", 0.0)),
+                                "min": float(current_stat.get("min", 0.0)),
+                                "rms": float(current_stat.get("rms", 0.0)),
+                            },
+                        ],
+                        "measures": [
+                            {"expr": "avg V(OUT)", "value": vout},
+                            {"expr": "ratio V(OUT)/VIN", "value": ratio},
+                        ],
+                    },
+                }
+                handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+                if inline_results:
+                    records.append(record)
+
+        response = {
+            "ok": True,
+            "created_at": _utc_now_iso(),
+            "task": "voltage-divider-classification",
+            "record_count": len(combos),
+            "class_counts": class_counts,
+            "output_path": str(output_path.resolve()),
+            "netlist_dir": str(netlist_dir.resolve()),
+            "parameter_grid": {
+                "vin_values": vin_values,
+                "r1_values": r1_values,
+                "r2_values": r2_values,
+            },
+            "class_rule": {
+                "class_0": "vout_ratio < 0.35",
+                "class_1": "0.35 <= vout_ratio < 0.65",
+                "class_2": "vout_ratio >= 0.65",
+            },
+        }
+        if inline_results:
+            response["results"] = records
+        return response
+
 
 class MlDatasetApiHandler(BaseHTTPRequestHandler):
     service: SimulationDatasetService = SimulationDatasetService()
@@ -1343,6 +1529,10 @@ class MlDatasetApiHandler(BaseHTTPRequestHandler):
                 result = self.service.run_sweep(payload)
                 self._send_json(200, result)
                 return
+            if path == "/api/ml/examples/voltage-divider-classification":
+                result = self.service.run_voltage_divider_classification_dataset(payload)
+                self._send_json(200, result)
+                return
             self._send_json(404, {"ok": False, "error": "Not found"})
         except Exception as exc:
             self._send_json(400, {"ok": False, "error": str(exc)})
@@ -1357,6 +1547,7 @@ def run_server(host: str, port: int, cli_path: Optional[str] = None) -> None:
     print("  POST /api/ml/simulate")
     print("  POST /api/ml/batch")
     print("  POST /api/ml/sweep")
+    print("  POST /api/ml/examples/voltage-divider-classification")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

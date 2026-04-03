@@ -747,6 +747,13 @@ QString SimManager::generateNetlist(QGraphicsScene* scene, NetManager* netMgr, c
             params.start = "0";
             params.stop = QString::number(config.tStop);
             params.step = QString::number(config.tStep);
+            params.transientSteady = config.transientStopAtSteadyState;
+            if (config.transientSteadyStateTol > 0.0) {
+                params.steadyStateTol = QString::number(config.transientSteadyStateTol, 'g', 12);
+            }
+            if (config.transientSteadyStateDelay > 0.0) {
+                params.steadyStateDelay = QString::number(config.transientSteadyStateDelay, 'g', 12);
+            }
             break;
         case SimAnalysisType::AC:
             params.type = SpiceNetlistGenerator::AC;

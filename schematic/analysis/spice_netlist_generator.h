@@ -38,6 +38,9 @@ public:
         QString start;
         QString stop;
         QString step;
+        bool transientSteady = false;
+        QString steadyStateTol;
+        QString steadyStateDelay;
         QString dcSource;
         QString dcStart;
         QString dcStop;

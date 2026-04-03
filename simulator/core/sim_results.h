@@ -33,6 +33,9 @@ enum class SimTransientStorageMode {
 struct SimAnalysisConfig {
     SimAnalysisType type;
     double tStart = 0, tStop = 0.01, tStep = 1e-5;
+    bool transientStopAtSteadyState = false;
+    double transientSteadyStateTol = 0.0;
+    double transientSteadyStateDelay = 0.0;
     double fStart = 1, fStop = 1e6; 
     int fPoints = 10;
     int mcRuns = 10; // Number of Monte Carlo iterations

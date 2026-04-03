@@ -37,6 +37,40 @@ class FakeRunner:
             "step": step,
         }
 
+    def netlist_run(self, netlist_path, analysis=None, timeout_seconds=None, include_stats=True):
+        content = Path(netlist_path).read_text(encoding="utf-8")
+        vin_dc = 0.0
+        r1 = 1.0
+        r2 = 1.0
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("*"):
+                continue
+            parts = line.split()
+            if parts[0].upper() == "V1" and "DC" in [part.upper() for part in parts]:
+                vin_dc = float(parts[-1])
+            elif parts[0].upper() == "R1":
+                r1 = _parse_test_resistance(parts[-1])
+            elif parts[0].upper() == "R2":
+                r2 = _parse_test_resistance(parts[-1])
+        vout = vin_dc * r2 / (r1 + r2)
+        current = -(vin_dc - vout) / r1 if r1 else 0.0
+        return {
+            "ok": True,
+            "analysis": analysis or "op",
+            "stats": [
+                {"name": "V(OUT)", "avg": vout, "max": vout, "min": vout, "rms": vout},
+                {"name": "I(V1)", "avg": current, "max": current, "min": current, "rms": abs(current)},
+            ],
+        }
+
+
+def _parse_test_resistance(value: str) -> float:
+    text = str(value).strip().lower()
+    if text.endswith("k"):
+        return float(text[:-1]) * 1000.0
+    return float(text)
+
 
 class SimulationDatasetServiceTest(unittest.TestCase):
     def setUp(self):
@@ -461,6 +495,32 @@ class SimulationDatasetServiceTest(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         record = json.loads(lines[0])
         self.assertTrue(record["accepted"])
+
+    def test_run_voltage_divider_classification_dataset_writes_jsonl(self):
+        output_path = Path(self.temp_dir.name) / "divider_classifier.jsonl"
+        netlist_dir = Path(self.temp_dir.name) / "netlists"
+        result = self.service.run_voltage_divider_classification_dataset(
+            {
+                "output_path": str(output_path),
+                "netlist_dir": str(netlist_dir),
+                "vin_values": [2.0, 5.0],
+                "r1_values": [1000, 2000],
+                "r2_values": [1000, 4000],
+                "inline_results": True,
+            }
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["record_count"], 8)
+        self.assertEqual(sum(result["class_counts"].values()), 8)
+        self.assertEqual(len(result["results"]), 8)
+        self.assertTrue(output_path.exists())
+        records = [json.loads(line) for line in output_path.read_text(encoding="utf-8").strip().splitlines()]
+        self.assertEqual(len(records), 8)
+        self.assertIn(records[0]["labels"]["class_id"], {0, 1, 2})
+        self.assertIn("vout_ratio", records[0]["labels"])
+        self.assertEqual(records[0]["tags"]["task"], "classification")
+        self.assertIn(records[0]["metadata"]["split"], {"train", "val", "test"})
+        self.assertEqual(records[0]["artifacts"]["stats"][0]["name"], "ALL")
 
 
 if __name__ == "__main__":

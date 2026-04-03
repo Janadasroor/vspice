@@ -53,6 +53,9 @@ public:
         SimAnalysisType type;
         double stop;
         double step;
+        bool transientSteady = false;
+        double steadyStateTol = 0.0;
+        double steadyStateDelay = 0.0;
         double fStart;
         double fStop;
         int pts;
@@ -167,6 +170,7 @@ private:
     bool buildDerivedPowerWaveform(const QString& signalName, QVector<double>& time, QVector<double>& values) const;
     QStringList connectedNetsForItem(class SchematicItem* item, bool updateNets = true) const;
     void appendDerivedPowerWaveforms(SimResults& results) const;
+    void appendEfficiencySummary(SimResults& results) const;
     void refreshSteppedMeasurementControls(const SimResults& results);
     void rebuildSteppedMeasurementPlot(const SimResults& results);
 
@@ -191,6 +195,9 @@ private:
     QLineEdit* m_param4 = nullptr; 
     QLineEdit* m_param5 = nullptr; 
     QLineEdit* m_param6 = nullptr; 
+    QCheckBox* m_steadyCheck = nullptr;
+    QLineEdit* m_steadyTolEdit = nullptr;
+    QLineEdit* m_steadyDelayEdit = nullptr;
 
     // Source generator controls
     QComboBox* m_generatorType = nullptr;

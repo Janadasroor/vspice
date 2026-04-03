@@ -709,6 +709,9 @@ bool SchematicEditor::openFile(const QString& filePath) {
             pCfg.type = m_simConfig.type;
             pCfg.stop = m_simConfig.stop;
             pCfg.step = m_simConfig.step;
+            pCfg.transientSteady = m_simConfig.transientSteady;
+            pCfg.steadyStateTol = m_simConfig.steadyStateTol;
+            pCfg.steadyStateDelay = m_simConfig.steadyStateDelay;
             pCfg.fStart = m_simConfig.fStart;
             pCfg.fStop = m_simConfig.fStop;
             pCfg.pts = m_simConfig.pts;
@@ -1221,6 +1224,9 @@ void SchematicEditor::onOpenNetlistEditor() {
         params.stop = QString::number(m_simConfig.stop);
         params.step = QString::number(m_simConfig.step);
         params.start = QString::number(m_simConfig.start);
+        params.transientSteady = m_simConfig.transientSteady;
+        if (m_simConfig.steadyStateTol > 0.0) params.steadyStateTol = QString::number(m_simConfig.steadyStateTol, 'g', 12);
+        if (m_simConfig.steadyStateDelay > 0.0) params.steadyStateDelay = QString::number(m_simConfig.steadyStateDelay, 'g', 12);
         
         QString netlist = SpiceNetlistGenerator::generate(m_scene, m_projectDir, m_netManager, params);
         editor->setNetlist(netlist);

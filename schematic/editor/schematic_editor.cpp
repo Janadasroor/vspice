@@ -493,6 +493,9 @@ void SchematicEditor::onTabChanged(int index) {
             m_simConfig.type = panelCfg.type;
             m_simConfig.stop = panelCfg.stop;
             m_simConfig.step = panelCfg.step;
+            m_simConfig.transientSteady = panelCfg.transientSteady;
+            m_simConfig.steadyStateTol = panelCfg.steadyStateTol;
+            m_simConfig.steadyStateDelay = panelCfg.steadyStateDelay;
             m_simConfig.fStart = panelCfg.fStart;
             m_simConfig.fStop = panelCfg.fStop;
             m_simConfig.pts = panelCfg.pts;

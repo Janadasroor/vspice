@@ -4278,7 +4278,20 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
     } else if (!hasExplicitAnalysisCard) {
         switch (params.type) {
             case Transient:
-                netlist += QString(".tran %1 %2\n").arg(params.step, params.stop);
+                netlist += QString(".tran %1 %2").arg(params.step, params.stop);
+                if (!params.start.trimmed().isEmpty() && params.start.trimmed() != "0") {
+                    netlist += QString(" %1").arg(params.start.trimmed());
+                }
+                if (params.transientSteady) {
+                    netlist += " steady";
+                }
+                netlist += "\n";
+                if (!params.steadyStateTol.trimmed().isEmpty()) {
+                    netlist += QString(".options sstol=%1\n").arg(params.steadyStateTol.trimmed());
+                }
+                if (!params.steadyStateDelay.trimmed().isEmpty()) {
+                    netlist += QString(".options ststdelay=%1\n").arg(params.steadyStateDelay.trimmed());
+                }
                 break;
             case DC:
                 netlist += QString(".dc %1 %2 %3 %4\n").arg(params.dcSource, params.dcStart, params.dcStop, params.dcStep);
@@ -4383,7 +4396,16 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
 QString SpiceNetlistGenerator::buildCommand(const SimulationParams& params) {
     switch (params.type) {
         case Transient:
-            return QString(".tran %1 %2").arg(params.step, params.stop);
+        {
+            QString command = QString(".tran %1 %2").arg(params.step, params.stop);
+            if (!params.start.trimmed().isEmpty() && params.start.trimmed() != "0") {
+                command += QString(" %1").arg(params.start.trimmed());
+            }
+            if (params.transientSteady) {
+                command += " steady";
+            }
+            return command;
+        }
         case DC:
             return QString(".dc %1 %2 %3 %4").arg(params.dcSource, params.dcStart, params.dcStop, params.dcStep);
         case AC: {

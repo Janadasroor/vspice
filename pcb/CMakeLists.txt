@@ -91,6 +91,8 @@ set(PCB_SOURCES
     analysis/length_measurement_engine.h
     analysis/serpentine_generator.cpp
     analysis/serpentine_generator.h
+    analysis/pcb_diff_engine.cpp
+    analysis/pcb_diff_engine.h
 
     # DRC
     drc/pcb_drc.cpp
@@ -133,6 +135,8 @@ set(PCB_SOURCES
     dialogs/auto_router_dialog.h
     dialogs/length_matching_dialog.cpp
     dialogs/length_matching_dialog.h
+    dialogs/pcb_diff_viewer.cpp
+    dialogs/pcb_diff_viewer.h
 
     # Import
     import/netlist_importer.cpp

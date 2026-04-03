@@ -49,6 +49,7 @@ Async job endpoints on the FastAPI service:
 - `POST /api/ml/jobs/simulate`
 - `POST /api/ml/jobs/batch`
 - `POST /api/ml/jobs/sweep`
+- `POST /api/ml/jobs/examples/voltage-divider-classification`
 - `GET /api/ml/jobs/{job_id}`
 
 These endpoints return a `job_id` immediately and let clients poll for `queued`, `running`, `completed`, or `failed` status.
@@ -140,6 +141,35 @@ Example request:
 ```
 
 Each line in the output JSONL file is a self-contained training record.
+
+### `POST /api/ml/examples/voltage-divider-classification`
+
+Generates a ready-to-train classification dataset from real `vio-cmd netlist-run` voltage-divider simulations.
+
+Example request:
+
+```json
+{
+  "output_path": "/tmp/viospice-datasets/voltage_divider_classifier.jsonl",
+  "netlist_dir": "/tmp/viospice-netlists/voltage_divider_classifier",
+  "vin_values": [1.8, 3.3, 5.0, 12.0],
+  "r1_values": [470, 1000, 2200, 4700, 10000],
+  "r2_values": [470, 1000, 2200, 4700, 10000]
+}
+```
+
+Each record contains:
+
+- `labels.class_id`
+- `labels.vout_ratio`
+- `metadata.sweep_values`
+- `artifacts.stats`
+
+Class assignment:
+
+- class `0`: `vout_ratio < 0.35`
+- class `1`: `0.35 <= vout_ratio < 0.65`
+- class `2`: `vout_ratio >= 0.65`
 
 ### `POST /api/ml/sweep`
 

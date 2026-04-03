@@ -1,0 +1,7 @@
+{
+  "output_path": "/tmp/viospice-datasets/voltage_divider_classifier.jsonl",
+  "netlist_dir": "/tmp/viospice-netlists/voltage_divider_classifier",
+  "vin_values": [1.8, 3.3, 5.0, 12.0],
+  "r1_values": [470, 1000, 2200, 4700, 10000],
+  "r2_values": [470, 1000, 2200, 4700, 10000]
+}

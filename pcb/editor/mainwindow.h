@@ -84,6 +84,7 @@ private slots:
     void onOpenCommandPalette();
     void onAutoRoute();
     void onLengthMatching();
+    void onCompareBoard();
     
     // Alignment slots
     void onAlignLeft();
