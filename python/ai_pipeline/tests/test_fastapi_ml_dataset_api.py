@@ -1,4 +1,5 @@
 import importlib.util
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -27,6 +28,21 @@ class FastApiMlDatasetApiTest(unittest.TestCase):
         self.assertIn("/api/ml/jobs/batch", paths)
         self.assertIn("/api/ml/jobs/sweep", paths)
         self.assertIn("/api/ml/jobs/{job_id}", paths)
+
+    def test_job_store_persists_and_repairs_inflight_jobs(self):
+        from ai_pipeline.api.fastapi_ml_dataset_api import InMemoryJobStore
+
+        with tempfile.TemporaryDirectory() as td:
+            store_path = Path(td) / "jobs.json"
+            store = InMemoryJobStore(str(store_path))
+            created = store.create_job("batch", {"jobs": []})
+            store.update_job(created["job_id"], status="running", started_at="2026-01-01T00:00:00Z")
+
+            restored = InMemoryJobStore(str(store_path))
+            record = restored.get_job(created["job_id"])
+            self.assertIsNotNone(record)
+            self.assertEqual(record["status"], "failed")
+            self.assertIn("interrupted", record["error"]["message"].lower())
 
 
 if __name__ == "__main__":

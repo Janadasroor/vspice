@@ -29,7 +29,7 @@ python3 python/scripts/ml_dataset_api.py --port 8787 --cli-path ./build/vio-cmd
 For OpenAPI docs and ASGI deployment:
 
 ```bash
-python3 python/scripts/fastapi_ml_dataset_api.py --port 8790
+python3 python/scripts/fastapi_ml_dataset_api.py --port 8790 --job-store /tmp/viospice-ml-jobs.json
 ```
 
 Then use:
@@ -47,6 +47,11 @@ Async job endpoints on the FastAPI service:
 - `GET /api/ml/jobs/{job_id}`
 
 These endpoints return a `job_id` immediately and let clients poll for `queued`, `running`, `completed`, or `failed` status.
+
+Persistent async jobs:
+
+- use `--job-store /path/to/jobs.json` to persist async job state
+- on restart, previously `queued` or `running` jobs are repaired to `failed` with an interruption error so clients do not wait indefinitely
 
 ## Endpoints
 

@@ -15,6 +15,7 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind")
     parser.add_argument("--port", type=int, default=8790, help="Port to bind")
     parser.add_argument("--cli-path", help="Explicit path to vio-cmd or flux-cmd")
+    parser.add_argument("--job-store", help="Path to persistent async job store JSON file")
     parser.add_argument("--reload", action="store_true", help="Enable uvicorn reload mode")
     args = parser.parse_args()
 
@@ -26,7 +27,7 @@ def main() -> None:
     from ai_pipeline.api.fastapi_ml_dataset_api import create_app
 
     uvicorn.run(
-        create_app(args.cli_path),
+        create_app(args.cli_path, args.job_store),
         host=args.host,
         port=args.port,
         reload=args.reload,

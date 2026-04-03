@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 import threading
 import traceback
 import uuid
@@ -60,9 +62,48 @@ class AsyncJobAccepted(BaseModel):
 
 
 class InMemoryJobStore:
-    def __init__(self) -> None:
+    def __init__(self, persist_path: Optional[str] = None) -> None:
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
+        self._persist_path = Path(persist_path).expanduser().resolve() if persist_path else None
+        self._load_from_disk()
+
+    def _load_from_disk(self) -> None:
+        if not self._persist_path or not self._persist_path.exists():
+            return
+        try:
+            loaded = json.loads(self._persist_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(loaded, dict):
+            return
+        jobs = loaded.get("jobs", {})
+        if not isinstance(jobs, dict):
+            return
+        repaired: Dict[str, Dict[str, Any]] = {}
+        for job_id, record in jobs.items():
+            if not isinstance(record, dict):
+                continue
+            restored = dict(record)
+            if restored.get("status") in {"queued", "running"}:
+                restored["status"] = "failed"
+                restored["finished_at"] = _utc_now_iso()
+                restored["error"] = {
+                    "message": "Job was interrupted by a previous process shutdown.",
+                    "traceback": "",
+                }
+            repaired[str(job_id)] = restored
+        self._jobs = repaired
+
+    def _persist_to_disk(self) -> None:
+        if not self._persist_path:
+            return
+        self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "saved_at": _utc_now_iso(),
+            "jobs": self._jobs,
+        }
+        self._persist_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
 
     def create_job(self, kind: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         job_id = str(uuid.uuid4())
@@ -79,6 +120,7 @@ class InMemoryJobStore:
         }
         with self._lock:
             self._jobs[job_id] = record
+            self._persist_to_disk()
         return dict(record)
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -91,7 +133,12 @@ class InMemoryJobStore:
             if job_id not in self._jobs:
                 raise KeyError(job_id)
             self._jobs[job_id].update(fields)
+            self._persist_to_disk()
             return dict(self._jobs[job_id])
+
+    @property
+    def persist_path(self) -> Optional[str]:
+        return str(self._persist_path) if self._persist_path else None
 
 
 def _start_background_job(
@@ -121,12 +168,12 @@ def _start_background_job(
     return record
 
 
-def create_app(cli_path: Optional[str] = None) -> FastAPI:
+def create_app(cli_path: Optional[str] = None, job_store_path: Optional[str] = None) -> FastAPI:
     service = SimulationDatasetService(VioCmdRunner(cli_path))
-    job_store = InMemoryJobStore()
+    job_store = InMemoryJobStore(job_store_path)
     app = FastAPI(
         title="VioSpice ML Dataset API",
-        version="0.3.0",
+        version="0.4.0",
         description="ASGI/OpenAPI wrapper for VioSpice ML-oriented simulation, batch generation, and sweep dataset workflows.",
     )
 
@@ -138,6 +185,7 @@ def create_app(cli_path: Optional[str] = None) -> FastAPI:
             "created_at": _utc_now_iso(),
             "cli_path": service.runner.cli_path,
             "async_jobs": True,
+            "job_store_path": job_store.persist_path,
         }
 
     @app.post("/api/ml/simulate")
