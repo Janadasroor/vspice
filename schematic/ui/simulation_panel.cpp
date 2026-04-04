@@ -898,8 +898,36 @@ void SimulationPanel::updateTransientNetTableOverlay(const SimResults& results) 
 
     if (!tableItem) {
         tableItem = new SimulationNetTableItem();
-        const QRectF bounds = m_scene->itemsBoundingRect();
-        tableItem->setPos(bounds.isValid() ? bounds.topRight() + QPointF(24.0, 8.0) : QPointF(40.0, 40.0));
+
+        QRectF pageBounds;
+        QRectF circuitBounds;
+        for (QGraphicsItem* gi : m_scene->items()) {
+            if (auto* page = dynamic_cast<SchematicPageItem*>(gi)) {
+                pageBounds = page->mapRectToScene(page->boundingRect());
+                continue;
+            }
+            if (dynamic_cast<SimulationNetTableItem*>(gi)) continue;
+            if (gi->data(0).toString() == "grid") continue;
+            circuitBounds = circuitBounds.isValid() ? circuitBounds.united(gi->sceneBoundingRect())
+                                                    : gi->sceneBoundingRect();
+        }
+
+        QPointF placement(40.0, 40.0);
+        if (pageBounds.isValid()) {
+            const QRectF innerPage = pageBounds.adjusted(140.0, 140.0, -140.0, -140.0);
+            if (circuitBounds.isValid()) {
+                const qreal x = qMin(innerPage.right() - tableItem->boundingRect().width() - 16.0,
+                                     circuitBounds.right() + 28.0);
+                const qreal y = qMax(innerPage.top() + 16.0, circuitBounds.top());
+                placement = QPointF(x, y);
+            } else {
+                placement = innerPage.topRight() + QPointF(-tableItem->boundingRect().width() - 16.0, 16.0);
+            }
+        } else if (circuitBounds.isValid()) {
+            placement = circuitBounds.topRight() + QPointF(28.0, 0.0);
+        }
+
+        tableItem->setPos(placement);
         m_scene->addItem(tableItem);
         connect(tableItem, &SimulationNetTableItem::deleteRequested, this, [this, scene = m_scene]() {
             clearTransientNetTableOverlay(scene);

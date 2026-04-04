@@ -14,6 +14,9 @@
 #include <QFutureWatcher>
 #include <QTemporaryFile>
 #include <QDir>
+#include <QProcess>
+#include <QPointer>
+#include <QSharedPointer>
 #include <QRegularExpression>
 
 namespace {
@@ -887,26 +890,14 @@ void SimManager::startNgspiceWithNetlist(const QString& netlistContent) {
     m_paused = false;
     m_activeNetlistText = netlistContent;
 
-    auto& sm = SimulationManager::instance();
-    
-    // Disconnect previous connections to avoid duplicates
-    sm.disconnect(this);
-
     // Use a QObject parent for the file to ensure it's deleted eventually,
     // but we also use a QPointer to track its lifetime across multiple lambdas.
     QPointer<QTemporaryFile> safeTempFile = tempFile;
+    const QFileInfo runInfo(tempFile->fileName());
+    const QString rawPath = runInfo.absolutePath() + "/" + runInfo.completeBaseName() + ".raw";
+    QFile::remove(rawPath);
 
-    connect(&sm, &SimulationManager::outputReceived, this, &SimManager::logMessage, Qt::QueuedConnection);
-    connect(&sm, &SimulationManager::errorOccurred, this, [this, safeTempFile](const QString& msg) {
-        Q_EMIT logMessage(QString("Ngspice error: %1").arg(msg));
-        Q_EMIT errorOccurred(msg);
-        if (safeTempFile) safeTempFile->deleteLater();
-        cleanupSimulation();
-    }, Qt::QueuedConnection);
-
-    connect(&sm, &SimulationManager::realTimeDataBatchReceived, this, &SimManager::realTimeDataBatchReceived, Qt::QueuedConnection);
-    
-    connect(&sm, &SimulationManager::rawResultsReady, this, [this, safeTempFile](const QString& path) {
+    auto parseRawResults = [this, safeTempFile](const QString& path) {
         m_resultsPending = true;
         auto* watcher = new QFutureWatcher<std::pair<bool, SimResults>>(this);
         connect(watcher, &QFutureWatcher<std::pair<bool, SimResults>>::finished, this, [this, watcher, safeTempFile]() {
@@ -955,31 +946,94 @@ void SimManager::startNgspiceWithNetlist(const QString& netlistContent) {
             qDebug() << "RawDataParser error:" << err;
             return std::make_pair(false, SimResults());
         }));
-    }, Qt::QueuedConnection);
-    
-    // Handle the simulation engine finishing (it fires regardless of result parsing)
-    connect(&sm, &SimulationManager::simulationFinished, this, [this, safeTempFile]() {
-        // Results might already be in flight via rawResultsReady handler.
-        // We wait a bit to see if they arrive. If not, we cleanup.
-        QTimer::singleShot(2000, this, [this, safeTempFile]() {
-            if (m_control && !m_resultsPending) {
-                Q_EMIT logMessage("Ngspice finished without RAW results; closing simulation run.");
-                if (m_pendingStepRuns.isEmpty() && m_activeStepLabel.isEmpty()) {
-                    Q_EMIT simulationFinished(SimResults());
-                }
-                if (safeTempFile) safeTempFile->deleteLater();
-                cleanupSimulation();
-            } else if (m_control && m_resultsPending) {
-                // Still waiting for the heavy parser? Let it finish.
-                // But if it takes TOO long, we might still want a timeout.
-            }
-        });
-    }, Qt::QueuedConnection);
+    };
 
-    sm.runSimulation(tempFile->fileName(), m_control);
+    auto* proc = new QProcess(this);
+    m_ngspiceProcess = proc;
+    auto processLogTail = QSharedPointer<QStringList>::create();
+    proc->setProgram("ngspice");
+    proc->setArguments({"-b", "-r", rawPath, tempFile->fileName()});
+    proc->setWorkingDirectory(runInfo.absolutePath());
+    proc->setProcessChannelMode(QProcess::MergedChannels);
+
+    connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc, processLogTail]() {
+        const QString text = QString::fromLocal8Bit(proc->readAllStandardOutput());
+        const QStringList lines = text.split(QRegularExpression("[\\r\\n]+"), Qt::SkipEmptyParts);
+        for (const QString& line : lines) {
+            processLogTail->append(line);
+            while (processLogTail->size() > 80) {
+                processLogTail->removeFirst();
+            }
+            Q_EMIT logMessage(QString("[Ngspice] %1").arg(line));
+        }
+    });
+
+    connect(proc, &QProcess::errorOccurred, this, [this, safeTempFile, proc, processLogTail](QProcess::ProcessError error) {
+        if (proc != m_ngspiceProcess) return;
+        QString msg = QString("Failed to start ngspice process (%1).").arg(static_cast<int>(error));
+        if (!processLogTail->isEmpty()) {
+            msg += "\n" + processLogTail->join("\n");
+        }
+        Q_EMIT logMessage(msg);
+        Q_EMIT errorOccurred(msg);
+        if (safeTempFile) safeTempFile->deleteLater();
+        cleanupSimulation();
+    });
+
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, safeTempFile, rawPath, proc, parseRawResults, processLogTail](int exitCode, QProcess::ExitStatus exitStatus) {
+        if (proc != m_ngspiceProcess) return;
+        const QString trailingText = QString::fromLocal8Bit(proc->readAllStandardOutput());
+        if (!trailingText.trimmed().isEmpty()) {
+            const QStringList lines = trailingText.split(QRegularExpression("[\\r\\n]+"), Qt::SkipEmptyParts);
+            for (const QString& line : lines) {
+                processLogTail->append(line);
+                while (processLogTail->size() > 80) {
+                    processLogTail->removeFirst();
+                }
+                Q_EMIT logMessage(QString("[Ngspice] %1").arg(line));
+            }
+        }
+        if (exitStatus != QProcess::NormalExit || exitCode != 0) {
+            QString msg = QString("Ngspice process failed (exit code %1).").arg(exitCode);
+            if (!processLogTail->isEmpty()) {
+                msg += "\n" + processLogTail->join("\n");
+            }
+            Q_EMIT logMessage(msg);
+            Q_EMIT errorOccurred(msg);
+            if (safeTempFile) safeTempFile->deleteLater();
+            cleanupSimulation();
+            return;
+        }
+
+        if (!QFileInfo::exists(rawPath)) {
+            const QString msg = "Ngspice finished without RAW results; closing simulation run.";
+            Q_EMIT logMessage(msg);
+            if (m_pendingStepRuns.isEmpty() && m_activeStepLabel.isEmpty()) {
+                Q_EMIT simulationFinished(SimResults());
+            }
+            if (safeTempFile) safeTempFile->deleteLater();
+            cleanupSimulation();
+            return;
+        }
+
+        parseRawResults(rawPath);
+    });
+
+    proc->start();
 }
 
 void SimManager::cleanupSimulation() {
+    if (m_ngspiceProcess) {
+        QProcess* proc = m_ngspiceProcess;
+        m_ngspiceProcess = nullptr;
+        proc->disconnect(this);
+        if (proc->state() != QProcess::NotRunning) {
+            proc->kill();
+            proc->waitForFinished(1000);
+        }
+        proc->deleteLater();
+    }
     if (m_control) {
         SimControl* ctrl = m_control;
         m_control = nullptr;
@@ -1034,7 +1088,11 @@ void SimManager::runWithNetlist(const SimNetlist& netlist) {
 }
 
 void SimManager::stopAll() {
-    SimulationManager::instance().stopSimulation();
+    if (m_ngspiceProcess && m_ngspiceProcess->state() != QProcess::NotRunning) {
+        m_ngspiceProcess->kill();
+    } else {
+        SimulationManager::instance().stopSimulation();
+    }
     cleanupSimulation();
     Q_EMIT logMessage("Simulation stopped.");
 }

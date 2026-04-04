@@ -132,6 +132,7 @@ private Q_SLOTS:
     void onPauseSimulation();
     void onOpenNetlistEditor();
     void onSendToPCB();
+    void onSwitchToPCBEditor();
     void onOpenGeminiAI();
     void onShowHelp();
     void onShowDeveloperHelp();

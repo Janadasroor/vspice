@@ -17,6 +17,8 @@ set(CORE_SOURCES
     core/config_manager.cpp
     core/config_manager.h
     core/sync_manager.h
+    core/pcb_sync_dialog.cpp
+    core/pcb_sync_dialog.h
     core/eco_types.h
     core/library_index.cpp
     core/library_index.h
@@ -219,6 +221,8 @@ set(SCHEMATIC_SOURCES
     schematic/dialogs/simulation_debugger_dialog.h
     schematic/dialogs/power_nets_manager_dialog.cpp
     schematic/dialogs/power_nets_manager_dialog.h
+    schematic/dialogs/visual_pin_pad_mapper_dialog.cpp
+    schematic/dialogs/visual_pin_pad_mapper_dialog.h
     schematic/editor/schematic_view.cpp
     schematic/editor/schematic_view.h
     schematic/editor/schematic_commands.cpp

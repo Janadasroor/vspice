@@ -81,6 +81,7 @@ private:
     QString m_activeStepLabel;
     QString m_activeNetlistText;
     int m_completedStepRuns = 0;
+    class QProcess* m_ngspiceProcess = nullptr;
 
     QGraphicsScene* m_rtScene = nullptr;
     NetManager* m_rtNetMgr = nullptr;

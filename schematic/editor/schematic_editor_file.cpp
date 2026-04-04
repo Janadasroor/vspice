@@ -8,11 +8,16 @@
 #include "schematic_page_item.h"
 #include "../items/schematic_sheet_item.h"
 #include "schematic_erc.h"
+#include "../dialogs/visual_pin_pad_mapper_dialog.h"
+// Forward declaration
+class MainWindow;
 
 #include "netlist_generator.h"
 #include "../ui/netlist_editor.h"
 #include "../ui/bom_dialog.h"
 #include "sync_manager.h"
+#include "../../footprints/footprint_library.h"
+#include "../core/pcb_sync_dialog.h"
 #include "gemini_dialog.h"
 #include "../../python/gemini_panel.h"
 #include "../dialogs/bus_aliases_dialog.h"
@@ -60,6 +65,25 @@ QString ercViolationKey(const ERCViolation& v) {
         .arg(v.netName.trimmed())
         .arg(px)
         .arg(py) + "|" + v.message.trimmed();
+}
+
+QStringList sortedPadNames(const Flux::Model::FootprintDefinition& def) {
+    QStringList pads;
+    for (const auto& prim : def.primitives()) {
+        if (prim.type != Flux::Model::FootprintPrimitive::Pad) continue;
+        const QString number = prim.data.value("number").toString().trimmed();
+        if (!number.isEmpty()) pads.append(number);
+    }
+    pads.removeDuplicates();
+    std::sort(pads.begin(), pads.end(), [](const QString& a, const QString& b) {
+        bool aOk = false, bOk = false;
+        const int ai = a.toInt(&aOk);
+        const int bi = b.toInt(&bOk);
+        if (aOk && bOk) return ai < bi;
+        if (aOk != bOk) return aOk;
+        return a.toLower() < b.toLower();
+    });
+    return pads;
 }
 
 QStringList itemPinNames(const SchematicItem* item) {
@@ -1240,36 +1264,173 @@ void SchematicEditor::onOpenNetlistEditor() {
 #include "schematic_item.h"
 
 void SchematicEditor::onSendToPCB() {
-    // Generate ECOPackage from current schematic
-    const QString projectDir = m_projectDir.isEmpty()
-        ? QFileInfo(m_currentFilePath).absolutePath()
-        : m_projectDir;
-
-    ECOPackage pkg = NetlistGenerator::generateECOPackage(m_scene, projectDir, m_netManager);
-
-    if (pkg.components.isEmpty() && pkg.nets.isEmpty()) {
-        QMessageBox::information(this, "No Changes",
-            "The schematic contains no components or nets to push to the PCB.");
-        return;
+    // 1. Run ERC Check before syncing
+    QList<ERCViolation> violations = SchematicERC::run(m_scene, m_projectDir, m_netManager);
+    
+    int errors = 0;
+    int criticals = 0;
+    for (const ERCViolation& v : violations) {
+        if (v.severity == ERCViolation::Critical) criticals++;
+        else if (v.severity == ERCViolation::Error) errors++;
     }
 
-    // Push to SyncManager with PCB target
-    SyncManager::instance().pushECO(pkg, SyncManager::ECOTarget::PCB);
+    if (criticals > 0 || errors > 0) {
+        QMessageBox::StandardButton res = QMessageBox::warning(this, "ERC Violations Found",
+            QString("Schematic contains %1 critical errors and %2 errors.\n\n"
+                    "It is highly recommended to fix these before updating the PCB.\n"
+                    "Do you want to proceed with the sync anyway?").arg(criticals).arg(errors),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        
+        if (res == QMessageBox::No) {
+            onRunERC(); // Show the ERC results to the user
+            return;
+        }
+    }
 
-    // Show confirmation
-    QMessageBox::information(this, "ECO Pushed to PCB",
-        QString("✅ Successfully generated and pushed ECO to the PCB editor.\n\n"
-                "Components: %1\n"
-                "Nets: %2\n\n"
-                "Switch to the PCB editor to review and apply the changes.")
-            .arg(pkg.components.size())
-            .arg(pkg.nets.size()));
+    // 2. Ensure strict components have complete pin/pad maps before sync.
+    for (auto* gItem : m_scene->items()) {
+        auto* sItem = dynamic_cast<SchematicItem*>(gItem);
+        if (!sItem) continue;
+        if (sItem->excludeFromPcb()) continue;
+        if (sItem->footprint().trimmed().isEmpty()) continue;
 
-    statusBar()->showMessage(
-        QString("🔄 ECO pushed to PCB: %1 components, %2 nets")
-            .arg(pkg.components.size()).arg(pkg.nets.size()),
-        5000);
+        const QStringList pins = itemPinNames(sItem);
+        if (pins.isEmpty()) continue;
+
+        const Flux::Model::FootprintDefinition fp = FootprintLibraryManager::instance().findFootprint(sItem->footprint().trimmed());
+        if (!fp.isValid()) continue;
+        const QStringList pads = sortedPadNames(fp);
+        if (pads.isEmpty()) continue;
+
+        QMap<QString, QString> mapping = sItem->pinPadMapping();
+        QSet<QString> pinSet;
+        for (const QString& pin : pins) pinSet.insert(pin);
+        QSet<QString> padSet;
+        for (const QString& pad : pads) padSet.insert(pad);
+        for (auto it = mapping.begin(); it != mapping.end();) {
+            if (!pinSet.contains(it.key()) || !padSet.contains(it.value())) it = mapping.erase(it);
+            else ++it;
+        }
+        for (const QString& pin : pins) {
+            if (!mapping.contains(pin) && padSet.contains(pin)) {
+                mapping[pin] = pin;
+            }
+        }
+        sItem->setPinPadMapping(mapping);
+
+        const bool strict = (sItem->itemType() == SchematicItem::ICType) ||
+                            sItem->referencePrefix().toUpper().startsWith("U");
+        if (!strict) continue;
+
+        int mappedCount = 0;
+        for (const QString& pin : pins) {
+            if (mapping.contains(pin) && !mapping.value(pin).trimmed().isEmpty()) {
+                mappedCount++;
+            }
+        }
+
+        if (mappedCount >= pins.size()) continue;
+
+        VisualPinPadMapperDialog mapper(sItem, sItem->footprint(), this);
+        if (mapper.exec() != QDialog::Accepted) {
+            statusBar()->showMessage("PCB sync canceled: pin/pad mapping incomplete.", 4000);
+            return;
+        }
+
+        mapping = sItem->pinPadMapping();
+        mappedCount = 0;
+        for (const QString& pin : pins) {
+            if (mapping.contains(pin) && !mapping.value(pin).trimmed().isEmpty()) {
+                mappedCount++;
+            }
+        }
+
+        if (mappedCount < pins.size()) {
+            QMessageBox::warning(this, "Pin/Pad Mapping Incomplete",
+                                 QString("%1 requires full mapping (%2/%3 mapped).")
+                                     .arg(sItem->reference()).arg(mappedCount).arg(pins.size()));
+            return;
+        }
+    }
+
+    // 3. Proceed with ECO generation
+    ECOPackage pkg = NetlistGenerator::generateECOPackage(m_scene, m_projectDir, m_netManager);
+    
+    // 4. Filter components marked for PCB exclusion
+    QList<ECOComponent> filteredComps;
+    QSet<QString> excludedRefs;
+    for (const auto& comp : pkg.components) {
+        if (!comp.excludeFromPcb) {
+            filteredComps.append(comp);
+        } else {
+            excludedRefs.insert(comp.reference);
+        }
+    }
+    pkg.components = filteredComps;
+
+    // 5. Filter net pins belonging to excluded components
+    for (int i = 0; i < pkg.nets.size(); ++i) {
+        QList<ECOPin> filteredPins;
+        for (const auto& pin : pkg.nets[i].pins) {
+            if (!excludedRefs.contains(pin.componentRef)) {
+                filteredPins.append(pin);
+            }
+        }
+        pkg.nets[i].pins = filteredPins;
+    }
+    // Remove empty nets
+    pkg.nets.erase(std::remove_if(pkg.nets.begin(), pkg.nets.end(), [](const ECONet& n){
+        return n.pins.isEmpty();
+    }), pkg.nets.end());
+
+    if (pkg.components.isEmpty() && pkg.nets.isEmpty()) {
+        QMessageBox::information(this, "Update PCB", "No components or nets found in schematic to sync.");
+        return;
+    }
+    
+    // 6. Show review dialog before pushing
+    PCBSyncDialog dlg(pkg, this);
+    if (dlg.exec() == QDialog::Accepted) {
+        SyncManager::instance().pushECO(pkg, SyncManager::ECOTarget::PCB);
+        
+        statusBar()->showMessage(QString("Sent ECO to PCB: %1 components, %2 nets").arg(pkg.components.size()).arg(pkg.nets.size()), 5000);
+        
+        // Automatically open or switch to PCB Editor
+        onSwitchToPCBEditor();
+    }
 }
+
+void SchematicEditor::onSwitchToPCBEditor() {
+    // Try to find an existing PCB MainWindow in this application
+    QObject* existing = nullptr;
+    for (QWidget* widget : QApplication::topLevelWidgets()) {
+        // Check by class name to avoid including pcb/editor/mainwindow.h
+        if (QString(widget->metaObject()->className()).contains("MainWindow")) {
+            QVariant pn = widget->property("projectName");
+            if (pn.toString() == m_projectName || m_projectName.isEmpty()) {
+                existing = widget;
+                break;
+            }
+        }
+    }
+
+    if (existing) {
+        QWidget* w = qobject_cast<QWidget*>(existing);
+        w->show();
+        w->raise();
+        w->activateWindow();
+        statusBar()->showMessage("Switched to existing PCB Editor", 3000);
+        // Trigger ECO handle via meta-object call
+        QMetaObject::invokeMethod(existing, "handleIncomingECO", Qt::QueuedConnection);
+    } else {
+        // Dynamically load and create PCB MainWindow
+        QObject* pcbEditor = nullptr;
+        // Try to find the PCB module's MainWindow class via plugin or direct instantiation
+        // For now, open via the application's main window mechanism
+        statusBar()->showMessage("No PCB Editor found. Please open PCB file separately.", 5000);
+    }
+}
+
 
 void SchematicEditor::handleIncomingECO() {
     if (!SyncManager::instance().hasPendingECO()) return;

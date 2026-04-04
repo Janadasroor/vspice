@@ -7,8 +7,6 @@ set(PCB_SOURCES
     editor/pcb_api.h
     editor/pcb_commands.cpp
     editor/pcb_commands.h
-    editor/pcb_sync_dialog.cpp
-    editor/pcb_sync_dialog.h
     editor/pcb_view.cpp
     editor/pcb_view.h
 

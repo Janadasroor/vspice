@@ -8,6 +8,7 @@
 #include <QTemporaryFile>
 #include <QTextStream>
 #include <QMetaObject>
+#include <utility>
 
 SimulationManager& SimulationManager::instance() {
     static SimulationManager instance;
@@ -55,7 +56,7 @@ void SimulationManager::initialize() {
     m_isInitialized = true;
     qDebug() << "Ngspice initialized";
     ngSpice_Command((char*)"set ngbehavior=ltps");
-    ngSpice_Command((char*)"set filetype=ascii");
+    ngSpice_Command((char*)"set filetype=binary");
 #else
     qWarning() << "Ngspice not available (HAVE_NGSPICE not defined)";
 #endif
@@ -70,7 +71,10 @@ void SimulationManager::runSimulation(const QString& netlist, SimControl* contro
 
 #ifdef HAVE_NGSPICE
     m_currentNetlist = netlist;
-    m_streamingControl = control;
+    {
+        std::lock_guard<std::mutex> lock(m_controlMutex);
+        m_streamingControl = control;
+    }
     m_vectorMap.clear();
     m_lastLoadFailed = false;
     m_bgRunIssued = false;
@@ -94,10 +98,9 @@ void SimulationManager::runSimulation(const QString& netlist, SimControl* contro
         return;
     }
 
-    m_bufferTimer->start();
     Q_EMIT simulationStarted();
-    qDebug() << "SimulationManager: Setting ascii mode for real-time streaming and starting bg_run";
-    ngSpice_Command(const_cast<char*>("set filetype=ascii"));
+    qDebug() << "SimulationManager: Starting bg_run with post-run RAW capture";
+    ngSpice_Command(const_cast<char*>("set filetype=binary"));
     const int rc = ngSpice_Command((char*)"bg_run");
     if (rc != 0 || m_lastLoadFailed) {
         m_bufferTimer->stop();
@@ -336,7 +339,6 @@ void SimulationManager::processBufferedData() {
         if (!m_simBuffer.empty()) {
             m_simBuffer.swap(batch);
         }
-        m_streamingControl = nullptr; // Clear control after swapping final buffer
     }
     {
         std::lock_guard<std::mutex> lock(m_logMutex);
@@ -439,7 +441,7 @@ int SimulationManager::cbSendData(pvecvaluesall vecArray, int numStructs, int id
     // Check for user abort
     SimControl* ctrl = nullptr;
     {
-        std::lock_guard<std::mutex> lock(self->m_bufferMutex);
+        std::lock_guard<std::mutex> lock(self->m_controlMutex);
         ctrl = self->m_streamingControl;
     }
 
@@ -449,73 +451,11 @@ int SimulationManager::cbSendData(pvecvaluesall vecArray, int numStructs, int id
     }
 
 
-    // Throttling for UI performance: 
-    // If we are producing data extremely fast, we only buffer every Nth point for real-time display.
-    // The .raw file will still contain all points.
-    
-    // Dynamically adjust skipFactor if buffer is getting too large?
-    // For now, let's just use a simple heuristic or a fixed limit per tick.
-    // Let's target at most ~1000 points per 33ms tick.
-    size_t currentBufferSize;
-    {
-        std::lock_guard<std::mutex> lock(self->m_bufferMutex);
-        currentBufferSize = self->m_simBuffer.size();
-    }
-
-    if (currentBufferSize > 5000) {
-        self->m_skipFactor = 100;
-    } else if (currentBufferSize > 2000) {
-        self->m_skipFactor = 20;
-    } else if (currentBufferSize > 500) {
-        self->m_skipFactor = 5;
-    } else if (currentBufferSize > 100) {
-        self->m_skipFactor = 2;
-    } else {
-        self->m_skipFactor = 1;
-    }
-
-    if (++self->m_streamingCounter % self->m_skipFactor != 0) return 0;
-
-    double time = 0.0;
-    if (numStructs > 0) {
-        pvecvalues v0 = vecArray->vecsa[0];
-        if (v0) time = v0->creal;
-    }
-
-    std::vector<double> values;
-    values.reserve(numStructs);
-
-    for (int i = 1; i < numStructs; ++i) {
-        pvecvalues v = vecArray->vecsa[i];
-        if (!v) values.push_back(0.0);
-        else values.push_back(v->creal);
-    }
-    
-    if (self->m_streamingCounter == 1) {
-        for (int i = 0; i < std::min(numStructs, 5); ++i) {
-            pvecvalues v = vecArray->vecsa[i];
-            if (v) qDebug() << "SimulationManager: Vector" << i << "name=" << v->name << "iscomplex=" << v->is_complex;
-        }
-    }
-    
-    if (self->m_streamingCounter < 5 || self->m_streamingCounter % 1000 == 0) {
-        qDebug() << "SimulationManager: cbSendData throttling=" << self->m_skipFactor << "point=" << self->m_streamingCounter << "time=" << time << "bufferSize=" << currentBufferSize;
-    }
-
-    // Forward to internal callback if registered (e.g. script monitoring)
-    {
-        std::lock_guard<std::mutex> lock(self->m_controlMutex);
-        if (self->m_streamingControl && self->m_streamingControl->streamingCallback) {
-            self->m_streamingControl->streamingCallback(time, values);
-        }
-    }
-
-    // Buffer for UI/Oscilloscope
-    {
-        std::lock_guard<std::mutex> lock(self->m_bufferMutex);
-        self->m_simBuffer.push_back({time, values});
-    }
-
+    Q_UNUSED(numStructs);
+    Q_UNUSED(vecArray);
+    // Standard schematic runs rely on the post-run RAW file. Avoid touching
+    // ngspice's live data structures here; that callback path has been unstable
+    // and is not required for correctness.
     return 0;
 }
 
@@ -566,7 +506,6 @@ void SimulationManager::handleSimulationFinished(const QString& rawPath) {
         ngSpice_Command((char*)"set filetype=binary");
         const QString writeCmd = "write " + rawPath;
         ngSpice_Command(writeCmd.toLatin1().data());
-        ngSpice_Command((char*)"set filetype=ascii");
         Q_EMIT rawResultsReady(rawPath);
     }
 #endif
