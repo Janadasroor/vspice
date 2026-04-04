@@ -74,9 +74,7 @@ void SchematicEditor::createMenuBar() {
 
 QIcon SchematicEditor::getThemeIcon(const QString& path) {
     QIcon icon(path);
-    if (!ThemeManager::theme() || ThemeManager::theme()->type() == PCBTheme::Dark) {
-        return icon; // Keep original for dark theme
-    }
+    if (!ThemeManager::theme()) return icon;
 
     // List of icons that should keep their original multi-color design
     static const QStringList multiColorIcons = {
@@ -95,7 +93,8 @@ QIcon SchematicEditor::getThemeIcon(const QString& path) {
         return icon;
     }
 
-    // For light theme, we need to tint the monochrome icons
+    // Tint monochrome icons for the active theme so they remain visible on both
+    // light and dark backgrounds.
     QPixmap pixmap = icon.pixmap(QSize(32, 32));
     if (pixmap.isNull()) return icon;
 

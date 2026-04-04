@@ -27,18 +27,23 @@ public:
     void setFont(const QFont& font) { m_font = font; recalcBounds(); update(); }
     QFont font() const { return m_font; }
     
-    void setColor(const QColor& color) { m_color = color; update(); }
+    void setColor(const QColor& color);
     QColor color() const { return m_color; }
+
+    void setUseThemeColor(bool useThemeColor);
+    bool usesThemeColor() const { return m_useThemeColor; }
     
     void setAlignment(Qt::Alignment align) { m_alignment = align; update(); }
     Qt::Alignment alignment() const { return m_alignment; }
     
 private:
     void recalcBounds();
+    void applyThemeColor();
 
     QString m_text;
     QFont m_font;
     QColor m_color;
+    bool m_useThemeColor = true;
     Qt::Alignment m_alignment;
     QRectF m_cachedBounds;
 };

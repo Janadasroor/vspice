@@ -14,6 +14,25 @@ void SchematicEditor::applyTheme() {
     PCBTheme* theme = ThemeManager::theme();
     theme->applyToWidget(this);
 
+    for (auto it = m_toolActions.begin(); it != m_toolActions.end(); ++it) {
+        if (it.value()) it.value()->setIcon(createComponentIcon(it.key()));
+    }
+
+    const QList<QAction*> actions = findChildren<QAction*>();
+    for (QAction* action : actions) {
+        if (!action) continue;
+        const QString text = action->text();
+        if (text == "Zoom In") action->setIcon(getThemeIcon(":/icons/view_zoom_in.svg"));
+        else if (text == "Zoom Out") action->setIcon(getThemeIcon(":/icons/view_zoom_out.svg"));
+        else if (text == "Zoom to Fit") action->setIcon(getThemeIcon(":/icons/view_fit.svg"));
+        else if (text == "Search (Ctrl+K)") action->setIcon(getThemeIcon(":/icons/tool_search.svg"));
+        else if (text == "Place Component (A)") action->setIcon(getThemeIcon(":/icons/comp_ic.svg"));
+        else if (text == "Rotate") action->setIcon(getThemeIcon(":/icons/tool_rotate.svg"));
+        else if (text == "Simulation Setup...") action->setIcon(getThemeIcon(":/icons/tool_gear.svg"));
+        else if (text == "Run Simulation (F8)") action->setIcon(getThemeIcon(":/icons/tool_run.svg"));
+        else if (text == "Stop") action->setIcon(getThemeIcon(":/icons/tool_stop.svg"));
+    }
+
     // Modern status bar styling
     if (statusBar()) {
         statusBar()->setStyleSheet(theme->statusBarStylesheet());

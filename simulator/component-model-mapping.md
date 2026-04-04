@@ -24,6 +24,9 @@ This document defines the deterministic mapping from schematic `ECOComponent` en
 | `ICType` | value starts `B_I` | `B_CurrentSource` | behavioral current source |
 | `ICType` | otherwise | `VoltageSource` | macro/subckt fallback |
 | `CustomType` | `spiceModel` set, or `value`/`typeName` indicates subckt | `SubcircuitInstance` | uses subckt name from `spiceModel` or `value` |
+| `CustomType` | `typeName` in {"g", "g2", "vccs"} (case-insensitive) | `VCCS` | voltage-controlled current source, requires 4 pins |
+| `CustomType` | `typeName` in {"e", "e2", "vcvs"} (case-insensitive) | `VCVS` | voltage-controlled voltage source, requires 4 pins |
+| `CustomType` | Reference starts with `A` (case-insensitive) AND symbol has OTA pins | `SubcircuitInstance` | LTspice OTA, translated to B-source at netlist generation |
 
 ## Unsupported Components Policy
 
@@ -43,6 +46,35 @@ Warning format (example):
 - `U7 [type=1, typeName=SomeType, value=foo] -> generic component type 'SomeType' has no simulator mapping`
 
 Warnings are sorted before logging to keep output stable and actionable.
+
+## OTA (Operational Transconductance Amplifier) Notes
+
+OTAs are handled differently from other components because **ngspice does not have native OTA support**. Instead of direct simulator stamping, OTAs go through a **netlist translation phase** before simulation.
+
+### OTA Processing Pipeline
+
+1. **Schematic Capture**: User places OTA symbol with 8 pins (IN+, IN-, OUT+, OUT-, VCC, VEE, OUT, GND)
+2. **Bridge Mapping**: Component mapped as `SubcircuitInstance` (generic handling)
+3. **Netlist Generation**: `SpiceNetlistGenerator::buildNgspiceOtaTranslation()` detects A-prefix elements
+4. **Translation**: OTA line converted to B-source + optional R/C companion elements
+5. **Simulation**: ngspice executes translated B-source netlist normally
+
+### OTA Detection Criteria
+
+A schematic component is recognized as an OTA if:
+- Reference prefix starts with `A` (case-insensitive)
+- Symbol defines the expected OTA pin structure
+- Value/typeName contains OTA-related identifiers
+
+### OTA vs VCCS Distinction
+
+| Feature | OTA (A-element) | VCCS (G-element) |
+|---------|-----------------|------------------|
+| Simulator support | Via B-source translation | Native MNA stamping |
+| Pins | 8 pins (full OTA model) | 4 pins (differential I/O + control) |
+| Parameters | gm, iout, isink, rout, cout, vhigh, vlow, linear | gm only |
+| Current limiting | Yes (soft/hard) | No (linear only) |
+| Use case | Complete OTA macromodels | Simple transconductance blocks |
 
 ## Pin Connection Policy
 

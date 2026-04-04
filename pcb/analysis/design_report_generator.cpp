@@ -23,6 +23,7 @@
 #include <QPainter>
 #include <QFileInfo>
 #include <QtMath>
+#include <algorithm>
 
 // ============================================================================
 // Data Collection
@@ -131,7 +132,7 @@ DesignReportData DesignReportGenerator::collectData(QGraphicsScene* scene) {
     drc.runFullCheck(scene);
     data.drcErrors = drc.errorCount();
     data.drcWarnings = drc.warningCount();
-    data.drcInfos = drc.infoCount();
+    data.drcInfos = std::count_if(drc.violations().begin(), drc.violations().end(), [](const DRCViolation& v){ return v.severity() == DRCViolation::Info; });
 
     for (const auto& v : drc.violations()) {
         DesignReportData::DRCViolationInfo info;
@@ -384,7 +385,7 @@ bool DesignReportGenerator::generateReport(QGraphicsScene* scene, const QString&
     printer.setOutputFileName(filePath);
     printer.setPageSize(QPageSize(QPageSize::A4));
     printer.setPageOrientation(QPageLayout::Portrait);
-    printer.setPageMargins(15, 15, 15, 15, QPageLayout::Millimeter);
+    printer.setPageMargins(QMarginsF(15, 15, 15, 15), QPageLayout::Millimeter);
 
     QTextDocument doc;
     doc.setHtml(html);

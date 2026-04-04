@@ -24,7 +24,8 @@ public:
 private:
     void setupUI();
     void populateTable();
-    bool validatePackage();
+    void validatePackage();
+    void onExcludeToggled(int row, bool checked);
 
     ECOPackage m_package;
     QTableWidget* m_table;

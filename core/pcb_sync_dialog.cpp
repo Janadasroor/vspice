@@ -4,6 +4,7 @@
 #include <QHeaderView>
 #include <QIcon>
 #include <QColor>
+#include <QCheckBox>
 
 namespace {
 int countFootprintPads(const FootprintDefinition& def) {
@@ -28,7 +29,7 @@ PCBSyncDialog::~PCBSyncDialog() {
 
 void PCBSyncDialog::setupUI() {
     setWindowTitle("Update PCB from Schematic");
-    resize(700, 500);
+    resize(780, 500);
     const PCBTheme* theme = ThemeManager::theme();
     const QColor background = theme ? theme->panelBackground() : QColor("#13131a");
     const QColor textColor = theme ? theme->textColor() : QColor("#e2e8f0");
@@ -57,9 +58,10 @@ void PCBSyncDialog::setupUI() {
     mainLayout->addWidget(header);
 
     m_table = new QTableWidget();
-    m_table->setColumnCount(4);
-    m_table->setHorizontalHeaderLabels({"Reference", "Value", "Footprint", "Status"});
+    m_table->setColumnCount(5);
+    m_table->setHorizontalHeaderLabels({"Exclude", "Reference", "Value", "Footprint", "Status"});
     m_table->horizontalHeader()->setStretchLastSection(true);
+    m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -75,10 +77,10 @@ void PCBSyncDialog::setupUI() {
 
     QHBoxLayout* btnLayout = new QHBoxLayout();
     btnLayout->addStretch();
-    
+
     m_cancelBtn = new QPushButton("Cancel");
     m_cancelBtn->setMinimumWidth(100);
-    
+
     m_applyBtn = new QPushButton("Apply Changes");
     m_applyBtn->setMinimumWidth(120);
     const QColor lightApply = theme ? theme->accentHover() : QColor("#7dd3fc");
@@ -87,10 +89,10 @@ void PCBSyncDialog::setupUI() {
         "QPushButton:hover { background-color: %2; }"
         "QPushButton:disabled { background-color: #4b5563; color: #d1d5db; border-color: #4b5563; }"
     ).arg(lightApply.name(), accentColor.name()));
-    
+
     connect(m_applyBtn, &QPushButton::clicked, this, &QDialog::accept);
     connect(m_cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
-    
+
     btnLayout->addWidget(m_cancelBtn);
     btnLayout->addWidget(m_applyBtn);
     mainLayout->addLayout(btnLayout);
@@ -98,19 +100,51 @@ void PCBSyncDialog::setupUI() {
 
 void PCBSyncDialog::populateTable() {
     m_table->setRowCount(m_package.components.size());
+
+    for (int i = 0; i < m_package.components.size(); ++i) {
+        const auto& comp = m_package.components[i];
+
+        // Column 0: Exclude checkbox
+        auto* checkWidget = new QWidget();
+        auto* checkLayout = new QHBoxLayout(checkWidget);
+        checkLayout->setContentsMargins(0, 0, 0, 0);
+        checkLayout->setAlignment(Qt::AlignCenter);
+        auto* check = new QCheckBox();
+        check->setChecked(comp.excludeFromPcb);
+        checkLayout->addWidget(check);
+        m_table->setCellWidget(i, 0, checkWidget);
+        connect(check, &QCheckBox::toggled, this, [this, i](bool checked) {
+            onExcludeToggled(i, checked);
+        });
+
+        m_table->setItem(i, 1, new QTableWidgetItem(comp.reference));
+        m_table->setItem(i, 2, new QTableWidgetItem(comp.value));
+        m_table->setItem(i, 3, new QTableWidgetItem(comp.footprint.isEmpty() ? "<Not Assigned>" : comp.footprint));
+
+        QTableWidgetItem* statusItem = new QTableWidgetItem();
+        m_table->setItem(i, 4, statusItem);
+    }
+
+    validatePackage();
+}
+
+void PCBSyncDialog::validatePackage() {
     int errors = 0;
     int warnings = 0;
-
     auto& lib = FootprintLibraryManager::instance();
 
     for (int i = 0; i < m_package.components.size(); ++i) {
         const auto& comp = m_package.components[i];
-        
-        m_table->setItem(i, 0, new QTableWidgetItem(comp.reference));
-        m_table->setItem(i, 1, new QTableWidgetItem(comp.value));
-        m_table->setItem(i, 2, new QTableWidgetItem(comp.footprint.isEmpty() ? "<Not Assigned>" : comp.footprint));
+        QTableWidgetItem* statusItem = m_table->item(i, 4);
+        if (!statusItem) continue;
 
-        QTableWidgetItem* statusItem = new QTableWidgetItem();
+        // Skip validation if excluded
+        if (comp.excludeFromPcb) {
+            statusItem->setText("⏭️ Excluded from PCB");
+            statusItem->setForeground(QColor("#94a3b8"));
+            continue;
+        }
+
         if (comp.footprint.isEmpty()) {
             statusItem->setText("❌ Error: Missing Footprint");
             statusItem->setForeground(QColor("#ef4444"));
@@ -138,18 +172,29 @@ void PCBSyncDialog::populateTable() {
             statusItem->setText("✅ OK");
             statusItem->setForeground(QColor("#10b981"));
         }
-        m_table->setItem(i, 3, statusItem);
     }
 
-    m_summaryLabel->setText(QString("Summary: %1 components, %2 nets. (%3 errors, %4 warnings)")
+    int excludedCount = 0;
+    for (const auto& comp : m_package.components) {
+        if (comp.excludeFromPcb) excludedCount++;
+    }
+
+    m_summaryLabel->setText(QString("Summary: %1 components (%2 excluded), %3 nets. (%4 errors, %5 warnings)")
                             .arg(m_package.components.size())
+                            .arg(excludedCount)
                             .arg(m_package.nets.size())
                             .arg(errors)
                             .arg(warnings));
 
-    // Disable apply if there are critical errors
+    // Disable apply only if there are errors on non-excluded components
     m_applyBtn->setEnabled(errors == 0);
     if (errors > 0) {
-        m_applyBtn->setToolTip("Please fix sync errors (missing footprint or pin/pad mismatch) first.");
+        m_applyBtn->setToolTip("Please fix sync errors or exclude components with missing footprints.");
     }
+}
+
+void PCBSyncDialog::onExcludeToggled(int row, bool checked) {
+    if (row < 0 || row >= m_package.components.size()) return;
+    m_package.components[row].excludeFromPcb = checked;
+    validatePackage();
 }

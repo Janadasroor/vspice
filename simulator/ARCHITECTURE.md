@@ -35,6 +35,9 @@ producing time-domain or frequency-domain waveform data.
 | Op-amp macro | X/Device | finite-gain rail-limited macro source |
 | Voltage-controlled switch | S/Device | smooth Ron/Roff transition by control voltage |
 | Transmission line (quasi-static) | T/Device | characteristic-impedance coupling approximation |
+| Voltage-Controlled Current Source (VCCS) | G | I_out = gm * (V_in+ - V_in-) |
+| Voltage-Controlled Voltage Source (VCVS) | E | V_out = gain * (V_in+ - V_in-) |
+| OTA (Operational Transconductance Amplifier) | A | LTspice-compatible OTA with automatic B-source translation |
 
 ### 1.3 MVP Scope Freeze (2026-02-25)
 
@@ -53,6 +56,8 @@ Any change to these boundaries must update this section and `simulator/ROADMAP.m
   - Diode
   - BJT (NPN/PNP)
   - MOSFET (NMOS/PMOS level-1)
+  - VCCS (G-element), VCVS (E-element)
+  - OTA (Operational Transconductance Amplifier, LTspice A-element with B-source translation)
 - Generator profiles (source waveforms):
   - `DC`
   - `SINE`
@@ -216,6 +221,71 @@ Simulation debug workflows are now executable directly from schematic canvas int
   - `SchematicView` tool switching
   - probe/instrument signal wiring
   - `navigateToSimulationTarget(...)` highlighting/centering behavior
+
+### 1.14 OTA (Operational Transconductance Amplifier) Support (2026-04-04)
+
+VioraEDA provides full LTspice-compatible OTA support through automatic netlist translation at simulation time.
+
+#### OTA Architecture
+
+LTspice OTA elements (A-prefix) are **not natively supported by ngspice**. VioraEDA automatically translates them into equivalent ngspice-compatible behavioral sources (B-elements) during netlist generation.
+
+#### Translation Process
+
+The translation occurs in `SpiceNetlistGenerator::buildNgspiceOtaTranslation()` (schematic/analysis/spice_netlist_generator.cpp):
+
+1. **Input**: LTspice OTA line:
+   ```
+   A1 IN+ IN- OUT+ OUT- VCC VEE OUT GND OTA g=1m iout=10u isink=10u rout=1Meg cout=10p linear
+   ```
+
+2. **Processing**:
+   - Parses differential input: `(V(IN+,IN-) + V(IN+,IN-))`
+   - Applies transconductance: `I_raw = gm * V_diff`
+   - Applies current limiting (linear or tanh-based soft clipping)
+   - Optionally adds output compliance voltage clamping
+
+3. **Output**: ngspice B-source equivalent:
+   ```spice
+   * OTA_TRANSLATED A1
+   B__OTA_A1 OUT GND I={<computed_expression>}
+   R__OTA_A1 OUT GND 1Meg
+   C__OTA_A1 OUT GND 10p
+   ```
+
+#### Supported OTA Parameters
+
+| Parameter | Description | Example | Required |
+|-----------|-------------|---------|----------|
+| `g` | Transconductance (A/V) | `g=1m` | No (default: 1u) |
+| `iout` | Positive current limit | `iout=10u` | No |
+| `isink` | Negative current limit | `isink=10u` | No |
+| `rout` | Output resistance | `rout=1Meg` | No |
+| `cout` | Output capacitance | `cout=10p` | No |
+| `vhigh` | High compliance voltage | `vhigh=0.5` | No |
+| `vlow` | Low compliance voltage | `vlow=0.5` | No |
+| `linear` | Use hard current limiting | `linear` | No (default: soft tanh) |
+| `ref` | Reference offset | `ref=0` | No |
+
+#### Pin Configuration
+
+OTA symbols must provide 8 pins in this order:
+1. `IN+` - Non-inverting differential input
+2. `IN-` - Inverting differential input
+3. `OUT+` - Positive output terminal
+4. `OUT-` - Negative output terminal
+5. `VCC` - Positive supply rail
+6. `VEE` - Negative supply rail
+7. `OUT` - Output node
+8. `GND` - Ground reference
+
+#### VCCS Support
+
+The built-in simulator also supports native VCCS (G-element) directly:
+- **Schematic mapping**: Generic components with typeName "g", "g2", or "vccs"
+- **Netlist format**: `Gxxx N+ N- NC+ NC- VALUE = {gm * V(NC+, NC-)}`
+- **Pin order**: Out+, Out-, Ctrl+, Ctrl-
+- **Simulator stamping**: Direct MNA matrix stamp (no translation needed)
 
 ## 2. Module File Map
 

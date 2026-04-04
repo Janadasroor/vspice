@@ -13,11 +13,11 @@ SchematicTextItem::SchematicTextItem(QString text, QPointF pos, QGraphicsItem* p
     setZValue(100);
     m_font = QFont("Arial", 40);
     
-    m_color = Qt::white;
-    if (ThemeManager::theme()) {
-        m_color = ThemeManager::theme()->textColor();
-    }
+    applyThemeColor();
     m_alignment = Qt::AlignLeft;
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
+        applyThemeColor();
+    });
     recalcBounds();
 }
 
@@ -41,6 +41,10 @@ QJsonObject SchematicTextItem::toJson() const {
     json["family"] = m_font.family();
     json["align"] = (int)m_alignment;
     json["rotation"] = rotation();
+    json["useThemeColor"] = m_useThemeColor;
+    if (!m_useThemeColor) {
+        json["color"] = m_color.name();
+    }
     return json;
 }
 
@@ -49,12 +53,14 @@ bool SchematicTextItem::fromJson(const QJsonObject& json) {
     if (json.contains("x")) setPos(json["x"].toDouble(), json["y"].toDouble());
     if (json.contains("text")) m_text = json["text"].toString();
     if (json.contains("size")) m_font.setPointSize(json["size"].toInt());
+    m_useThemeColor = json.contains("useThemeColor") ? json["useThemeColor"].toBool(true) : !json.contains("color");
     if (json.contains("color")) m_color = QColor(json["color"].toString());
     if (json.contains("bold")) m_font.setBold(json["bold"].toBool());
     if (json.contains("italic")) m_font.setItalic(json["italic"].toBool());
     if (json.contains("family")) m_font.setFamily(json["family"].toString());
     if (json.contains("align")) m_alignment = (Qt::Alignment)json["align"].toInt();
     if (json.contains("rotation")) setRotation(json["rotation"].toDouble());
+    applyThemeColor();
     recalcBounds();
     return true;
 }
@@ -92,4 +98,25 @@ void SchematicTextItem::paint(QPainter *painter, const QStyleOptionGraphicsItem 
     painter->setPen(m_color);
     painter->setFont(m_font);
     painter->drawText(m_cachedBounds, m_alignment, m_text);
+}
+
+void SchematicTextItem::setColor(const QColor& color) {
+    m_useThemeColor = false;
+    m_color = color;
+    update();
+}
+
+void SchematicTextItem::setUseThemeColor(bool useThemeColor) {
+    m_useThemeColor = useThemeColor;
+    applyThemeColor();
+    update();
+}
+
+void SchematicTextItem::applyThemeColor() {
+    if (!m_useThemeColor) return;
+    if (ThemeManager::theme()) {
+        m_color = ThemeManager::theme()->textColor();
+    } else {
+        m_color = Qt::white;
+    }
 }

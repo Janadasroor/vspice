@@ -13,6 +13,23 @@
 - **Hierarchical Design**: Full support for `.SUBCKT` expansion and complex hierarchical schematics.
 - **Virtual Instruments**: A full suite of virtual tools including Logic Analyzers, Voltmeters, Ammeters, and Wattmeters.
 - **ML Dataset API**: Local HTTP API for batch simulation and rich JSONL dataset export for AI training workflows.
+- **OTA (Operational Transconductance Amplifier) Support**: Full LTspice OTA compatibility with automatic ngspice translation, including configurable transconductance (gm), output resistance (Rout), output capacitance (Cout), and current limiting.
+
+## Development Status
+
+**VioraEDA is under active development.** This project is currently being developed and tested on **Ubuntu Linux**. While the core simulation engine, schematic editor, and PCB layout tools are functional, additional work is required to achieve feature completeness and production readiness. Contributions and feedback are welcome.
+
+## Project Vision
+
+The long-term goal of VioraEDA is to provide a fully AI-integrated electronic design platform. Planned capabilities include:
+
+- **AI-Assisted Circuit Design**: Natural language input for circuit creation and modification. Users describe the desired functionality, and the system generates complete schematics.
+- **AI-Powered Logic Circuit Synthesis**: Automated generation of digital logic circuits from behavioral specifications, truth tables, or high-level descriptions.
+- **Intelligent Design Review**: Automated analysis of circuit correctness, performance bottlenecks, and design optimization suggestions.
+- **Conversational Debugging**: Interactive AI assistant that identifies simulation errors, suggests fixes, and explains circuit behavior in plain language.
+- **Automated Component Selection**: AI-driven recommendation of component values and part numbers based on design requirements and availability.
+
+These features are planned for future releases. The current AI integration (Gemini Co-Pilot) provides a foundation for this roadmap.
 
 ## Tech Stack
 
@@ -82,4 +99,4 @@ Examples: [examples/ml_api/README.md](examples/ml_api/README.md)
 This project is licensed under the Apache-2.0 license - see the [LICENSE](LICENSE) file for details.
 
 ---
-*Built with by the Janadasroor Team.*
+Copyright 2026 Janadasroor Team. Licensed under the Apache License, Version 2.0.

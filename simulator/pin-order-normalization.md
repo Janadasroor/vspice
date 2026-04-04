@@ -29,6 +29,22 @@ The simulator requires deterministic node ordering by model role.
   - `Pin1`: `1`, `P`, `POS`, `+`, `ANODE`
   - `Pin2`: `2`, `N`, `NEG`, `-`, `CATHODE`
 
+- VCCS / VCVS (role order: `Out+`, `Out-`, `Ctrl+`, `Ctrl-`)
+  - `Out+`: `1`, `P`, `POS`, `+`, `OUT+`, `OP`, `OUTP`
+  - `Out-`: `2`, `N`, `NEG`, `-`, `OUT-`, `ON`, `OUTN`
+  - `Ctrl+`: `3`, `CP`, `CTRL+`, `IN+`, `IP`, `CTRL_P`
+  - `Ctrl-`: `4`, `CN`, `CTRL-`, `IN-`, `IN`, `CTRL_N`
+
+- OTA (Operational Transconductance Amplifier) (role order: `IN+`, `IN-`, `OUT+`, `OUT-`, `VCC`, `VEE`, `OUT`, `GND`)
+  - `IN+`: `1`, `IN+`, `INP`, `IP`, `NONINV`, `PLUS`
+  - `IN-`: `2`, `IN-`, `INN`, `IN`, `NINV`, `MINUS`
+  - `OUT+`: `3`, `OUT+`, `OUTP`, `OP`
+  - `OUT-`: `4`, `OUT-`, `OUTN`, `ON`
+  - `VCC`: `5`, `VCC`, `VDD`, `V+`, `VP`, `POS_SUPPLY`
+  - `VEE`: `6`, `VEE`, `VSS`, `V-`, `VN`, `NEG_SUPPLY`
+  - `OUT`: `7`, `OUT`, `OUTPUT`, `VO`
+  - `GND`: `8`, `GND`, `GROUND`, `0`, `REF`
+
 ## Failure Policy
 
 When required role pins are missing:

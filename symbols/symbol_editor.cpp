@@ -2096,7 +2096,7 @@ void SymbolEditor::onAIDatasheetImport() {
 
 QIcon SymbolEditor::getThemeIcon(const QString& path) {
     QIcon icon(path);
-    if (!ThemeManager::theme() || ThemeManager::theme()->type() == PCBTheme::Dark) {
+    if (!ThemeManager::theme()) {
         return icon;
     }
 
