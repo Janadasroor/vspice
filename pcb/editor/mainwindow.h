@@ -85,6 +85,7 @@ private slots:
     void onAutoRoute();
     void onLengthMatching();
     void onCompareBoard();
+    void onGenerateDesignReport();
     
     // Alignment slots
     void onAlignLeft();

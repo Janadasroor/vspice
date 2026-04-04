@@ -18,6 +18,7 @@
 #include "../dialogs/auto_router_dialog.h"
 #include "../dialogs/length_matching_dialog.h"
 #include "../dialogs/pcb_diff_viewer.h"
+#include "../dialogs/design_report_dialog.h"
 #include "../analysis/pcb_diff_engine.h"
 #include "../gerber/gerber_exporter.h"
 #include "../manufacturing/manufacturing_exporter.h"
@@ -371,6 +372,10 @@ void MainWindow::createMenuBar() {
     QAction* compareBoardAction = toolsMenu->addAction("🔍 Compare Board...");
     compareBoardAction->setShortcut(QKeySequence("Ctrl+Shift+D"));
     connect(compareBoardAction, &QAction::triggered, this, &MainWindow::onCompareBoard);
+
+    QAction* reportAction = toolsMenu->addAction("📋 Generate Design Report...");
+    reportAction->setShortcut(QKeySequence("Ctrl+Shift+P"));
+    connect(reportAction, &QAction::triggered, this, &MainWindow::onGenerateDesignReport);
 
     toolsMenu->addSeparator();
     QAction* syncAction = toolsMenu->addAction("🔄 Check for Schematic Updates");
@@ -3416,4 +3421,14 @@ void MainWindow::onCompareBoard() {
     // Show diff viewer
     PCBDiffViewer* viewer = new PCBDiffViewer(report, m_scene, nullptr, this);
     viewer->exec();
+}
+
+void MainWindow::onGenerateDesignReport() {
+    if (!m_scene) {
+        QMessageBox::warning(this, "No PCB Scene", "Open or create a PCB board first.");
+        return;
+    }
+
+    DesignReportDialog* dlg = new DesignReportDialog(m_scene, this);
+    dlg->exec();
 }
