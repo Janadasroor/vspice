@@ -34,6 +34,7 @@
 #include <QMimeData>
 #include <QUrl>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QDir>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -42,6 +43,10 @@
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QPainter>
+#include <QCloseEvent>
+#include <QShowEvent>
+#include <QScreen>
+#include <QGuiApplication>
 #include "items/footprint_primitive_item.h"
 #include "analysis/footprint_engine.h"
 
@@ -50,6 +55,8 @@ using namespace Flux::Item;
 using namespace Flux::Analysis;
 
 namespace {
+constexpr const char* kFootprintEditorStateKey = "FootprintEditor";
+
 QPainterPath makeTrapezoidPath(qreal w, qreal h, qreal deltaX) {
     // deltaX is total top-width reduction (positive narrows top, negative widens top)
     const qreal maxDelta = std::max(0.0, w - 0.05);
@@ -832,6 +839,37 @@ void FootprintEditor::setupUI() {
     connect(m_view, &FootprintEditorView::rectResizeUpdated, this, &FootprintEditor::onRectResizeUpdated);
     connect(m_view, &FootprintEditorView::rectResizeFinished, this, &FootprintEditor::onRectResizeFinished);
     updatePreview();
+
+    QByteArray geom = ConfigManager::instance().windowGeometry(kFootprintEditorStateKey);
+    if (!geom.isEmpty()) {
+        restoreGeometry(geom);
+    }
+    const QByteArray stateBytes = ConfigManager::instance().windowState(kFootprintEditorStateKey);
+    if (!stateBytes.isEmpty()) {
+        const QJsonObject state = QJsonDocument::fromJson(stateBytes).object();
+        if (m_leftToolbar) m_leftToolbar->setVisible(state.value("leftToolbarVisible").toBool(true));
+        if (m_leftNavigatorPanel) m_leftNavigatorPanel->setVisible(state.value("leftNavigatorVisible").toBool(true));
+        if (m_bottomPanel) m_bottomPanel->setVisible(state.value("bottomPanelVisible").toBool(true));
+        if (m_rightPanel) m_rightPanel->setVisible(state.value("rightPanelVisible").toBool(true));
+        if (m_leftTabWidget) {
+            const int idx = state.value("leftTabIndex").toInt(0);
+            if (idx >= 0 && idx < m_leftTabWidget->count()) m_leftTabWidget->setCurrentIndex(idx);
+            const int width = state.value("leftNavigatorWidth").toInt(m_leftTabWidget->width());
+            if (width > 0) m_leftTabWidget->setFixedWidth(width);
+        }
+        if (m_rightTabWidget) {
+            const int idx = state.value("rightTabIndex").toInt(0);
+            if (idx >= 0 && idx < m_rightTabWidget->count()) m_rightTabWidget->setCurrentIndex(idx);
+        }
+        if (m_bottomTabWidget) {
+            const int idx = state.value("bottomTabIndex").toInt(0);
+            if (idx >= 0 && idx < m_bottomTabWidget->count()) m_bottomTabWidget->setCurrentIndex(idx);
+        }
+        if (QScrollArea* scroll = qobject_cast<QScrollArea*>(m_rightPanel)) {
+            const int width = state.value("rightPanelWidth").toInt(scroll->width());
+            if (width > 0) scroll->setFixedWidth(width);
+        }
+    }
 }
 
 void FootprintEditor::createInfoPanel() {
@@ -2684,6 +2722,42 @@ void FootprintEditor::dropEvent(QDropEvent* event) {
         }
     }
     event->ignore();
+}
+
+void FootprintEditor::closeEvent(QCloseEvent* event) {
+    QDialog::closeEvent(event);
+    if (!event->isAccepted()) return;
+
+    QJsonObject state;
+    state["leftToolbarVisible"] = m_leftToolbar && m_leftToolbar->isVisible();
+    state["leftNavigatorVisible"] = m_leftNavigatorPanel && m_leftNavigatorPanel->isVisible();
+    state["bottomPanelVisible"] = m_bottomPanel && m_bottomPanel->isVisible();
+    state["rightPanelVisible"] = m_rightPanel && m_rightPanel->isVisible();
+    state["leftTabIndex"] = m_leftTabWidget ? m_leftTabWidget->currentIndex() : 0;
+    state["rightTabIndex"] = m_rightTabWidget ? m_rightTabWidget->currentIndex() : 0;
+    state["bottomTabIndex"] = m_bottomTabWidget ? m_bottomTabWidget->currentIndex() : 0;
+    state["leftNavigatorWidth"] = m_leftTabWidget ? m_leftTabWidget->width() : 0;
+    state["rightPanelWidth"] = m_rightPanel ? m_rightPanel->width() : 0;
+
+    ConfigManager::instance().saveWindowState(
+        kFootprintEditorStateKey,
+        saveGeometry(),
+        QJsonDocument(state).toJson(QJsonDocument::Compact));
+}
+
+void FootprintEditor::showEvent(QShowEvent* event) {
+    QDialog::showEvent(event);
+    if (QScreen* screen = window()->screen()) {
+        const QRect area = screen->availableGeometry();
+        QRect geom = frameGeometry();
+        if (geom.height() > area.height() || geom.width() > area.width()) {
+            resize(qMin(geom.width(), area.width()), qMin(geom.height(), area.height()));
+            geom = frameGeometry();
+        }
+        if (!area.contains(geom.center())) {
+            move(area.center() - QPoint(width() / 2, height() / 2));
+        }
+    }
 }
 
 void FootprintEditor::onDelete() {

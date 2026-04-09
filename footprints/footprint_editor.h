@@ -246,6 +246,8 @@ private slots:
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 };
 
 #endif // FOOTPRINT_EDITOR_H
