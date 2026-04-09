@@ -5,6 +5,16 @@
 #include <QAbstractGraphicsShapeItem>
 #include <QScrollBar>
 
+namespace {
+QGraphicsItem* findResizeHandleItem(QGraphicsItem* item) {
+    while (item) {
+        if (item->data(0).toString() == "resize_handle") return item;
+        item = item->parentItem();
+    }
+    return nullptr;
+}
+}
+
 FootprintEditorView::FootprintEditorView(QWidget* parent)
     : QGraphicsView(parent), m_currentTool(0), m_gridSize(1.27), // 1.27mm (50mil) default
       m_isPanning(false), m_isDrawing(false), m_isMeasuring(false), m_snapToGrid(true)
@@ -66,6 +76,15 @@ void FootprintEditorView::mousePressEvent(QMouseEvent* event) {
     }
 
     if (event->button() == Qt::LeftButton) {
+        if (m_currentTool == 0) {
+            if (QGraphicsItem* handle = findResizeHandleItem(itemAt(event->pos()))) {
+                m_rectResizeActive = true;
+                emit rectResizeStarted(handle->data(1).toString(), snapToGrid(mapToScene(event->pos())));
+                event->accept();
+                return;
+            }
+        }
+
         QPointF scenePos = snapToGrid(mapToScene(event->pos()));
         
         if (m_currentTool == 0) { // Select
@@ -92,13 +111,18 @@ void FootprintEditorView::mouseMoveEvent(QMouseEvent* event) {
 
     QPointF scenePos = snapToGrid(mapToScene(event->pos()));
     emit mouseMoved(scenePos);
-    
+
     if (m_isDrawing) {
          if (m_currentTool == FootprintEditor::Measure) {
              m_measureCurrent = scenePos;
              viewport()->update(); // Trigger redraw
          }
          emit lineDragged(m_drawStart, scenePos);
+    }
+    if (m_rectResizeActive) {
+        emit rectResizeUpdated(scenePos);
+        event->accept();
+        return;
     }
     
     QGraphicsView::mouseMoveEvent(event);
@@ -116,6 +140,12 @@ void FootprintEditorView::mouseReleaseEvent(QMouseEvent* event) {
         QPointF scenePos = snapToGrid(mapToScene(event->pos()));
         emit drawingFinished(m_drawStart, scenePos);
         viewport()->update();
+    }
+    if (event->button() == Qt::LeftButton && m_rectResizeActive) {
+        m_rectResizeActive = false;
+        emit rectResizeFinished(snapToGrid(mapToScene(event->pos())));
+        event->accept();
+        return;
     }
     
     QGraphicsView::mouseReleaseEvent(event);

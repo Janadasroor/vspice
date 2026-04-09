@@ -33,6 +33,7 @@
 #include <QDropEvent>
 #include <QMimeData>
 #include <QUrl>
+#include <QJsonDocument>
 #include <QDir>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -40,6 +41,7 @@
 #include <QFormLayout>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
+#include <QPainter>
 #include "items/footprint_primitive_item.h"
 #include "analysis/footprint_engine.h"
 
@@ -220,6 +222,85 @@ void FootprintEditor::setupUI() {
     // Lateral Drawing Bar
     contentLayout->addWidget(m_leftToolbar);
     
+    // -- Left Navigator --
+    m_leftTabWidget = new QTabWidget();
+    m_leftTabWidget->setFixedWidth(300);
+    m_leftTabWidget->setDocumentMode(true);
+    m_leftTabWidget->setTabPosition(QTabWidget::North);
+    m_leftTabWidget->setStyleSheet(
+        "QTabWidget::pane { border: 1px solid #1e1e1e; background-color: #252526; }"
+        "QTabBar::tab { background-color: #2d2d30; color: #9ca3af; padding: 8px 14px; border: 1px solid #1e1e1e; }"
+        "QTabBar::tab:selected { background-color: #252526; color: #e5e7eb; border-bottom: 2px solid #10b981; }"
+        "QTabBar::tab:hover:!selected { background-color: #3c3c3c; }");
+    m_leftNavigatorPanel = m_leftTabWidget;
+
+    createLibraryBrowser();
+    QWidget* libPage = new QWidget();
+    QVBoxLayout* libPageLayout = new QVBoxLayout(libPage);
+    libPageLayout->setContentsMargins(10, 10, 10, 10);
+    libPageLayout->setSpacing(8);
+    libPageLayout->addWidget(m_libSearchEdit);
+    libPageLayout->addWidget(m_libraryTree);
+    m_leftTabWidget->addTab(libPage, "Library Browser");
+
+    QWidget* wizPage = new QWidget();
+    QVBoxLayout* wizPageLayout = new QVBoxLayout(wizPage);
+    wizPageLayout->setContentsMargins(10, 10, 10, 10);
+    wizPageLayout->setSpacing(10);
+
+    QGroupBox* wizGroup = new QGroupBox("Footprint Wizard");
+    QFormLayout* wizForm = new QFormLayout(wizGroup);
+    wizForm->setContentsMargins(10, 25, 10, 10);
+    
+    m_wizType = new QComboBox();
+    m_wizType->addItems({"DIP", "SOIC", "Passive (0603/0805)", "Passive (TH Axial)"});
+    
+    m_wizPins = new QSpinBox(); m_wizPins->setRange(2, 100); m_wizPins->setValue(8);
+    m_wizPitch = new QDoubleSpinBox(); m_wizPitch->setRange(0.1, 10); m_wizPitch->setValue(2.54);
+    m_wizSpan = new QDoubleSpinBox(); m_wizSpan->setRange(1, 100); m_wizSpan->setValue(7.62);
+    m_wizPadW = new QDoubleSpinBox(); m_wizPadW->setRange(0.1, 10); m_wizPadW->setValue(1.5);
+    m_wizPadH = new QDoubleSpinBox(); m_wizPadH->setRange(0.1, 10); m_wizPadH->setValue(1.5);
+    
+    QString wizInputStyle = "QSpinBox, QDoubleSpinBox, QComboBox { "
+                            "background-color: #2d2d2d; color: #ececec; "
+                            "border: 1px solid #3c3c3c; border-radius: 4px; "
+                            "padding: 4px; min-height: 24px; }"
+                            "QSpinBox::up-button, QDoubleSpinBox::up-button, "
+                            "QSpinBox::down-button, QDoubleSpinBox::down-button { "
+                            "background-color: #3d3d3d; width: 16px; border-left: 1px solid #3c3c3c; }"
+                            "QComboBox::drop-down { border-left: 1px solid #3c3c3c; width: 20px; }";
+    
+    m_wizType->setStyleSheet(wizInputStyle);
+    m_wizPins->setStyleSheet(wizInputStyle);
+    m_wizPitch->setStyleSheet(wizInputStyle);
+    m_wizSpan->setStyleSheet(wizInputStyle);
+    m_wizPadW->setStyleSheet(wizInputStyle);
+    m_wizPadH->setStyleSheet(wizInputStyle);
+
+    wizForm->addRow("Type:", m_wizType);
+    wizForm->addRow("Pins:", m_wizPins);
+    wizForm->addRow("Pitch:", m_wizPitch);
+    wizForm->addRow("Row Span:", m_wizSpan);
+    wizForm->addRow("Pad W:", m_wizPadW);
+    wizForm->addRow("Pad H:", m_wizPadH);
+
+    QPushButton* wizBtn = new QPushButton("Generate & Save");
+    wizBtn->setCursor(Qt::PointingHandCursor);
+    wizBtn->setStyleSheet("QPushButton { background-color: #059669; color: white; font-weight: bold; padding: 8px; border-radius: 4px; border: none; }"
+                          "QPushButton:hover { background-color: #047857; }"
+                          "QPushButton:pressed { background-color: #065f46; }");
+    connect(wizBtn, &QPushButton::clicked, this, &FootprintEditor::onWizardGenerate);
+    wizForm->addRow(wizBtn);
+
+    QPushButton* importKiCadWizardBtn = new QPushButton("Import KiCad Footprint");
+    connect(importKiCadWizardBtn, &QPushButton::clicked, this, &FootprintEditor::onImportKicadFootprint);
+    wizForm->addRow(importKiCadWizardBtn);
+
+    wizPageLayout->addWidget(wizGroup);
+    wizPageLayout->addStretch();
+    m_leftTabWidget->addTab(wizPage, "Wizard");
+    contentLayout->addWidget(m_leftTabWidget);
+
     // -- Viewport Area --
     m_scene = new QGraphicsScene(this);
     m_scene->setSceneRect(-200, -200, 400, 400); // 400x400 mm workspace
@@ -232,8 +313,9 @@ void FootprintEditor::setupUI() {
     
     // -- Right Side Configuration Panel --
     QScrollArea* sideScroll = new QScrollArea();
-    sideScroll->setFixedWidth(340);
+    sideScroll->setFixedWidth(360);
     sideScroll->setWidgetResizable(true);
+    m_rightPanel = sideScroll;
     
     QWidget* sideWidget = new QWidget();
     sideWidget->setObjectName("SidePanel");
@@ -243,6 +325,20 @@ void FootprintEditor::setupUI() {
     sideLayout->setContentsMargins(15, 15, 15, 15);
     sideLayout->setSpacing(15);
     
+    m_rightTabWidget = new QTabWidget();
+    m_rightTabWidget->setDocumentMode(true);
+    m_rightTabWidget->setTabPosition(QTabWidget::East);
+    m_rightTabWidget->tabBar()->setExpanding(false);
+    m_rightTabWidget->tabBar()->setUsesScrollButtons(true);
+    m_rightTabWidget->tabBar()->setElideMode(Qt::ElideRight);
+    m_rightTabWidget->tabBar()->setFixedWidth(28);
+    m_rightTabWidget->setStyleSheet(
+        "QTabWidget::pane { border: 1px solid #1e1e1e; border-right: none; background-color: #2b2b2b; }"
+        "QTabBar::tab { background-color: #2d2d2d; color: #9ca3af; border: 1px solid #3f3f46; border-left: none; "
+        "border-top-right-radius: 4px; border-bottom-right-radius: 4px; padding: 2px 2px; min-width: 24px; min-height: 64px; font-weight: 600; }"
+        "QTabBar::tab:selected { background-color: #2b2b2b; color: #e5e7eb; border-right: 3px solid #10b981; }"
+        "QTabBar::tab:hover:!selected { background-color: #3f3f46; }");
+
     // 1. Identity Group
     QGroupBox* infoGroup = new QGroupBox("Footprint Metadata");
     QFormLayout* infoForm = new QFormLayout(infoGroup);
@@ -260,7 +356,21 @@ void FootprintEditor::setupUI() {
     infoForm->addRow("", m_excludePosCheck);
     infoForm->addRow("", m_dnpCheck);
     infoForm->addRow("", m_netTieCheck);
-    sideLayout->addWidget(infoGroup);
+
+    connect(m_nameEdit, &QLineEdit::textChanged, this, [this]() { updatePreview(); });
+    connect(m_descriptionEdit, &QLineEdit::textChanged, this, [this]() { updatePreview(); });
+    connect(m_categoryCombo, &QComboBox::currentTextChanged, this, [this]() { updatePreview(); });
+    connect(m_classificationCombo, &QComboBox::currentTextChanged, this, [this]() { updatePreview(); });
+    connect(m_keywordsEdit, &QLineEdit::textChanged, this, [this]() { updatePreview(); });
+    connect(m_excludeBOMCheck, &QCheckBox::toggled, this, [this](bool) { updatePreview(); });
+    connect(m_excludePosCheck, &QCheckBox::toggled, this, [this](bool) { updatePreview(); });
+    connect(m_dnpCheck, &QCheckBox::toggled, this, [this](bool) { updatePreview(); });
+    connect(m_netTieCheck, &QCheckBox::toggled, this, [this](bool) { updatePreview(); });
+    QWidget* metadataPage = new QWidget();
+    QVBoxLayout* metadataLayout = new QVBoxLayout(metadataPage);
+    metadataLayout->setContentsMargins(0, 0, 0, 0);
+    metadataLayout->addWidget(infoGroup);
+    metadataLayout->addStretch();
     
     // 3D Model Group
     QGroupBox* modelGroup = new QGroupBox("3D Visualization");
@@ -323,6 +433,7 @@ void FootprintEditor::setupUI() {
         connect(edit, &QLineEdit::editingFinished, this, [this]() {
             syncCurrentModelFromFields();
             refreshModelSelector();
+            updatePreview();
         });
     };
     bindModelField(m_modelFileEdit);
@@ -338,15 +449,18 @@ void FootprintEditor::setupUI() {
     connect(m_modelOpacitySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) {
         syncCurrentModelFromFields();
         refreshModelSelector();
+        updatePreview();
     });
     connect(m_modelVisibleCheck, &QCheckBox::toggled, this, [this](bool) {
         syncCurrentModelFromFields();
         refreshModelSelector();
+        updatePreview();
         if (m_footprint3DWindow && m_footprint3DWindow->isVisible()) onOpen3DPreview();
     });
     connect(m_modelVisibleCheck, &QCheckBox::toggled, this, [this](bool) {
         syncCurrentModelFromFields();
         refreshModelSelector();
+        updatePreview();
     });
 
     connect(m_modelSelector, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
@@ -360,6 +474,7 @@ void FootprintEditor::setupUI() {
         refreshModelSelector();
         m_modelSelector->setCurrentIndex(m_models3D.size() - 1);
         loadModelToFields(m_modelSelector->currentIndex());
+        updatePreview();
     });
     connect(m_removeModelButton, &QPushButton::clicked, this, [this]() {
         syncCurrentModelFromFields();
@@ -375,6 +490,7 @@ void FootprintEditor::setupUI() {
         const int nextIdx = std::min(idx, int(m_models3D.size()) - 1);
         m_modelSelector->setCurrentIndex(nextIdx);
         loadModelToFields(nextIdx);
+        updatePreview();
     });
 
     QPushButton* editTransformBtn = new QPushButton("Edit Transform...");
@@ -456,6 +572,7 @@ void FootprintEditor::setupUI() {
         m_modelScaleZ->setText(toText(sclZ->value()));
         syncCurrentModelFromFields();
         refreshModelSelector();
+        updatePreview();
 
         if (m_footprint3DWindow && m_footprint3DWindow->isVisible()) onOpen3DPreview();
     });
@@ -485,74 +602,24 @@ void FootprintEditor::setupUI() {
     m_modelSelector->setCurrentIndex(0);
     loadModelToFields(0);
     
-    sideLayout->addWidget(modelGroup);
+    QWidget* modelPage = new QWidget();
+    QVBoxLayout* modelPageLayout = new QVBoxLayout(modelPage);
+    modelPageLayout->setContentsMargins(0, 0, 0, 0);
+    modelPageLayout->addWidget(modelGroup);
+    modelPageLayout->addStretch();
     
     // 2. Properties Editor Group
-    QGroupBox* propsGroup = new QGroupBox("Primitive Parameters");
-    QVBoxLayout* propsLayout = new QVBoxLayout(propsGroup);
-    propsLayout->setContentsMargins(5, 25, 5, 5);
+    QWidget* propsPage = new QWidget();
+    QVBoxLayout* propsLayout = new QVBoxLayout(propsPage);
+    propsLayout->setContentsMargins(5, 5, 5, 5);
     createPropertiesPanel();
     propsLayout->addWidget(m_propertyEditor);
-    sideLayout->addWidget(propsGroup);
+    propsLayout->addStretch();
 
-    // 3. Browser Group
-    createLibraryBrowser();
-    QGroupBox* libGroup = new QGroupBox("Internal Library");
-    QVBoxLayout* libLayout = new QVBoxLayout(libGroup);
-    libLayout->setContentsMargins(10, 25, 10, 10);
-    libLayout->setSpacing(10);
-    libLayout->addWidget(m_libSearchEdit);
-    libLayout->addWidget(m_libraryTree);
-    sideLayout->addWidget(libGroup);
-
-    // 4. Wizard Group
-    QGroupBox* wizGroup = new QGroupBox("Footprint Wizard");
-    QFormLayout* wizForm = new QFormLayout(wizGroup);
-    wizForm->setContentsMargins(10, 25, 10, 10);
-    
-    m_wizType = new QComboBox();
-    m_wizType->addItems({"DIP", "SOIC", "Passive (0603/0805)", "Passive (TH Axial)"});
-    
-    m_wizPins = new QSpinBox(); m_wizPins->setRange(2, 100); m_wizPins->setValue(8);
-    m_wizPitch = new QDoubleSpinBox(); m_wizPitch->setRange(0.1, 10); m_wizPitch->setValue(2.54);
-    m_wizSpan = new QDoubleSpinBox(); m_wizSpan->setRange(1, 100); m_wizSpan->setValue(7.62);
-    m_wizPadW = new QDoubleSpinBox(); m_wizPadW->setRange(0.1, 10); m_wizPadW->setValue(1.5);
-    m_wizPadH = new QDoubleSpinBox(); m_wizPadH->setRange(0.1, 10); m_wizPadH->setValue(1.5);
-    
-    QString wizInputStyle = "QSpinBox, QDoubleSpinBox, QComboBox { "
-                            "background-color: #2d2d2d; color: #ececec; "
-                            "border: 1px solid #3c3c3c; border-radius: 4px; "
-                            "padding: 4px; min-height: 24px; }"
-                            "QSpinBox::up-button, QDoubleSpinBox::up-button, "
-                            "QSpinBox::down-button, QDoubleSpinBox::down-button { "
-                            "background-color: #3d3d3d; width: 16px; border-left: 1px solid #3c3c3c; }"
-                            "QComboBox::drop-down { border-left: 1px solid #3c3c3c; width: 20px; }";
-    
-    m_wizType->setStyleSheet(wizInputStyle);
-    m_wizPins->setStyleSheet(wizInputStyle);
-    m_wizPitch->setStyleSheet(wizInputStyle);
-    m_wizSpan->setStyleSheet(wizInputStyle);
-    m_wizPadW->setStyleSheet(wizInputStyle);
-    m_wizPadH->setStyleSheet(wizInputStyle);
-
-    wizForm->addRow("Type:", m_wizType);
-    wizForm->addRow("Pins:", m_wizPins);
-    wizForm->addRow("Pitch:", m_wizPitch);
-    wizForm->addRow("Row Span:", m_wizSpan);
-    wizForm->addRow("Pad W:", m_wizPadW);
-    wizForm->addRow("Pad H:", m_wizPadH);
-
-    QPushButton* wizBtn = new QPushButton("Generate & Save");
-    wizBtn->setCursor(Qt::PointingHandCursor);
-    wizBtn->setStyleSheet("QPushButton { background-color: #059669; color: white; font-weight: bold; padding: 8px; border-radius: 4px; border: none; }"
-                          "QPushButton:hover { background-color: #047857; }"
-                          "QPushButton:pressed { background-color: #065f46; }");
-    connect(wizBtn, &QPushButton::clicked, this, &FootprintEditor::onWizardGenerate);
-    wizForm->addRow(wizBtn);
-    
-    sideLayout->addWidget(wizGroup);
-    
-    sideLayout->addStretch();
+    m_rightTabWidget->addTab(propsPage, "Selection");
+    m_rightTabWidget->addTab(metadataPage, "Metadata");
+    m_rightTabWidget->addTab(modelPage, "3D");
+    sideLayout->addWidget(m_rightTabWidget);
     
     // Bottom Action Bar
     QHBoxLayout* actionLayout = new QHBoxLayout();
@@ -580,10 +647,32 @@ void FootprintEditor::setupUI() {
 
     mainLayout->addLayout(contentLayout);
     
-    // Status Bar
+    // Bottom Console
+    QWidget* bottomConsole = new QWidget(this);
+    QVBoxLayout* bottomLayout = new QVBoxLayout(bottomConsole);
+    bottomLayout->setContentsMargins(0, 0, 0, 0);
+    bottomLayout->setSpacing(0);
+
     m_statusLabel = new QLabel("Ready | Grid: 1.27mm");
     m_statusLabel->setStyleSheet("background-color: #1e1e1e; border-top: 1px solid #3c3c3c; padding: 4px 15px; color: #cccccc; font-size: 11px;");
-    mainLayout->addWidget(m_statusLabel);
+    bottomLayout->addWidget(m_statusLabel);
+
+    m_bottomTabWidget = new QTabWidget(bottomConsole);
+    m_bottomTabWidget->setDocumentMode(true);
+    m_bottomTabWidget->setStyleSheet(
+        "QTabWidget::pane { border: 1px solid #1e1e1e; border-top: none; background-color: #1f1f1f; }"
+        "QTabBar::tab { background-color: #2d2d30; color: #9ca3af; padding: 6px 12px; border: 1px solid #1e1e1e; }"
+        "QTabBar::tab:selected { background-color: #1f1f1f; color: #e5e7eb; border-bottom: 2px solid #10b981; }");
+    m_codePreview = new QTextEdit(bottomConsole);
+    m_codePreview->setReadOnly(true);
+    m_codePreview->setFont(QFont("Monospace", 9));
+    m_ruleList = new QListWidget(bottomConsole);
+    m_bottomTabWidget->addTab(m_codePreview, "JSON Source");
+    m_bottomTabWidget->addTab(m_ruleList, "Rule Checker");
+    bottomLayout->addWidget(m_bottomTabWidget);
+
+    m_bottomPanel = bottomConsole;
+    mainLayout->addWidget(bottomConsole);
     
     // Connect View Signals
     connect(m_view, &FootprintEditorView::pointClicked, [this](QPointF pos){
@@ -613,12 +702,37 @@ void FootprintEditor::setupUI() {
                  prim.layer = m_activeLayer;
                  m_undoStack->push(new AddFootprintPrimitiveCommand(this, prim));
              }
+         } else if (m_currentTool == Line || m_currentTool == Rect || m_currentTool == Circle) {
+             m_polyPoints.append(pos);
+             if (m_polyPoints.size() == 2) {
+                 const QPointF p1 = m_polyPoints[0];
+                 const QPointF p2 = m_polyPoints[1];
+                 FootprintPrimitive prim;
+
+                 if (m_currentTool == Line) {
+                     prim = FootprintPrimitive::createLine(p1, p2);
+                 } else if (m_currentTool == Rect) {
+                     prim = FootprintPrimitive::createRect(QRectF(p1, p2).normalized());
+                 } else {
+                     prim = FootprintPrimitive::createCircle(p1, QLineF(p1, p2).length());
+                 }
+
+                 prim.layer = m_activeLayer;
+                 m_polyPoints.clear();
+                 if (m_previewItem) {
+                     m_scene->removeItem(m_previewItem);
+                     delete m_previewItem;
+                     m_previewItem = nullptr;
+                 }
+                 m_undoStack->push(new AddFootprintPrimitiveCommand(this, prim));
+             }
          } else if (m_currentTool == Anchor) {
              onSetAnchor(pos);
              // Revert to select tool after setting anchor
              if (m_view) {
                  m_currentTool = Select;
                  m_view->setCurrentTool(Select);
+                 m_polyPoints.clear();
                  if (m_toolActions.contains("Select")) {
                      m_toolActions["Select"]->setChecked(true);
                  }
@@ -641,33 +755,19 @@ void FootprintEditor::setupUI() {
              return;
         }
 
-        if (m_currentTool == Select || m_currentTool == Pad || m_currentTool == Text) return;
-        
-        FootprintPrimitive prim;
-        if (m_currentTool == Line) {
-            prim = FootprintPrimitive::createLine(start, end);
-        } else if (m_currentTool == Rect) {
-            prim = FootprintPrimitive::createRect(QRectF(start, end).normalized());
-        } else if (m_currentTool == Circle) {
-            qreal params = QLineF(start, end).length();
-            prim = FootprintPrimitive::createCircle(start, params); // Radius
-        }
-        
-        prim.layer = m_activeLayer;
-
-        // Cleanup preview item before updating scene (which clears scene)
-        if (m_previewItem) {
-            m_scene->removeItem(m_previewItem);
-            delete m_previewItem;
-            m_previewItem = nullptr;
-        }
-        
-        m_undoStack->push(new AddFootprintPrimitiveCommand(this, prim));
+        Q_UNUSED(start);
+        Q_UNUSED(end);
     });
     
     connect(m_view, &FootprintEditorView::toolCancelled, [this](){
         m_currentTool = Select;
         m_view->setCurrentTool(Select);
+        m_polyPoints.clear();
+        if (m_previewItem) {
+            m_scene->removeItem(m_previewItem);
+            delete m_previewItem;
+            m_previewItem = nullptr;
+        }
         // Find select action and check it
         if (m_toolActions.contains("Select")) {
              m_toolActions["Select"]->setChecked(true);
@@ -675,7 +775,8 @@ void FootprintEditor::setupUI() {
     });
 
     connect(m_view, &FootprintEditorView::lineDragged, [this](QPointF start, QPointF end){
-        if (m_currentTool == Select || m_currentTool == Pad || m_currentTool == Text) return;
+        if (m_currentTool == Select || m_currentTool == Pad || m_currentTool == Text ||
+            m_currentTool == Line || m_currentTool == Rect || m_currentTool == Circle) return;
         
         // Remove old preview
         if (m_previewItem) {
@@ -697,6 +798,27 @@ void FootprintEditor::setupUI() {
     });
     
     connect(m_view, &FootprintEditorView::mouseMoved, [this](QPointF pos){
+        if (m_previewItem) {
+            m_scene->removeItem(m_previewItem);
+            delete m_previewItem;
+            m_previewItem = nullptr;
+        }
+
+        if (m_currentTool == Line || m_currentTool == Rect || m_currentTool == Circle) {
+            const QPen previewPen(Qt::cyan, 1, Qt::DashLine);
+            const QPointF start = m_polyPoints.isEmpty() ? pos : m_polyPoints.first();
+
+            if (m_currentTool == Line) {
+                m_previewItem = m_scene->addLine(QLineF(start, pos), previewPen);
+            } else if (m_currentTool == Rect) {
+                m_previewItem = m_scene->addRect(QRectF(start, pos).normalized(), previewPen);
+            } else if (m_currentTool == Circle) {
+                const qreal radius = QLineF(start, pos).length();
+                m_previewItem = m_scene->addEllipse(start.x() - radius, start.y() - radius,
+                                                    radius * 2, radius * 2, previewPen);
+            }
+        }
+
         if (m_statusLabel) {
             m_statusLabel->setText(QString("X: %1 mm  Y: %2 mm | Grid: %3 mm")
                                    .arg(pos.x(), 0, 'f', 2)
@@ -706,6 +828,10 @@ void FootprintEditor::setupUI() {
     });
 
     connect(m_scene, &QGraphicsScene::selectionChanged, this, &FootprintEditor::onSelectionChanged);
+    connect(m_view, &FootprintEditorView::rectResizeStarted, this, &FootprintEditor::onRectResizeStarted);
+    connect(m_view, &FootprintEditorView::rectResizeUpdated, this, &FootprintEditor::onRectResizeUpdated);
+    connect(m_view, &FootprintEditorView::rectResizeFinished, this, &FootprintEditor::onRectResizeFinished);
+    updatePreview();
 }
 
 void FootprintEditor::createInfoPanel() {
@@ -971,6 +1097,58 @@ void FootprintEditor::createToolBar() {
     QAction* view3DAct = m_toolbar->addAction(QIcon(":/icons/tool_3d.svg"), "3D View");
     view3DAct->setToolTip("Open 3D preview for current footprint");
     connect(view3DAct, &QAction::triggered, this, &FootprintEditor::onOpen3DPreview);
+
+    auto makePanelIcon = [](const QString& type) -> QIcon {
+        QPixmap px(32, 32);
+        px.fill(Qt::transparent);
+        QPainter painter(&px);
+        painter.setRenderHint(QPainter::Antialiasing);
+        QColor color = Qt::white;
+        if (ThemeManager::theme()) {
+            color = ThemeManager::theme()->textColor();
+        }
+        painter.setPen(QPen(color, 2));
+        painter.drawRect(6, 8, 20, 16);
+        painter.setBrush(color);
+        if (type == "left") {
+            painter.drawRect(6, 8, 6, 16);
+        } else if (type == "bottom") {
+            painter.drawRect(6, 18, 20, 6);
+        } else if (type == "right") {
+            painter.drawRect(20, 8, 6, 16);
+        }
+        return QIcon(px);
+    };
+
+    m_toolbar->addSeparator();
+
+    QAction* leftToggle = new QAction(makePanelIcon("left"), "Toggle Left Sidebar", this);
+    leftToggle->setToolTip("Toggle Left Sidebar");
+    leftToggle->setCheckable(true);
+    leftToggle->setChecked(true);
+    m_toolbar->addAction(leftToggle);
+    connect(leftToggle, &QAction::toggled, this, [this](bool visible) {
+        if (m_leftToolbar) m_leftToolbar->setVisible(visible);
+        if (m_leftNavigatorPanel) m_leftNavigatorPanel->setVisible(visible);
+    });
+
+    QAction* bottomToggle = new QAction(makePanelIcon("bottom"), "Toggle Bottom Panel", this);
+    bottomToggle->setToolTip("Toggle Bottom Panel");
+    bottomToggle->setCheckable(true);
+    bottomToggle->setChecked(true);
+    m_toolbar->addAction(bottomToggle);
+    connect(bottomToggle, &QAction::toggled, this, [this](bool visible) {
+        if (m_bottomPanel) m_bottomPanel->setVisible(visible);
+    });
+
+    QAction* rightToggle = new QAction(makePanelIcon("right"), "Toggle Right Sidebar", this);
+    rightToggle->setToolTip("Toggle Right Sidebar");
+    rightToggle->setCheckable(true);
+    rightToggle->setChecked(true);
+    m_toolbar->addAction(rightToggle);
+    connect(rightToggle, &QAction::toggled, this, [this](bool visible) {
+        if (m_rightPanel) m_rightPanel->setVisible(visible);
+    });
 
     // Left Toolbar Items (Drawing Tools)
     addTool(m_leftToolbar, "Pad", Pad, "tool_pad.svg", "P");
@@ -1246,7 +1424,23 @@ void FootprintEditor::createPropertiesPanel() {
     
     connect(m_propertyEditor, &PropertyEditor::propertyChanged, this, [this](const QString& name, const QVariant& value){
         QList<QGraphicsItem*> selected = m_scene->selectedItems();
-        if (selected.size() != 1) return;
+        if (selected.size() != 1) {
+            bool changed = false;
+            if (name == "Footprint Name" && m_nameEdit) { m_nameEdit->setText(value.toString()); changed = true; }
+            else if (name == "Description" && m_descriptionEdit) { m_descriptionEdit->setText(value.toString()); changed = true; }
+            else if (name == "Category" && m_categoryCombo) { m_categoryCombo->setCurrentText(value.toString()); changed = true; }
+            else if (name == "Classification" && m_classificationCombo) { m_classificationCombo->setCurrentText(value.toString()); changed = true; }
+            else if (name == "Keywords" && m_keywordsEdit) { m_keywordsEdit->setText(value.toString()); changed = true; }
+            else if (name == "Exclude From BOM" && m_excludeBOMCheck) { m_excludeBOMCheck->setChecked(value.toBool()); changed = true; }
+            else if (name == "Exclude From Position Files" && m_excludePosCheck) { m_excludePosCheck->setChecked(value.toBool()); changed = true; }
+            else if (name == "DNP" && m_dnpCheck) { m_dnpCheck->setChecked(value.toBool()); changed = true; }
+            else if (name == "Net Tie" && m_netTieCheck) { m_netTieCheck->setChecked(value.toBool()); changed = true; }
+            if (changed) {
+                updatePreview();
+                updatePropertiesPanel();
+            }
+            return;
+        }
         
         QGraphicsItem* item = selected.first();
         int index = m_drawnItems.indexOf(item);
@@ -1332,6 +1526,26 @@ void FootprintEditor::createPropertiesPanel() {
              else if (name == "Y1") { prim.data["y1"] = value.toDouble(); changed = true; }
              else if (name == "X2") { prim.data["x2"] = value.toDouble(); changed = true; }
              else if (name == "Y2") { prim.data["y2"] = value.toDouble(); changed = true; }
+        } else if (prim.type == FootprintPrimitive::Rect) {
+             if (name == "X") { prim.data["x"] = value.toDouble(); changed = true; }
+             else if (name == "Y") { prim.data["y"] = value.toDouble(); changed = true; }
+             else if (name == "Width") { prim.data["width"] = value.toDouble(); changed = true; }
+             else if (name == "Height") { prim.data["height"] = value.toDouble(); changed = true; }
+             else if (name == "Filled") { prim.data["filled"] = value.toBool(); changed = true; }
+             else if (name == "Line Width") { prim.data["lineWidth"] = value.toDouble(); changed = true; }
+        } else if (prim.type == FootprintPrimitive::Circle) {
+             if (name == "Center X") { prim.data["cx"] = value.toDouble(); changed = true; }
+             else if (name == "Center Y") { prim.data["cy"] = value.toDouble(); changed = true; }
+             else if (name == "Radius") { prim.data["radius"] = value.toDouble(); changed = true; }
+             else if (name == "Filled") { prim.data["filled"] = value.toBool(); changed = true; }
+             else if (name == "Line Width") { prim.data["lineWidth"] = value.toDouble(); changed = true; }
+        } else if (prim.type == FootprintPrimitive::Arc) {
+             if (name == "Center X") { prim.data["cx"] = value.toDouble(); changed = true; }
+             else if (name == "Center Y") { prim.data["cy"] = value.toDouble(); changed = true; }
+             else if (name == "Radius") { prim.data["radius"] = value.toDouble(); changed = true; }
+             else if (name == "Start Angle") { prim.data["startAngle"] = value.toDouble(); changed = true; }
+             else if (name == "Span Angle") { prim.data["spanAngle"] = value.toDouble(); changed = true; }
+             else if (name == "Line Width") { prim.data["width"] = value.toDouble(); changed = true; }
         }
         
         if (changed) {
@@ -1339,6 +1553,9 @@ void FootprintEditor::createPropertiesPanel() {
             // (e.g. pad shape change, text resize, etc)
             // Save selection to restore it? hard with recreation.
             updateSceneFromDefinition();
+            if (index >= 0 && index < m_drawnItems.size()) {
+                m_drawnItems[index]->setSelected(true);
+            }
         }
     });
 }
@@ -1346,6 +1563,12 @@ void FootprintEditor::createPropertiesPanel() {
 void FootprintEditor::onToolSelected() {
     QAction* action = qobject_cast<QAction*>(sender());
     if (action) {
+        m_polyPoints.clear();
+        if (m_previewItem) {
+            m_scene->removeItem(m_previewItem);
+            delete m_previewItem;
+            m_previewItem = nullptr;
+        }
         m_currentTool = static_cast<Tool>(action->data().toInt());
         m_view->setCurrentTool(m_currentTool);
     }
@@ -1710,6 +1933,195 @@ void FootprintEditor::onMoveExactly() {
     m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Move Exactly"));
 }
 
+void FootprintEditor::clearResizeHandles() {
+    for (QGraphicsRectItem* handle : m_resizeHandles) {
+        if (!handle) continue;
+        if (m_scene) m_scene->removeItem(handle);
+        delete handle;
+    }
+    m_resizeHandles.clear();
+}
+
+void FootprintEditor::updateResizeHandles() {
+    clearResizeHandles();
+    if (!m_scene || m_currentTool != Select) return;
+
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() != 1) return;
+
+    const int idx = m_drawnItems.indexOf(selected.first());
+    if (idx < 0 || idx >= m_footprint.primitives().size()) return;
+
+    const FootprintPrimitive& prim = m_footprint.primitives().at(idx);
+    QList<QPair<QString, QPointF>> handles;
+    qreal handleSize = 6.0;
+
+    if (prim.type == FootprintPrimitive::Rect) {
+        QRectF rect(prim.data.value("x").toDouble(), prim.data.value("y").toDouble(),
+                    prim.data.value("width").toDouble(), prim.data.value("height").toDouble());
+        rect = rect.normalized();
+        if (rect.isNull()) return;
+        const qreal minDim = qMin(rect.width(), rect.height());
+        handleSize = qBound<qreal>(2.0, minDim * 0.16, 6.0);
+        const qreal edgeOffset = (minDim < 16.0) ? qBound<qreal>(0.5, handleSize * 0.55, 2.0) : 0.0;
+        handles = {
+            {"tl", rect.topLeft() + QPointF(-edgeOffset, -edgeOffset)},
+            {"tr", rect.topRight() + QPointF(edgeOffset, -edgeOffset)},
+            {"br", rect.bottomRight() + QPointF(edgeOffset, edgeOffset)},
+            {"bl", rect.bottomLeft() + QPointF(-edgeOffset, edgeOffset)}
+        };
+    } else if (prim.type == FootprintPrimitive::Line) {
+        const QPointF p1(prim.data.value("x1").toDouble(), prim.data.value("y1").toDouble());
+        const QPointF p2(prim.data.value("x2").toDouble(), prim.data.value("y2").toDouble());
+        const qreal len = QLineF(p1, p2).length();
+        handleSize = qBound<qreal>(2.0, len * 0.09, 5.5);
+        handles = {{"p1", p1}, {"p2", p2}};
+    } else if (prim.type == FootprintPrimitive::Circle) {
+        const qreal cx = prim.data.value("cx").toDouble();
+        const qreal cy = prim.data.value("cy").toDouble();
+        const qreal r = prim.data.value("radius").toDouble();
+        if (r <= 0.0) return;
+        const qreal diameter = r * 2.0;
+        handleSize = qBound<qreal>(2.0, diameter * 0.16, 5.5);
+        const qreal radialOffset = (r < 10.0) ? qBound<qreal>(0.75, handleSize * 0.65, 2.0) : 0.0;
+        const qreal rr = r + radialOffset;
+        handles = {
+            {"east", QPointF(cx + rr, cy)},
+            {"west", QPointF(cx - rr, cy)},
+            {"north", QPointF(cx, cy - rr)},
+            {"south", QPointF(cx, cy + rr)}
+        };
+    } else {
+        return;
+    }
+
+    for (const auto& handleData : handles) {
+        auto* handle = new QGraphicsRectItem(handleData.second.x() - handleSize / 2.0,
+                                             handleData.second.y() - handleSize / 2.0,
+                                             handleSize, handleSize);
+        handle->setBrush(QColor(96, 165, 250, 220));
+        handle->setPen(QPen(QColor(255, 255, 255, 200), 0.0));
+        handle->setZValue(3000);
+        handle->setData(0, "resize_handle");
+        handle->setData(1, handleData.first);
+        handle->setData(2, idx);
+        handle->setFlag(QGraphicsItem::ItemIsSelectable, false);
+        handle->setFlag(QGraphicsItem::ItemIsMovable, false);
+        m_scene->addItem(handle);
+        m_resizeHandles.append(handle);
+    }
+}
+
+void FootprintEditor::onRectResizeStarted(const QString& corner, QPointF scenePos) {
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() != 1) return;
+
+    const int idx = m_drawnItems.indexOf(selected.first());
+    if (idx < 0 || idx >= m_footprint.primitives().size()) return;
+
+    const FootprintPrimitive& prim = m_footprint.primitives().at(idx);
+    m_rectResizeSessionActive = true;
+    m_rectResizePrimIdx = idx;
+    m_rectResizeCorner = corner;
+    m_rectResizeOldDef = m_footprint;
+    m_rectResizeAnchor = QPointF();
+    m_resizeLineOtherEnd = QPointF();
+    m_resizeCircleCenter = QPointF();
+
+    if (prim.type == FootprintPrimitive::Rect) {
+        QRectF rect(prim.data.value("x").toDouble(), prim.data.value("y").toDouble(),
+                    prim.data.value("width").toDouble(), prim.data.value("height").toDouble());
+        rect = rect.normalized();
+        if (rect.isNull()) {
+            m_rectResizeSessionActive = false;
+            return;
+        }
+        if (corner == "tl") m_rectResizeAnchor = rect.bottomRight();
+        else if (corner == "tr") m_rectResizeAnchor = rect.bottomLeft();
+        else if (corner == "bl") m_rectResizeAnchor = rect.topRight();
+        else m_rectResizeAnchor = rect.topLeft();
+    } else if (prim.type == FootprintPrimitive::Line) {
+        const QPointF p1(prim.data.value("x1").toDouble(), prim.data.value("y1").toDouble());
+        const QPointF p2(prim.data.value("x2").toDouble(), prim.data.value("y2").toDouble());
+        m_resizeLineOtherEnd = (corner == "p1") ? p2 : p1;
+    } else if (prim.type == FootprintPrimitive::Circle) {
+        m_resizeCircleCenter = QPointF(prim.data.value("cx").toDouble(), prim.data.value("cy").toDouble());
+    } else {
+        m_rectResizeSessionActive = false;
+        return;
+    }
+
+    onRectResizeUpdated(scenePos);
+}
+
+void FootprintEditor::onRectResizeUpdated(QPointF scenePos) {
+    if (!m_rectResizeSessionActive) return;
+    if (m_rectResizePrimIdx < 0 || m_rectResizePrimIdx >= m_footprint.primitives().size()) return;
+
+    FootprintPrimitive& prim = m_footprint.primitives()[m_rectResizePrimIdx];
+    if (prim.type == FootprintPrimitive::Rect) {
+        QRectF rect(m_rectResizeAnchor, scenePos);
+        rect = rect.normalized();
+        const qreal minSize = qMax<qreal>(0.25, m_view ? m_view->gridSize() * 0.5 : 0.25);
+        if (rect.width() < minSize) rect.setWidth(minSize);
+        if (rect.height() < minSize) rect.setHeight(minSize);
+        prim.data["x"] = rect.left();
+        prim.data["y"] = rect.top();
+        prim.data["width"] = rect.width();
+        prim.data["height"] = rect.height();
+    } else if (prim.type == FootprintPrimitive::Line) {
+        if (m_rectResizeCorner == "p1") {
+            prim.data["x1"] = scenePos.x();
+            prim.data["y1"] = scenePos.y();
+            prim.data["x2"] = m_resizeLineOtherEnd.x();
+            prim.data["y2"] = m_resizeLineOtherEnd.y();
+        } else {
+            prim.data["x2"] = scenePos.x();
+            prim.data["y2"] = scenePos.y();
+            prim.data["x1"] = m_resizeLineOtherEnd.x();
+            prim.data["y1"] = m_resizeLineOtherEnd.y();
+        }
+    } else if (prim.type == FootprintPrimitive::Circle) {
+        qreal radius = 0.25;
+        if (m_rectResizeCorner == "east" || m_rectResizeCorner == "west") {
+            radius = qAbs(scenePos.x() - m_resizeCircleCenter.x());
+        } else if (m_rectResizeCorner == "north" || m_rectResizeCorner == "south") {
+            radius = qAbs(scenePos.y() - m_resizeCircleCenter.y());
+        }
+        const qreal minRadius = qMax<qreal>(0.25, m_view ? m_view->gridSize() * 0.25 : 0.25);
+        prim.data["cx"] = m_resizeCircleCenter.x();
+        prim.data["cy"] = m_resizeCircleCenter.y();
+        prim.data["radius"] = qMax(radius, minRadius);
+    } else {
+        return;
+    }
+
+    updateSceneFromDefinition();
+    if (m_rectResizePrimIdx >= 0 && m_rectResizePrimIdx < m_drawnItems.size()) {
+        m_drawnItems[m_rectResizePrimIdx]->setSelected(true);
+    }
+}
+
+void FootprintEditor::onRectResizeFinished(QPointF scenePos) {
+    if (!m_rectResizeSessionActive) return;
+
+    onRectResizeUpdated(scenePos);
+    const FootprintDefinition newDef = m_footprint;
+    const bool changed = (QJsonDocument(newDef.toJson()).toJson(QJsonDocument::Compact) !=
+                          QJsonDocument(m_rectResizeOldDef.toJson()).toJson(QJsonDocument::Compact));
+
+    if (changed) {
+        m_undoStack->push(new UpdateFootprintCommand(this, m_rectResizeOldDef, newDef, "Resize Shape"));
+    } else {
+        m_footprint = m_rectResizeOldDef;
+        updateSceneFromDefinition();
+    }
+
+    m_rectResizeSessionActive = false;
+    m_rectResizePrimIdx = -1;
+    m_rectResizeCorner.clear();
+}
+
 QGraphicsItem* FootprintEditor::buildVisual(const FootprintPrimitive& prim, int index) {
     FootprintPrimitiveItem* visual = nullptr;
 
@@ -1730,6 +2142,7 @@ QGraphicsItem* FootprintEditor::buildVisual(const FootprintPrimitive& prim, int 
 }
 
 void FootprintEditor::updateSceneFromDefinition() {
+    clearResizeHandles();
     m_scene->clear();
     m_previewItem = nullptr; 
     m_drawnItems.clear(); 
@@ -1743,90 +2156,110 @@ void FootprintEditor::updateSceneFromDefinition() {
     }
 
     updatePropertiesPanel();
+    updatePreview();
+    updateResizeHandles();
+}
+
+void FootprintEditor::populatePropertiesFor(int index) {
+    if (!m_propertyEditor) return;
+    m_propertyEditor->clear();
+    if (index < 0 || index >= m_footprint.primitives().size()) return;
+
+    const FootprintPrimitive& prim = m_footprint.primitives().at(index);
+
+    auto layerName = [](FootprintPrimitive::Layer layer) -> QString {
+        switch (layer) {
+            case FootprintPrimitive::Top_Silkscreen: return "Top Silkscreen";
+            case FootprintPrimitive::Top_Courtyard: return "Top Courtyard";
+            case FootprintPrimitive::Top_Fabrication: return "Top Fabrication";
+            case FootprintPrimitive::Top_Copper: return "Top Copper";
+            case FootprintPrimitive::Bottom_Copper: return "Bottom Copper";
+            case FootprintPrimitive::Bottom_Silkscreen: return "Bottom Silkscreen";
+            case FootprintPrimitive::Top_SolderMask: return "Top Solder Mask";
+            case FootprintPrimitive::Bottom_SolderMask: return "Bottom Solder Mask";
+            case FootprintPrimitive::Top_SolderPaste: return "Top Solder Paste";
+            case FootprintPrimitive::Bottom_SolderPaste: return "Bottom Solder Paste";
+            case FootprintPrimitive::Top_Adhesive: return "Top Adhesive";
+            case FootprintPrimitive::Bottom_Adhesive: return "Bottom Adhesive";
+            case FootprintPrimitive::Bottom_Courtyard: return "Bottom Courtyard";
+            case FootprintPrimitive::Bottom_Fabrication: return "Bottom Fabrication";
+            case FootprintPrimitive::Inner_Copper_1: return "Inner Copper 1";
+            case FootprintPrimitive::Inner_Copper_2: return "Inner Copper 2";
+            case FootprintPrimitive::Inner_Copper_3: return "Inner Copper 3";
+            case FootprintPrimitive::Inner_Copper_4: return "Inner Copper 4";
+            default: return "Top Silkscreen";
+        }
+    };
+
+    const QString layerEnum = "enum|Top Silkscreen,Top Courtyard,Top Fabrication,Top Copper,Bottom Copper,Bottom Silkscreen,Top Solder Mask,Bottom Solder Mask,Top Solder Paste,Bottom Solder Paste,Top Adhesive,Bottom Adhesive,Bottom Courtyard,Bottom Fabrication,Inner Copper 1,Inner Copper 2,Inner Copper 3,Inner Copper 4";
+    m_propertyEditor->addSectionHeader("Primitive");
+    m_propertyEditor->addProperty("Layer", layerName(prim.layer), layerEnum);
+
+    if (prim.type == FootprintPrimitive::Pad) {
+        m_propertyEditor->addProperty("Number", prim.data.value("number").toString());
+        m_propertyEditor->addProperty("Pad Type", prim.data.value("pad_type").toString("SMD"), "enum|SMD,Through-Hole,Connector");
+        m_propertyEditor->addProperty("Shape", prim.data.value("shape").toString(), "enum|Rect,Round,Oblong,Trapezoid,RoundedRect,Custom");
+        m_propertyEditor->addProperty("Width", prim.data.value("width").toDouble());
+        m_propertyEditor->addProperty("Height", prim.data.value("height").toDouble());
+        m_propertyEditor->addProperty("X", prim.data.value("x").toDouble());
+        m_propertyEditor->addProperty("Y", prim.data.value("y").toDouble());
+        m_propertyEditor->addProperty("Rotation", prim.data.value("rotation").toDouble());
+        m_propertyEditor->addProperty("Corner Radius", prim.data.value("corner_radius").toDouble());
+        m_propertyEditor->addProperty("Trapezoid Delta X", prim.data.value("trapezoid_delta_x").toDouble());
+
+        m_propertyEditor->addSectionHeader("Pad Rules");
+        m_propertyEditor->addProperty("Drill Size", prim.data.value("drill_size").toDouble());
+        m_propertyEditor->addProperty("Clearance Override", prim.data.value("net_clearance_override_enabled").toBool());
+        m_propertyEditor->addProperty("Net Clearance", prim.data.value("net_clearance").toDouble());
+        m_propertyEditor->addProperty("Thermal Relief", prim.data.value("thermal_relief_enabled").toBool(true));
+        m_propertyEditor->addProperty("Thermal Spoke Width", prim.data.value("thermal_spoke_width").toDouble(0.3));
+        m_propertyEditor->addProperty("Thermal Relief Gap", prim.data.value("thermal_relief_gap").toDouble(0.25));
+        m_propertyEditor->addProperty("Thermal Spoke Count", prim.data.value("thermal_spoke_count").toInt(4), "enum|1,2,3,4,5,6,7,8");
+        m_propertyEditor->addProperty("Thermal Spoke Angle", prim.data.value("thermal_spoke_angle_deg").toDouble(0.0));
+        m_propertyEditor->addProperty("Jumper Group", prim.data.value("jumper_group").toInt(0));
+        m_propertyEditor->addProperty("Net Tie Group", prim.data.value("net_tie_group").toInt(0));
+        m_propertyEditor->addProperty("Solder Mask Exp", prim.data.value("solder_mask_expansion").toDouble());
+        m_propertyEditor->addProperty("Paste Mask Exp", prim.data.value("paste_mask_expansion").toDouble());
+        m_propertyEditor->addProperty("Plated", prim.data.value("plated").toBool());
+    } else if (prim.type == FootprintPrimitive::Text) {
+        m_propertyEditor->addProperty("Text", prim.data.value("text").toString());
+        m_propertyEditor->addProperty("Height", prim.data.value("height").toDouble());
+        m_propertyEditor->addProperty("X", prim.data.value("x").toDouble());
+        m_propertyEditor->addProperty("Y", prim.data.value("y").toDouble());
+        m_propertyEditor->addProperty("Rotation", prim.data.value("rotation").toDouble());
+    } else if (prim.type == FootprintPrimitive::Line || prim.type == FootprintPrimitive::Dimension) {
+        m_propertyEditor->addProperty("X1", prim.data.value("x1").toDouble());
+        m_propertyEditor->addProperty("Y1", prim.data.value("y1").toDouble());
+        m_propertyEditor->addProperty("X2", prim.data.value("x2").toDouble());
+        m_propertyEditor->addProperty("Y2", prim.data.value("y2").toDouble());
+    } else if (prim.type == FootprintPrimitive::Rect) {
+        m_propertyEditor->addProperty("X", prim.data.value("x").toDouble());
+        m_propertyEditor->addProperty("Y", prim.data.value("y").toDouble());
+        m_propertyEditor->addProperty("Width", prim.data.value("width").toDouble());
+        m_propertyEditor->addProperty("Height", prim.data.value("height").toDouble());
+        m_propertyEditor->addProperty("Filled", prim.data.value("filled").toBool());
+        m_propertyEditor->addProperty("Line Width", prim.data.value("lineWidth").toDouble(0.1));
+    } else if (prim.type == FootprintPrimitive::Circle) {
+        m_propertyEditor->addProperty("Center X", prim.data.value("cx").toDouble());
+        m_propertyEditor->addProperty("Center Y", prim.data.value("cy").toDouble());
+        m_propertyEditor->addProperty("Radius", prim.data.value("radius").toDouble());
+        m_propertyEditor->addProperty("Filled", prim.data.value("filled").toBool());
+        m_propertyEditor->addProperty("Line Width", prim.data.value("lineWidth").toDouble(0.1));
+    } else if (prim.type == FootprintPrimitive::Arc) {
+        m_propertyEditor->addProperty("Center X", prim.data.value("cx").toDouble());
+        m_propertyEditor->addProperty("Center Y", prim.data.value("cy").toDouble());
+        m_propertyEditor->addProperty("Radius", prim.data.value("radius").toDouble());
+        m_propertyEditor->addProperty("Start Angle", prim.data.value("startAngle").toDouble());
+        m_propertyEditor->addProperty("Span Angle", prim.data.value("spanAngle").toDouble());
+        m_propertyEditor->addProperty("Line Width", prim.data.value("width").toDouble(0.1));
+    }
 }
 
 void FootprintEditor::onSelectionChanged() {
-    QList<QGraphicsItem*> selected = m_scene->selectedItems();
-    if (selected.size() != 1) {
-        m_propertyEditor->clear();
-        return;
+    if (m_rightTabWidget && !m_scene->selectedItems().isEmpty() && m_rightTabWidget->currentIndex() != 0) {
+        m_rightTabWidget->setCurrentIndex(0);
     }
-    
-    QGraphicsItem* item = selected.first();
-    int index = m_drawnItems.indexOf(item);
-    if (index == -1 || index >= m_footprint.primitives().size()) {
-        m_propertyEditor->clear();
-        return;
-    }
-    
-    m_propertyEditor->clear();
-    const FootprintPrimitive& prim = m_footprint.primitives()[index];
-    
-    QString layerEnum = "enum|Top Silkscreen,Top Courtyard,Top Fabrication,Top Copper,Bottom Copper,Bottom Silkscreen,Top Solder Mask,Bottom Solder Mask,Top Solder Paste,Bottom Solder Paste,Top Adhesive,Bottom Adhesive,Bottom Courtyard,Bottom Fabrication,Inner Copper 1,Inner Copper 2,Inner Copper 3,Inner Copper 4";
-    QString currentLayerName = "Top Silkscreen";
-    switch(prim.layer) {
-        case FootprintPrimitive::Top_Silkscreen:    currentLayerName = "Top Silkscreen"; break;
-        case FootprintPrimitive::Top_Courtyard:     currentLayerName = "Top Courtyard"; break;
-        case FootprintPrimitive::Top_Fabrication:   currentLayerName = "Top Fabrication"; break;
-        case FootprintPrimitive::Top_Copper:        currentLayerName = "Top Copper"; break;
-        case FootprintPrimitive::Bottom_Copper:     currentLayerName = "Bottom Copper"; break;
-        case FootprintPrimitive::Bottom_Silkscreen: currentLayerName = "Bottom Silkscreen"; break;
-        case FootprintPrimitive::Top_SolderMask:    currentLayerName = "Top Solder Mask"; break;
-        case FootprintPrimitive::Bottom_SolderMask: currentLayerName = "Bottom Solder Mask"; break;
-        case FootprintPrimitive::Top_SolderPaste:   currentLayerName = "Top Solder Paste"; break;
-        case FootprintPrimitive::Bottom_SolderPaste:currentLayerName = "Bottom Solder Paste"; break;
-        case FootprintPrimitive::Top_Adhesive:      currentLayerName = "Top Adhesive"; break;
-        case FootprintPrimitive::Bottom_Adhesive:   currentLayerName = "Bottom Adhesive"; break;
-        case FootprintPrimitive::Bottom_Courtyard:  currentLayerName = "Bottom Courtyard"; break;
-        case FootprintPrimitive::Bottom_Fabrication:currentLayerName = "Bottom Fabrication"; break;
-        case FootprintPrimitive::Inner_Copper_1:    currentLayerName = "Inner Copper 1"; break;
-        case FootprintPrimitive::Inner_Copper_2:    currentLayerName = "Inner Copper 2"; break;
-        case FootprintPrimitive::Inner_Copper_3:    currentLayerName = "Inner Copper 3"; break;
-        case FootprintPrimitive::Inner_Copper_4:    currentLayerName = "Inner Copper 4"; break;
-    }
-
-    m_propertyEditor->addProperty("Layer", currentLayerName, layerEnum);
-
-    if (prim.type == FootprintPrimitive::Pad) {
-        m_propertyEditor->addProperty("Number", prim.data["number"].toString());
-        m_propertyEditor->addProperty("Pad Type", prim.data["pad_type"].toString("SMD"), "enum|SMD,Through-Hole,Connector");
-        m_propertyEditor->addProperty("Shape", prim.data["shape"].toString(), "enum|Rect,Round,Oblong,Trapezoid,RoundedRect,Custom");
-        m_propertyEditor->addProperty("Width", prim.data["width"].toDouble());
-        m_propertyEditor->addProperty("Height", prim.data["height"].toDouble());
-        m_propertyEditor->addProperty("X", prim.data["x"].toDouble());
-        m_propertyEditor->addProperty("Y", prim.data["y"].toDouble());
-        m_propertyEditor->addProperty("Rotation", prim.data["rotation"].toDouble());
-        m_propertyEditor->addProperty("Corner Radius", prim.data["corner_radius"].toDouble());
-        m_propertyEditor->addProperty("Trapezoid Delta X", prim.data["trapezoid_delta_x"].toDouble());
-        
-        // Advanced Pad Properties
-        m_propertyEditor->addProperty("Drill Size", prim.data["drill_size"].toDouble());
-        m_propertyEditor->addProperty("Clearance Override", prim.data["net_clearance_override_enabled"].toBool());
-        m_propertyEditor->addProperty("Net Clearance", prim.data["net_clearance"].toDouble());
-        m_propertyEditor->addProperty("Thermal Relief", prim.data["thermal_relief_enabled"].toBool(true));
-        m_propertyEditor->addProperty("Thermal Spoke Width", prim.data["thermal_spoke_width"].toDouble(0.3));
-        m_propertyEditor->addProperty("Thermal Relief Gap", prim.data["thermal_relief_gap"].toDouble(0.25));
-        m_propertyEditor->addProperty("Thermal Spoke Count", prim.data["thermal_spoke_count"].toInt(4), "enum|1,2,3,4,5,6,7,8");
-        m_propertyEditor->addProperty("Thermal Spoke Angle", prim.data["thermal_spoke_angle_deg"].toDouble(0.0));
-        m_propertyEditor->addProperty("Jumper Group", prim.data["jumper_group"].toInt(0), "double");
-        m_propertyEditor->addProperty("Net Tie Group", prim.data["net_tie_group"].toInt(0), "double");
-        m_propertyEditor->addProperty("Solder Mask Exp", prim.data["solder_mask_expansion"].toDouble());
-        m_propertyEditor->addProperty("Paste Mask Exp", prim.data["paste_mask_expansion"].toDouble());
-        m_propertyEditor->addProperty("Plated", prim.data["plated"].toBool());
-    } else if (prim.type == FootprintPrimitive::Text) {
-        m_propertyEditor->addProperty("Text", prim.data["text"].toString());
-        m_propertyEditor->addProperty("Height", prim.data["height"].toDouble());
-        m_propertyEditor->addProperty("X", prim.data["x"].toDouble());
-    } else if (prim.type == FootprintPrimitive::Dimension) {
-        m_propertyEditor->addProperty("X1", prim.data["x1"].toDouble());
-        m_propertyEditor->addProperty("Y1", prim.data["y1"].toDouble());
-        m_propertyEditor->addProperty("X2", prim.data["x2"].toDouble());
-        m_propertyEditor->addProperty("Y2", prim.data["y2"].toDouble());
-    } else if (prim.type == FootprintPrimitive::Line) {
-        m_propertyEditor->addProperty("X1", prim.data["x1"].toDouble());
-        m_propertyEditor->addProperty("Y1", prim.data["y1"].toDouble());
-        m_propertyEditor->addProperty("X2", prim.data["x2"].toDouble());
-    }
+    updatePropertiesPanel();
 }
 
 void FootprintEditor::createLibraryBrowser() {
@@ -2358,8 +2791,65 @@ void FootprintEditor::onUndo() {
 void FootprintEditor::onRedo() {
     if (m_undoStack) m_undoStack->redo();
 }
-void FootprintEditor::updatePropertiesPanel() {}
-void FootprintEditor::updatePreview() {}
+void FootprintEditor::updatePropertiesPanel() {
+    if (!m_propertyEditor) return;
+
+    m_propertyEditor->beginUpdate();
+    const QList<QGraphicsItem*> selected = m_scene ? m_scene->selectedItems() : QList<QGraphicsItem*>();
+    if (selected.size() == 1) {
+        const int index = m_drawnItems.indexOf(selected.first());
+        if (index >= 0 && index < m_footprint.primitives().size()) {
+            populatePropertiesFor(index);
+            m_propertyEditor->endUpdate();
+            return;
+        }
+    }
+
+    m_propertyEditor->clear();
+    m_propertyEditor->addSectionHeader("Footprint Settings");
+    m_propertyEditor->addProperty("Footprint Name", m_nameEdit ? m_nameEdit->text() : QString());
+    m_propertyEditor->addProperty("Description", m_descriptionEdit ? m_descriptionEdit->text() : QString());
+    m_propertyEditor->addProperty("Category", m_categoryCombo ? m_categoryCombo->currentText() : QString(),
+                                  "enum|Through-Hole,SMD,Connectors,Discrete,IC");
+    m_propertyEditor->addProperty("Classification", m_classificationCombo ? m_classificationCombo->currentText() : QString(),
+                                  "enum|Unspecified,SMD,Through-Hole,Virtual");
+    m_propertyEditor->addProperty("Keywords", m_keywordsEdit ? m_keywordsEdit->text() : QString());
+    m_propertyEditor->addProperty("Exclude From BOM", m_excludeBOMCheck && m_excludeBOMCheck->isChecked());
+    m_propertyEditor->addProperty("Exclude From Position Files", m_excludePosCheck && m_excludePosCheck->isChecked());
+    m_propertyEditor->addProperty("DNP", m_dnpCheck && m_dnpCheck->isChecked());
+    m_propertyEditor->addProperty("Net Tie", m_netTieCheck && m_netTieCheck->isChecked());
+    m_propertyEditor->addSectionHeader("Geometry");
+    m_propertyEditor->addProperty("Primitive Count", m_footprint.primitives().size());
+    m_propertyEditor->addProperty("Bounds Width", m_footprint.boundingRect().width());
+    m_propertyEditor->addProperty("Bounds Height", m_footprint.boundingRect().height());
+    m_propertyEditor->endUpdate();
+}
+void FootprintEditor::updatePreview() {
+    if (!m_codePreview) return;
+
+    FootprintDefinition previewDef = m_footprint;
+    previewDef.setName(m_nameEdit ? m_nameEdit->text().trimmed() : previewDef.name());
+    previewDef.setDescription(m_descriptionEdit ? m_descriptionEdit->text().trimmed() : previewDef.description());
+    previewDef.setCategory(m_categoryCombo ? m_categoryCombo->currentText().trimmed() : previewDef.category());
+    previewDef.setClassification(m_classificationCombo ? m_classificationCombo->currentText().trimmed() : previewDef.classification());
+    previewDef.setExcludeFromBOM(m_excludeBOMCheck && m_excludeBOMCheck->isChecked());
+    previewDef.setExcludeFromPosFiles(m_excludePosCheck && m_excludePosCheck->isChecked());
+    previewDef.setDnp(m_dnpCheck && m_dnpCheck->isChecked());
+    previewDef.setIsNetTie(m_netTieCheck && m_netTieCheck->isChecked());
+
+    QStringList keywords;
+    if (m_keywordsEdit) {
+        for (const QString& token : m_keywordsEdit->text().split(',', Qt::SkipEmptyParts)) {
+            const QString trimmed = token.trimmed();
+            if (!trimmed.isEmpty()) keywords.append(trimmed);
+        }
+    }
+    previewDef.setKeywords(keywords);
+    previewDef.setModels3D(m_models3D);
+    if (!m_models3D.isEmpty()) previewDef.setModel3D(m_models3D.first());
+
+    m_codePreview->setPlainText(QJsonDocument(previewDef.toJson()).toJson(QJsonDocument::Indented));
+}
 void FootprintEditor::drawGrid() {}
 
 FootprintDefinition FootprintEditor::footprintDefinition() const {
@@ -2626,6 +3116,32 @@ void FootprintEditor::onPolarGridTool() {
 
 void FootprintEditor::onRunDRC() {
     QList<FootprintViolation> violations = FootprintEngine::checkFootprint(m_footprint);
+
+    if (m_ruleList) {
+        m_ruleList->clear();
+        if (violations.isEmpty()) {
+            QListWidgetItem* okItem = new QListWidgetItem("No issues found. Footprint passes the current rule checks.");
+            okItem->setForeground(QBrush(QColor("#34d399")));
+            m_ruleList->addItem(okItem);
+        } else {
+            for (const auto& v : violations) {
+                const bool isError = (v.severity == FootprintViolation::Error || v.severity == FootprintViolation::Critical);
+                QListWidgetItem* item = new QListWidgetItem(QString("%1 %2: %3")
+                                                            .arg(isError ? "ERROR" : "WARN")
+                                                            .arg(v.severityString(), v.message));
+                item->setForeground(QBrush(QColor(isError ? "#f87171" : "#fbbf24")));
+                m_ruleList->addItem(item);
+            }
+        }
+    }
+    if (m_bottomTabWidget && m_ruleList) {
+        m_bottomTabWidget->setCurrentWidget(m_ruleList);
+    }
+    if (m_statusLabel) {
+        m_statusLabel->setText(violations.isEmpty()
+                               ? "Rule check passed with no issues."
+                               : QString("Rule check found %1 issue(s).").arg(violations.size()));
+    }
 
     if (violations.isEmpty()) {
         QMessageBox::information(this, "Footprint Rule Check", "✅ No issues found. Your footprint follows all design rules.");

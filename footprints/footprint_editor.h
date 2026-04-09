@@ -18,6 +18,11 @@
 #include <QFormLayout>
 #include <QPointer>
 #include <QCheckBox>
+#include <QList>
+#include <QTabWidget>
+#include <QTextEdit>
+#include <QListWidget>
+#include <QGraphicsRectItem>
 #include "../ui/property_editor.h"
 #include "models/footprint_definition.h"
 
@@ -110,6 +115,9 @@ private slots:
     void onMeasure(QPointF p1, QPointF p2);
     void onWizardGenerate();
     void onContextMenu(QPoint pos);
+    void onRectResizeStarted(const QString& corner, QPointF scenePos);
+    void onRectResizeUpdated(QPointF scenePos);
+    void onRectResizeFinished(QPointF scenePos);
     
 private:
     void setupUI();
@@ -137,8 +145,16 @@ private:
     FootprintEditorView* m_view;
     QToolBar* m_toolbar;
     QToolBar* m_leftToolbar;
+    QWidget* m_bottomPanel = nullptr;
+    QWidget* m_leftNavigatorPanel = nullptr;
+    QWidget* m_rightPanel = nullptr;
     QDockWidget* m_propertiesDock;
     PropertyEditor* m_propertyEditor;
+    QTabWidget* m_leftTabWidget = nullptr;
+    QTabWidget* m_rightTabWidget = nullptr;
+    QTabWidget* m_bottomTabWidget = nullptr;
+    QTextEdit* m_codePreview = nullptr;
+    QListWidget* m_ruleList = nullptr;
     
     // Footprint info
     QLineEdit* m_nameEdit;
@@ -182,6 +198,15 @@ private:
     bool m_isDrawing;
     QPointF m_startPoint;
     QGraphicsItem* m_previewItem;
+    QList<QPointF> m_polyPoints;
+    QList<QGraphicsRectItem*> m_resizeHandles;
+    bool m_rectResizeSessionActive = false;
+    int m_rectResizePrimIdx = -1;
+    QString m_rectResizeCorner;
+    FootprintDefinition m_rectResizeOldDef;
+    QPointF m_rectResizeAnchor;
+    QPointF m_resizeLineOtherEnd;
+    QPointF m_resizeCircleCenter;
     
     // Pad settings
     QString m_currentPadShape;
@@ -210,6 +235,9 @@ private:
     QList<Footprint3DModel> m_models3D;
     
     QString getNextPadNumber() const;
+    void clearResizeHandles();
+    void updateResizeHandles();
+    void populatePropertiesFor(int index);
     
 private slots:
     void onLibSearchChanged(const QString& text);

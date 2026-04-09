@@ -307,6 +307,12 @@ void MainWindow::createMenuBar() {
     editMenu->addAction("&Paste", QKeySequence::Paste);
     editMenu->addSeparator();
     editMenu->addAction("&Delete", QKeySequence::Delete, this, &MainWindow::onDeleteSelection);
+    QAction* bringToFrontAct = editMenu->addAction("Bring To Front");
+    bringToFrontAct->setShortcut(QKeySequence("Ctrl+]"));
+    connect(bringToFrontAct, &QAction::triggered, this, &MainWindow::onBringToFront);
+    QAction* sendToBackAct = editMenu->addAction("Send To Back");
+    sendToBackAct->setShortcut(QKeySequence("Ctrl+["));
+    connect(sendToBackAct, &QAction::triggered, this, &MainWindow::onSendToBack);
     QAction* selectAllAct = editMenu->addAction("Select &All");
     selectAllAct->setShortcut(QKeySequence::SelectAll);
     connect(selectAllAct, &QAction::triggered, this, [this]() {

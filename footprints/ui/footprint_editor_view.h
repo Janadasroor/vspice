@@ -27,6 +27,9 @@ signals:
     void mouseMoved(QPointF scenePos);
     void lineDragged(QPointF start, QPointF end);
     void drawingFinished(QPointF start, QPointF end);
+    void rectResizeStarted(const QString& corner, QPointF scenePos);
+    void rectResizeUpdated(QPointF scenePos);
+    void rectResizeFinished(QPointF scenePos);
     void contextMenuRequested(QPoint pos);
     
 protected:
@@ -44,6 +47,7 @@ private:
     bool m_isPanning;
     bool m_isDrawing;
     bool m_isMeasuring;
+    bool m_rectResizeActive = false;
     QPoint m_lastPanPoint;
     QPointF m_drawStart;
     QPointF m_measureCurrent;

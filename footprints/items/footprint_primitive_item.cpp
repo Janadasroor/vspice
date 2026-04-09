@@ -14,7 +14,10 @@ FootprintPrimitiveItem::FootprintPrimitiveItem(const Model::FootprintPrimitive& 
 void FootprintPrimitiveItem::paintSelectionBorder(QPainter* painter, const QStyleOptionGraphicsItem* option) const {
     if (option->state & QStyle::State_Selected) {
         painter->save();
-        painter->setPen(QPen(QColor(0, 122, 204), 0.1, Qt::DashLine));
+        QColor selectionColor(56, 189, 248, 180);
+        QPen selectionPen(selectionColor, 0.0, Qt::DashLine);
+        selectionPen.setDashPattern({2.0, 2.0});
+        painter->setPen(selectionPen);
         painter->setBrush(Qt::NoBrush);
         painter->drawRect(boundingRect());
         painter->restore();

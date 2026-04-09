@@ -12,6 +12,7 @@
 #include <QColorDialog>
 #include <QMenu>
 #include <QLineEdit>
+#include <QIcon>
 
 class PCBLayerPanel : public QWidget {
     Q_OBJECT
@@ -39,8 +40,8 @@ private slots:
 private:
     void setupUI();
     void createLayerItem(int layerId, const QString& name, const QColor& color, bool visible, bool active);
-    QWidget* createColorButton(const QColor& color, int layerId);
-    QWidget* createVisibilityCheckbox(bool visible, int layerId);
+    void setExclusiveVisibleLayer(int layerId);
+    static QIcon createColorSwatchIcon(const QColor& color);
 
     QTreeWidget* m_layerTree;
     QLineEdit* m_searchEdit;

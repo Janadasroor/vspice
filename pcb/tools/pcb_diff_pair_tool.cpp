@@ -94,12 +94,22 @@ PCBDiffPairTool::PCBDiffPairTool(QObject* parent)
 }
 
 void PCBDiffPairTool::deactivate() {
+    if (m_isDiffRouting || m_isRouting) {
+        cancelTrace();
+    }
     cleanupDiffPreview();
-    PCBTraceTool::deactivate();
+    m_isDiffRouting = false;
+    m_lastP = QPointF();
+    m_lastN = QPointF();
+    PCBTool::deactivate();
 }
 
 void PCBDiffPairTool::mousePressEvent(QMouseEvent* event) {
-    if (!view() || event->button() != Qt::LeftButton) return;
+    if (!view()) return;
+    if (event->button() != Qt::LeftButton) {
+        event->ignore();
+        return;
+    }
     
     QPointF scenePos = view()->mapToScene(event->pos());
     QPointF snappedPos = view()->snapToGrid(scenePos);
@@ -155,6 +165,8 @@ void PCBDiffPairTool::keyPressEvent(QKeyEvent* event) {
         cancelTrace();
         cleanupDiffPreview();
         m_isDiffRouting = false;
+        m_lastP = QPointF();
+        m_lastN = QPointF();
         event->accept();
         return;
     }

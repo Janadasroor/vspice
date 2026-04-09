@@ -6,6 +6,8 @@
 #include <QLabel>
 #include <QMenu>
 #include <QColorDialog>
+#include <QPainter>
+#include <QSignalBlocker>
 
 PCBLayerPanel::PCBLayerPanel(QWidget* parent)
     : QWidget(parent)
@@ -73,8 +75,8 @@ void PCBLayerPanel::setupUI() {
     // Layer tree
     m_layerTree = new QTreeWidget();
     m_layerTree->setHeaderLabels({"", "Layer", ""});
-    m_layerTree->setColumnWidth(0, 30);  // Visibility checkbox
-    m_layerTree->setColumnWidth(2, 30);  // Color indicator
+    m_layerTree->setColumnWidth(0, 34);  // Visibility checkbox
+    m_layerTree->setColumnWidth(2, 34);  // Color swatch
     m_layerTree->header()->setStretchLastSection(false);
     m_layerTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_layerTree->setRootIsDecorated(false);
@@ -166,10 +168,24 @@ void PCBLayerPanel::setupUI() {
 }
 
 void PCBLayerPanel::refreshLayers() {
-    m_layerTree->clear();
-
     PCBLayerManager& mgr = PCBLayerManager::instance();
     int activeId = mgr.activeLayerId();
+    PCBLayer* activeLayer = mgr.activeLayer();
+    if (activeLayer && !activeLayer->isVisible()) {
+        setExclusiveVisibleLayer(activeId);
+        return;
+    }
+
+    int visibleCount = 0;
+    for (const PCBLayer& layer : mgr.layers()) {
+        if (layer.isVisible()) ++visibleCount;
+    }
+    if (visibleCount != 1 && activeLayer) {
+        setExclusiveVisibleLayer(activeId);
+        return;
+    }
+
+    m_layerTree->clear();
 
     for (const PCBLayer& layer : mgr.layers()) {
         createLayerItem(layer.id(), layer.name(), layer.color(), 
@@ -177,12 +193,10 @@ void PCBLayerPanel::refreshLayers() {
     }
 
     // Update active layer label
-    PCBLayer* active = mgr.activeLayer();
-    if (active) {
-        m_activeLayerLabel->setText(QString("⚡ Active: %1").arg(active->name()));
+    if (activeLayer) {
+        m_activeLayerLabel->setText(QString("⚡ Active: %1").arg(activeLayer->name()));
         
         // Update label color based on layer
-        QString colorStr = active->color().name();
         m_activeLayerLabel->setStyleSheet(QString(R"(
             QLabel#ActiveLayerLabel {
                 background-color: rgba(%1, %2, %3, 40);
@@ -193,7 +207,7 @@ void PCBLayerPanel::refreshLayers() {
                 font-size: 12px;
                 color: #f0f0f0;
             }
-        )").arg(active->color().red()).arg(active->color().green()).arg(active->color().blue()));
+        )").arg(activeLayer->color().red()).arg(activeLayer->color().green()).arg(activeLayer->color().blue()));
     }
 }
 
@@ -214,9 +228,9 @@ void PCBLayerPanel::createLayerItem(int layerId, const QString& name,
         item->setFont(1, font);
     }
 
-    // Color indicator - use colored text for simplicity
-    item->setText(2, "●");
-    item->setForeground(2, QBrush(color));
+    // Color indicator
+    item->setIcon(2, createColorSwatchIcon(color));
+    item->setText(2, "");
     item->setTextAlignment(2, Qt::AlignCenter);
 
     m_layerTree->addTopLevelItem(item);
@@ -230,9 +244,15 @@ void PCBLayerPanel::onLayerItemClicked(QTreeWidgetItem* item, int column) {
     int layerId = item->data(0, Qt::UserRole).toInt();
 
     if (column == 0) {
-        // Toggle visibility
         bool visible = item->checkState(0) == Qt::Checked;
-        PCBLayerManager::instance().setLayerVisible(layerId, visible);
+        if (visible) {
+            setExclusiveVisibleLayer(layerId);
+        } else {
+            // Keep the clicked layer visible so there is always a single active checkbox.
+            QSignalBlocker blocker(m_layerTree);
+            item->setCheckState(0, Qt::Checked);
+            setExclusiveVisibleLayer(layerId);
+        }
     } else {
         // Select as active layer
         PCBLayerManager::instance().setActiveLayer(layerId);
@@ -291,8 +311,12 @@ void PCBLayerPanel::onLayerContextMenu(const QPoint& pos) {
     menu.addSeparator();
 
     QAction* toggleVisibleAction = menu.addAction(layer->isVisible() ? "Hide Layer" : "Show Layer");
-    connect(toggleVisibleAction, &QAction::triggered, this, [layerId]() {
-        PCBLayerManager::instance().toggleLayerVisibility(layerId);
+    connect(toggleVisibleAction, &QAction::triggered, this, [this, layer, layerId]() {
+        if (layer->isVisible()) {
+            setExclusiveVisibleLayer(layerId);
+        } else {
+            setExclusiveVisibleLayer(layerId);
+        }
     });
 
     QAction* lockAction = menu.addAction(layer->isLocked() ? "Unlock Layer" : "Lock Layer");
@@ -315,17 +339,13 @@ void PCBLayerPanel::onLayerContextMenu(const QPoint& pos) {
 }
 
 void PCBLayerPanel::onShowAllLayers() {
-    for (const PCBLayer& layer : PCBLayerManager::instance().layers()) {
-        PCBLayerManager::instance().setLayerVisible(layer.id(), true);
-    }
-    refreshLayers();
+    PCBLayerManager& mgr = PCBLayerManager::instance();
+    setExclusiveVisibleLayer(mgr.activeLayerId());
 }
 
 void PCBLayerPanel::onHideAllLayers() {
-    for (const PCBLayer& layer : PCBLayerManager::instance().layers()) {
-        PCBLayerManager::instance().setLayerVisible(layer.id(), false);
-    }
-    refreshLayers();
+    PCBLayerManager& mgr = PCBLayerManager::instance();
+    setExclusiveVisibleLayer(mgr.activeLayerId());
 }
 
 void PCBLayerPanel::onToggleTopLayers() {
@@ -346,4 +366,25 @@ void PCBLayerPanel::onToggleBottomLayers() {
         }
     }
     refreshLayers();
+}
+
+void PCBLayerPanel::setExclusiveVisibleLayer(int layerId) {
+    PCBLayerManager& mgr = PCBLayerManager::instance();
+    for (const PCBLayer& layer : mgr.layers()) {
+        mgr.setLayerVisible(layer.id(), layer.id() == layerId);
+    }
+    refreshLayers();
+}
+
+QIcon PCBLayerPanel::createColorSwatchIcon(const QColor& color) {
+    QPixmap pixmap(12, 12);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QColor(24, 24, 27));
+    painter.setBrush(color);
+    painter.drawRect(1, 1, 10, 10);
+
+    return QIcon(pixmap);
 }
