@@ -71,6 +71,12 @@ class WaveformViewer : public QWidget {
     Q_OBJECT
 
 public:
+    enum class PlotQuality {
+        HighQuality = 0,
+        Balanced,
+        Fast
+    };
+
     WaveformViewer(QWidget *parent = nullptr);
     ~WaveformViewer();
     void loadCsv(const QString &fileName);
@@ -91,6 +97,8 @@ public:
     void preserveXRangeOnce(double minX, double maxX);
     static QString formatValue(double val, const QString &unit = "");
     void updatePlot(bool autoScale = false);
+    void setPlotQuality(PlotQuality quality);
+    PlotQuality plotQuality() const { return m_plotQuality; }
 
     struct SignalExport {
         QString name;
@@ -159,6 +167,7 @@ private:
     bool m_cursorsEnabled;
     bool m_blockUpdates = false;
     bool m_acMode = false;
+    PlotQuality m_plotQuality = PlotQuality::Balanced;
     double m_cursor1X, m_cursor2X;
     QString m_activeCursorSeries;
     
@@ -199,6 +208,10 @@ private:
     void showAnalysisForSeries(const QString &seriesName);
     void exportSignalsCsv();
     bool buildValueAtCursor(QString &outText) const;
+    void applyPlotQualityToViews();
+    bool shouldUseOpenGL() const;
+    bool shouldUseAntialiasing() const;
+    int visiblePointBudget(int viewportWidth) const;
     bool parseExpression(const QString &expression, QStringList &signalNames, QString &error);
     bool evaluateExpression(const QString &expression, const QStringList &signalNames, QVector<double> &time, QVector<double> &values);
     double evaluateSimpleMath(const QString &expr, bool &ok);

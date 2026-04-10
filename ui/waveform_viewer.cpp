@@ -445,6 +445,7 @@ WaveformViewer::WaveformViewer(QWidget *parent) : QWidget(parent),
     m_measureDialog(nullptr), m_cursorsEnabled(false), m_cursor1X(0), m_cursor2X(0) {
     setupUi();
     setupStyle();
+    applyPlotQualityToViews();
 }
 
 WaveformViewer::~WaveformViewer() {
@@ -717,6 +718,43 @@ void WaveformViewer::clearPane(int index) {
     }
 }
 
+void WaveformViewer::setPlotQuality(WaveformViewer::PlotQuality quality) {
+    if (m_plotQuality == quality) return;
+    m_plotQuality = quality;
+    applyPlotQualityToViews();
+    updatePlot(false);
+}
+
+void WaveformViewer::applyPlotQualityToViews() {
+    const bool antialias = shouldUseAntialiasing();
+    for (auto* pane : m_panes) {
+        if (pane && pane->view) {
+            pane->view->setRenderHint(QPainter::Antialiasing, antialias);
+        }
+    }
+}
+
+bool WaveformViewer::shouldUseOpenGL() const {
+    return m_plotQuality != PlotQuality::HighQuality;
+}
+
+bool WaveformViewer::shouldUseAntialiasing() const {
+    return m_plotQuality == PlotQuality::HighQuality;
+}
+
+int WaveformViewer::visiblePointBudget(int viewportWidth) const {
+    const int width = std::max(64, viewportWidth);
+    switch (m_plotQuality) {
+    case PlotQuality::HighQuality:
+        return width * 3;
+    case PlotQuality::Fast:
+        return width;
+    case PlotQuality::Balanced:
+    default:
+        return width * 2;
+    }
+}
+
 bool WaveformViewer::currentXRange(double& minX, double& maxX) const {
     if (m_panes.isEmpty()) return false;
     auto* axis = m_panes.first()->axisX;
@@ -903,6 +941,11 @@ void WaveformViewer::setSignalChecked(const QString& name, bool checked) {
             return;
         }
     }
+
+    auto* item = new QListWidgetItem(name, m_nodeList);
+    item->setFlags(item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsSelectable);
+    item->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
+    updateNodeItemStyle(item);
 }
 
 void WaveformViewer::removeSignal(const QString& name) {
@@ -1142,7 +1185,7 @@ void WaveformViewer::updatePlot(bool autoScale) {
                 }
                 
                 auto* series = new QLineSeries();
-                series->setUseOpenGL(true);
+                series->setUseOpenGL(shouldUseOpenGL());
                 series->setName(name);
                 series->setPen(QPen(data.customColor.isValid() ? data.customColor : item->foreground().color(), data.lineWidth, data.penStyle));
 
@@ -1150,7 +1193,7 @@ void WaveformViewer::updatePlot(bool autoScale) {
                 const double maxX = pane->axisX->max();
                 const int viewportWidth = pane->view ? std::max(64, pane->view->viewport()->width()) : 1200;
                 const QList<QPointF> visiblePoints = buildVisibleMinMaxSeries(
-                    data.time, data.values, minX, maxX, viewportWidth * 2, m_acMode);
+                    data.time, data.values, minX, maxX, visiblePointBudget(viewportWidth), m_acMode);
                 series->append(visiblePoints);
 
                 pane->chart->addSeries(series);
@@ -1299,7 +1342,7 @@ WaveformViewer::ChartPane* WaveformViewer::createPane(WaveformViewer::SignalType
     
     pane->view = new VioChartView(pane->chart);
     pane->view->setContentsMargins(0, 0, 0, 0);
-    pane->view->setRenderHint(QPainter::Antialiasing, false);
+    pane->view->setRenderHint(QPainter::Antialiasing, shouldUseAntialiasing());
     pane->view->setRubberBand(QChartView::RectangleRubberBand);
     pane->view->setInteractive(true);
     pane->view->setCursorsEnabled(m_cursorsEnabled);

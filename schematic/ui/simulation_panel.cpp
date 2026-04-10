@@ -428,6 +428,10 @@ void appendMeasurementLogBlock(QTextEdit* logOutput, const SimResults& results) 
 }
 }
 
+namespace {
+QPointer<SimulationPanel> g_liveStreamOwner;
+}
+
 SimulationPanel::SimulationPanel(QGraphicsScene* scene, NetManager* netManager, const QString& projectDir, QWidget* parent)
     : QWidget(parent), m_scene(scene), m_netManager(netManager), m_projectDir(projectDir), m_acceptRealTimeStream(false) {
     setupUI();
@@ -457,6 +461,9 @@ SimulationPanel::SimulationPanel(QGraphicsScene* scene, NetManager* netManager, 
 }
 
 SimulationPanel::~SimulationPanel() {
+    if (g_liveStreamOwner == this) {
+        g_liveStreamOwner.clear();
+    }
     SimManager::instance().stopRealTime();
     // Explicitly disconnect to avoid signals hitting a partially destroyed objective or another instance
     SimManager::instance().disconnect(this);
@@ -482,6 +489,20 @@ bool signalMatches(const QString& itemText, const QString& signalName) {
     }
 
     return false;
+}
+
+QString resolveLiveSignalName(const QListWidget* signalList, const QString& signalName) {
+    if (!signalList || signalName.isEmpty()) return signalName;
+
+    for (int i = 0; i < signalList->count(); ++i) {
+        const QListWidgetItem* item = signalList->item(i);
+        if (!item) continue;
+        if (signalMatches(item->text(), signalName)) {
+            return item->text();
+        }
+    }
+
+    return signalName;
 }
 } // namespace
 
@@ -1061,7 +1082,6 @@ void SimulationPanel::addProbe(const QString& signalName) {
                 for (size_t i = 0; i < w->yPhase.size(); ++i) phase.append(w->yPhase[i]);
                 m_waveformViewer->addSignal(matchedName, time, values, phase);
             } else {
-                qDebug() << "SimulationPanel: addProbe - Found waveform for" << matchedName << "Points:" << values.size();
                 m_waveformViewer->addSignal(matchedName, time, values);
             }
         };
@@ -2313,6 +2333,18 @@ void SimulationPanel::setupUI() {
     netTableLayout->addWidget(netTableLabel);
     m_autoNetTableCheck->setStyleSheet(checkboxStyle);
     netTableLayout->addWidget(m_autoNetTableCheck);
+    netTableLayout->addSpacing(12);
+    QLabel* plotQualityLabel = new QLabel("PLOT QUALITY:");
+    plotQualityLabel->setStyleSheet(QString("font-weight: bold; font-size: 10px; color: %1;").arg(accent));
+    netTableLayout->addWidget(plotQualityLabel);
+    m_plotQualityCombo = new QComboBox();
+    m_plotQualityCombo->addItems({"High Quality", "Balanced", "Fast Plotting"});
+    m_plotQualityCombo->setStyleSheet(inputStyle);
+    const QString savedPlotQuality = ConfigManager::instance().toolProperty(
+        "SimulationPanel", "plotQuality", "Balanced").toString();
+    const int savedPlotQualityIndex = m_plotQualityCombo->findText(savedPlotQuality);
+    m_plotQualityCombo->setCurrentIndex(savedPlotQualityIndex >= 0 ? savedPlotQualityIndex : 1);
+    netTableLayout->addWidget(m_plotQualityCombo);
     netTableLayout->addStretch(1);
     plotLayout->addWidget(netTableControls);
 
@@ -2344,7 +2376,6 @@ void SimulationPanel::setupUI() {
     m_chart->legend()->setLabelColor(theme ? theme->textColor() : QColor(Qt::white));
     
     m_plotView = new QChartView(m_chart);
-    m_plotView->setRenderHint(QPainter::Antialiasing, false);
     m_plotView->setStyleSheet(QString("background-color: %1; border: 1px solid %2;").arg(chartBg, borderColor));
 
     m_spectrumChart = new QChart();
@@ -2362,7 +2393,6 @@ void SimulationPanel::setupUI() {
     m_spectrumChart->legend()->setLabelColor(theme ? theme->textColor() : QColor(Qt::white));
 
     m_spectrumView = new QChartView(m_spectrumChart);
-    m_spectrumView->setRenderHint(QPainter::Antialiasing, false);
     m_spectrumView->setStyleSheet(m_plotView->styleSheet());
 
     m_spectrumTab = new QWidget();
@@ -2471,6 +2501,15 @@ void SimulationPanel::setupUI() {
             updateTransientNetTableOverlay(m_lastResults);
         }
     });
+    connect(m_plotQualityCombo, &QComboBox::currentTextChanged, this, [this](const QString& text) {
+        ConfigManager::instance().setToolProperty("SimulationPanel", "plotQuality", text);
+        applyPlotQuality();
+        if (m_hasLastResults) {
+            plotBuiltinResults(m_lastResults);
+        } else if (m_waveformViewer) {
+            m_waveformViewer->updatePlot(false);
+        }
+    });
     connect(m_param1, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
     connect(m_param2, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
     connect(m_param3, &QLineEdit::textChanged, this, &SimulationPanel::updateCommandDisplay);
@@ -2533,6 +2572,7 @@ void SimulationPanel::setupUI() {
 
     onGeneratorTypeChanged(m_generatorType->currentIndex());
     loadGeneratorLibrary();
+    applyPlotQuality();
     updateCommandDisplay();
 }
 
@@ -2924,9 +2964,12 @@ void SimulationPanel::onRunSimulation() {
     }
 
     const int idx = m_analysisType->currentIndex();
-    if (idx == 6) { // Real-time
+    if (idx == 7) { // Real-time
         int interval = m_param1->text().toInt();
         if (interval < 10) interval = 10;
+        m_isSimInitiator = true;
+        m_acceptRealTimeStream = true;
+        g_liveStreamOwner = this;
         SimManager::instance().runRealTime(m_scene, m_netManager, interval);
         return;
     }
@@ -2934,12 +2977,20 @@ void SimulationPanel::onRunSimulation() {
     // Update simulation command directive on the schematic
     updateSchematicDirective();
     m_isSimInitiator = true; 
+    m_acceptRealTimeStream = (idx == 0);
+    if (idx == 0) {
+        g_liveStreamOwner = this;
+    }
 
     m_buildInProgress = true;
     m_logOutput->append("Building netlist in background...");
 
     const double tStop = parseValue(m_param2->text(), 10e-3);
     const double tStep = parseValue(m_param1->text(), 1e-6);
+    const double fStart = parseValue(m_param1->text(), 10.0);
+    const double fStop = parseValue(m_param2->text(), 1e6);
+    const int pts = std::max(1, m_param3->text().trimmed().toInt());
+    const double rfZ0 = parseValue(m_param6->text().trimmed().isEmpty() ? "50" : m_param6->text().trimmed(), 50.0);
     const QString fStartText = m_param1->text().trimmed();
     const QString fStopText = m_param2->text().trimmed();
     const QString ptsText = m_param3->text().trimmed();
@@ -2953,7 +3004,7 @@ void SimulationPanel::onRunSimulation() {
     const QJsonObject snapshot = SchematicFileIO::serializeSceneToJson(m_scene, "A4");
 
     auto* watcher = new QFutureWatcher<SimBuildResult>(this);
-    connect(watcher, &QFutureWatcher<SimBuildResult>::finished, this, [this, watcher, idx]() {
+    connect(watcher, &QFutureWatcher<SimBuildResult>::finished, this, [this, watcher, idx, tStop, tStep, fStart, fStop, pts, steadyEnabled, steadyTolText, steadyDelayText, rfPort1Text, rfPort2Text, rfZ0]() {
         const SimBuildResult result = watcher->result();
         watcher->deleteLater();
         m_buildInProgress = false;
@@ -2985,7 +3036,6 @@ void SimulationPanel::onRunSimulation() {
         // Initialize real-time series tracking if needed
         m_realTimeSeries.clear();
         m_realTimePointCounter = 0;
-        m_acceptRealTimeStream = (idx == 0);
 
         if (m_logOutput) {
             m_logOutput->append("\n--- Generated Netlist ---");
@@ -2993,7 +3043,51 @@ void SimulationPanel::onRunSimulation() {
             m_logOutput->append("-------------------------\n");
         }
 
-        SimManager::instance().runNetlistText(result.netlistText);
+        SimAnalysisConfig config;
+        switch (idx) {
+        case 0:
+            config.type = SimAnalysisType::Transient;
+            config.tStop = tStop;
+            config.tStep = tStep;
+            config.transientStopAtSteadyState = steadyEnabled;
+            config.transientSteadyStateTol = steadyTolText.isEmpty() ? 0.0 : parseValue(steadyTolText, 0.0);
+            config.transientSteadyStateDelay = steadyDelayText.isEmpty() ? 0.0 : parseValue(steadyDelayText, 0.0);
+            break;
+        case 1:
+            config.type = SimAnalysisType::OP;
+            break;
+        case 2:
+            config.type = SimAnalysisType::AC;
+            config.fStart = fStart;
+            config.fStop = fStop;
+            config.fPoints = pts;
+            break;
+        case 3:
+            config.type = SimAnalysisType::SParameter;
+            config.fStart = fStart;
+            config.fStop = fStop;
+            config.fPoints = pts;
+            config.rfPort1Source = rfPort1Text.toStdString();
+            config.rfPort2Node = rfPort2Text.toStdString();
+            config.rfZ0 = rfZ0;
+            break;
+        case 4:
+            config.type = SimAnalysisType::MonteCarlo;
+            break;
+        case 5:
+            config.type = SimAnalysisType::ParametricSweep;
+            break;
+        case 6:
+            config.type = SimAnalysisType::Sensitivity;
+            break;
+        default:
+            config.type = SimAnalysisType::Transient;
+            config.tStop = tStop;
+            config.tStep = tStep;
+            break;
+        }
+
+        SimManager::instance().runNgspiceSimulation(result.netlistText, config);
     });
 
     watcher->setFuture(QtConcurrent::run([snapshot, projectDir, idx, tStop, tStep, fStartText, fStopText, ptsText, rfPort1Text, rfPort2Text, rfZ0Text, steadyEnabled, steadyTolText, steadyDelayText]() {
@@ -3182,6 +3276,9 @@ QString SimulationPanel::generateSpiceNetlist() {
 
 void SimulationPanel::onSimResultsReady(const SimResults& results) {
     m_acceptRealTimeStream = false; // Stop accepting real-time data immediately
+    if (g_liveStreamOwner == this) {
+        g_liveStreamOwner.clear();
+    }
     m_isSimInitiator = false;      // This panel was the initiator, but the simulation is now done.
     if (!results.isSchemaCompatible()) {
         m_logOutput->append(QString("Unsupported simulator results schema v%1 (expected v%2).")
@@ -3432,15 +3529,62 @@ bool SimulationPanel::shouldBuildSpectrumChart() const {
     return !m_viewTabs || m_viewTabs->currentWidget() == m_spectrumTab;
 }
 
+void SimulationPanel::applyPlotQuality() {
+    const bool antialias = shouldUseAntialiasing();
+    if (m_plotView) {
+        m_plotView->setRenderHint(QPainter::Antialiasing, antialias);
+    }
+    if (m_spectrumView) {
+        m_spectrumView->setRenderHint(QPainter::Antialiasing, antialias);
+    }
+    if (m_waveformViewer) {
+        m_waveformViewer->setPlotQuality(selectedPlotQuality());
+    }
+}
+
+WaveformViewer::PlotQuality SimulationPanel::selectedPlotQuality() const {
+    if (!m_plotQualityCombo) return WaveformViewer::PlotQuality::Balanced;
+    switch (m_plotQualityCombo->currentIndex()) {
+    case 0:
+        return WaveformViewer::PlotQuality::HighQuality;
+    case 2:
+        return WaveformViewer::PlotQuality::Fast;
+    case 1:
+    default:
+        return WaveformViewer::PlotQuality::Balanced;
+    }
+}
+
+bool SimulationPanel::shouldUseOpenGLRendering() const {
+    return selectedPlotQuality() != WaveformViewer::PlotQuality::HighQuality;
+}
+
+bool SimulationPanel::shouldUseAntialiasing() const {
+    return selectedPlotQuality() == WaveformViewer::PlotQuality::HighQuality;
+}
+
+int SimulationPanel::standardChartPointBudget() const {
+    switch (selectedPlotQuality()) {
+    case WaveformViewer::PlotQuality::HighQuality:
+        return 7000;
+    case WaveformViewer::PlotQuality::Fast:
+        return 2000;
+    case WaveformViewer::PlotQuality::Balanced:
+    default:
+        return 4000;
+    }
+}
+
 
 
 
 void SimulationPanel::onRealTimeDataBatchReceived(const std::vector<double>& times, const std::vector<std::vector<double>>& values, const QStringList& names) {
+    if (g_liveStreamOwner && g_liveStreamOwner != this) {
+        return;
+    }
     if (times.empty()) return;
-    if (!m_isSimInitiator) return;
-    if (!m_acceptRealTimeStream) return;
     if (!m_waveformViewer) return;
-    if (times.empty() || values.empty() || names.empty()) return;
+    if (values.empty() || names.empty()) return;
 
     // 1. Update Probes / Schematic Labels (Live)
     // We only use the VERY LAST point for the schematic probes to save CPU.
@@ -3471,7 +3615,8 @@ void SimulationPanel::onRealTimeDataBatchReceived(const std::vector<double>& tim
     for (int i = 0; i < names.size(); ++i) {
         if (i >= static_cast<int>(values[0].size())) break;
         
-        QString name = names[i];
+        const QString rawName = names[i];
+        const QString name = resolveLiveSignalName(m_signalList, rawName);
         std::vector<double> signalValues;
         signalValues.reserve(times.size());
         for (const auto& row : values) {
@@ -3480,6 +3625,16 @@ void SimulationPanel::onRealTimeDataBatchReceived(const std::vector<double>& tim
         }
 
         m_waveformViewer->appendPoints(name, times, signalValues);
+        if (m_waveformViewer && m_signalList) {
+            for (int row = 0; row < m_signalList->count(); ++row) {
+                QListWidgetItem* item = m_signalList->item(row);
+                if (!item) continue;
+                if (signalMatches(item->text(), rawName) || signalMatches(item->text(), name)) {
+                    m_waveformViewer->setSignalChecked(name, item->checkState() == Qt::Checked);
+                    break;
+                }
+            }
+        }
 
         // Update preview chart
         if (m_chart && !m_realTimeSeries.isEmpty()) {
@@ -3558,6 +3713,8 @@ void SimulationPanel::onTimelineValueChanged(int value) {
 void SimulationPanel::plotBuiltinResults(const SimResults& results) {
     const bool buildStandardChart = shouldBuildStandardChart();
     const bool buildSpectrumChart = shouldBuildSpectrumChart();
+    const int currentAnalysisIndex = m_analysisType ? m_analysisType->currentIndex() : -1;
+    const bool restoreRealTimeStream = m_isSimInitiator && (currentAnalysisIndex == 0 || currentAnalysisIndex == 7);
 
     // Disable real-time data while clearing to avoid race conditions
     m_acceptRealTimeStream = false;
@@ -3640,6 +3797,7 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
             }
         }
         m_signalList->blockSignals(false);
+        m_acceptRealTimeStream = restoreRealTimeStream;
         return;
     }
 
@@ -3772,14 +3930,14 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
         const QColor waveColor = colors[colorIdx % colors.size()];
 
         QLineSeries* series = new QLineSeries();
-        series->setUseOpenGL(true);
+        series->setUseOpenGL(shouldUseOpenGLRendering());
         series->setName(waveName);
         series->setPen(QPen(waveColor, 1.5));
         
         QLineSeries* phaseSeries = nullptr;
         if (analysisIdx == 2 && !wave.yPhase.empty()) {
             phaseSeries = new QLineSeries();
-            phaseSeries->setUseOpenGL(true);
+            phaseSeries->setUseOpenGL(shouldUseOpenGLRendering());
             phaseSeries->setName(series->name() + " (Phase)");
             QPen phasePen = series->pen();
             phasePen.setStyle(Qt::DashLine);
@@ -3787,7 +3945,7 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
             phaseSeries->setPen(phasePen);
         }
 
-        const int targetPoints = 4000;
+        const int targetPoints = standardChartPointBudget();
         
         if (analysisIdx == 2) {
             // AC Magnitude in dB
@@ -3910,7 +4068,7 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
             for(int i=0; i<nfft; ++i) complexIn[i] = resampled[i];
             auto complexOut = SimMath::fft(complexIn);
             QLineSeries* specSeries = new QLineSeries();
-            specSeries->setUseOpenGL(true);
+            specSeries->setUseOpenGL(shouldUseOpenGLRendering());
             specSeries->setName(waveName);
             specSeries->setPen(QPen(waveColor, 1.5));
             double sampleRate = 1.0 / ( (wave.xData.back() - wave.xData.front()) / (wave.xData.size()-1) );
@@ -4018,6 +4176,7 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
     Q_EMIT resultsReady(results);
 
     m_signalList->blockSignals(false);
+    m_acceptRealTimeStream = restoreRealTimeStream;
     m_isSimInitiator = false; // Just in case, though onSimResultsReady handles it
     m_realTimeSeries.clear();
 }

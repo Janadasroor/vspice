@@ -89,6 +89,11 @@ void SimulationManager::runSimulation(const QString& netlist, SimControl* contro
     }
     m_streamingCounter = 0;
     m_skipFactor = 1;
+    if (control) {
+        m_bufferTimer->start();
+    } else {
+        m_bufferTimer->stop();
+    }
 
     QString error;
     const bool loaded = loadNetlistInternal(netlist, true, &error);
@@ -443,6 +448,8 @@ int SimulationManager::cbControlledExit(int status, bool immediate, bool quit, i
 int SimulationManager::cbSendData(pvecvaluesall vecArray, int numStructs, int id, void* userData) {
     SimulationManager* self = static_cast<SimulationManager*>(userData);
     if (!self || !vecArray) return 0;
+    Q_UNUSED(numStructs);
+    Q_UNUSED(id);
 
     // Check for user abort
     SimControl* ctrl = nullptr;
@@ -456,12 +463,43 @@ int SimulationManager::cbSendData(pvecvaluesall vecArray, int numStructs, int id
         return 0;
     }
 
+    if (!ctrl || vecArray->veccount <= 1 || !vecArray->vecsa) {
+        return 0;
+    }
 
-    Q_UNUSED(numStructs);
-    Q_UNUSED(vecArray);
-    // Standard schematic runs rely on the post-run RAW file. Avoid touching
-    // ngspice's live data structures here; that callback path has been unstable
-    // and is not required for correctness.
+    if (++self->m_streamingCounter % self->m_skipFactor != 0) {
+        return 0;
+    }
+
+    std::vector<double> sampleValues;
+    sampleValues.reserve(static_cast<size_t>(vecArray->veccount - 1));
+    double timeValue = 0.0;
+    bool haveScale = false;
+
+    for (int i = 0; i < vecArray->veccount; ++i) {
+        pvecvalues value = vecArray->vecsa[i];
+        if (!value) continue;
+        if (value->is_scale && !haveScale) {
+            timeValue = value->creal;
+            haveScale = true;
+            continue;
+        }
+        sampleValues.push_back(value->creal);
+    }
+
+    if (!haveScale || sampleValues.empty()) {
+        return 0;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(self->m_bufferMutex);
+        self->m_simBuffer.push_back({timeValue, std::move(sampleValues)});
+        if (self->m_simBuffer.size() > 2000) {
+            self->m_simBuffer.erase(self->m_simBuffer.begin(),
+                                    self->m_simBuffer.begin() + static_cast<std::ptrdiff_t>(self->m_simBuffer.size() - 2000));
+        }
+    }
+
     return 0;
 }
 

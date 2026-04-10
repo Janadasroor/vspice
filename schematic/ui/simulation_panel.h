@@ -181,6 +181,11 @@ private:
     void rebuildSteppedMeasurementPlot(const SimResults& results);
     bool shouldBuildStandardChart() const;
     bool shouldBuildSpectrumChart() const;
+    void applyPlotQuality();
+    WaveformViewer::PlotQuality selectedPlotQuality() const;
+    bool shouldUseOpenGLRendering() const;
+    bool shouldUseAntialiasing() const;
+    int standardChartPointBudget() const;
 
     QGraphicsScene* m_scene = nullptr;
     SchematicEditor* m_editor = nullptr;
@@ -243,6 +248,7 @@ private:
     QChart* m_spectrumChart = nullptr;
     QTabWidget* m_viewTabs = nullptr;
     QWidget* m_spectrumTab = nullptr;
+    QComboBox* m_plotQualityCombo = nullptr;
     QComboBox* m_steppedMeasSeriesCombo = nullptr;
     QComboBox* m_steppedMeasAxisCombo = nullptr;
     QString m_selectedSteppedMeasurement;

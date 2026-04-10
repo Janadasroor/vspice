@@ -709,6 +709,28 @@ SimManager::SimManager(QObject* parent) : QObject(parent) {
     connect(this, &SimManager::generationFailed, this, [this](const QString& error) {
         Q_EMIT errorOccurred(error);
     });
+
+    auto& liveSim = SimulationManager::instance();
+    connect(&liveSim, &SimulationManager::outputReceived, this, [this](const QString& text) {
+        Q_EMIT logMessage(text);
+    });
+    connect(&liveSim, &SimulationManager::errorOccurred, this, [this](const QString& error) {
+        Q_EMIT logMessage(error);
+        Q_EMIT errorOccurred(error);
+    });
+    connect(&liveSim, &SimulationManager::realTimeDataBatchReceived, this, [this](const std::vector<double>& times,
+                                                                                  const std::vector<std::vector<double>>& values,
+                                                                                  const QStringList& names) {
+        if (m_lastConfig.type == SimAnalysisType::RealTime || m_lastConfig.type == SimAnalysisType::Transient) {
+            Q_EMIT realTimeDataBatchReceived(times, values, names);
+        }
+    });
+    connect(&liveSim, &SimulationManager::rawResultsReady, this, [this](const QString& rawPath) {
+        if ((m_lastConfig.type == SimAnalysisType::RealTime || m_lastConfig.type == SimAnalysisType::Transient) &&
+            m_control && !m_ngspiceProcess) {
+            parseRawResultsFile(rawPath, m_activeNetlistText, SimAnalysisType::Transient);
+        }
+    });
     
     m_resultsPending = false;
 }
@@ -817,6 +839,7 @@ QString SimManager::generateNetlist(QGraphicsScene* scene, NetManager* netMgr, c
     SpiceNetlistGenerator::SimulationParams params;
     switch (config.type) {
         case SimAnalysisType::Transient:
+        case SimAnalysisType::RealTime:
             params.type = SpiceNetlistGenerator::Transient;
             params.start = "0";
             params.stop = QString::number(config.tStop);
@@ -885,6 +908,15 @@ void SimManager::runNgspiceSimulation(const QString& netlist, const SimAnalysisC
     if (!m_pendingStepRuns.isEmpty()) {
         Q_EMIT logMessage(QString("Running LTspice .step sweep emulation with %1 run(s).").arg(m_pendingStepRuns.size()));
         startNextStepSweepRun();
+        return;
+    }
+
+    if (config.type == SimAnalysisType::Transient) {
+        m_activeNetlistText = netlist;
+        m_control = new SimControl();
+        if (!startSharedSimulation(netlist, "Starting ngspice shared transient simulation...")) {
+            return;
+        }
         return;
     }
 
@@ -1123,21 +1155,62 @@ void SimManager::cleanupSimulation() {
     if (m_pendingStepRuns.isEmpty()) {
         m_activeStepLabel.clear();
     }
+    if (!m_sharedNetlistPath.isEmpty()) {
+        QFile::remove(m_sharedNetlistPath);
+        m_sharedNetlistPath.clear();
+    }
 }
 
 void SimManager::runRealTime(QGraphicsScene* scene, NetManager* netMgr, int intervalMs) {
-    // Stub for now or implement via repeated OP
-    Q_EMIT logMessage("Real-time simulation via Ngspice not yet optimized. Running single-shot OP.");
-    runDCOP(scene, netMgr);
+    if (m_control || m_ngspiceProcess) {
+        Q_EMIT logMessage("A simulation is already running.");
+        return;
+    }
+
+    SimAnalysisConfig config;
+    config.type = SimAnalysisType::RealTime;
+    config.rtIntervalMs = std::max(10, intervalMs);
+    config.rtTimeStep = std::max(1e-6, static_cast<double>(config.rtIntervalMs) / 1000.0);
+    config.tStep = std::max(1e-6, config.rtTimeStep / 10.0);
+    config.tStop = std::max(config.rtTimeStep * 200.0, 0.1);
+
+    QString netlist = generateNetlist(scene, netMgr, config);
+    if (netlist.isEmpty() || netlist.startsWith("* Missing scene")) {
+        const QString msg = "Real-time netlist generation failed.";
+        Q_EMIT logMessage(msg);
+        Q_EMIT errorOccurred(msg);
+        Q_EMIT simulationFinished(SimResults());
+        return;
+    }
+
+    m_lastConfig = config;
+    m_activeNetlistText = netlist;
+    m_rtScene = scene;
+    m_rtNetMgr = netMgr;
+    m_rtPending = false;
+    m_rtCurrentTime = 0.0;
+    m_pendingStepRuns.clear();
+    m_activeStepLabel.clear();
+    m_completedStepRuns = 0;
+    m_stepSweepResults = SimResults();
+
+    m_control = new SimControl();
+    Q_EMIT simulationStarted();
+    if (!startSharedSimulation(netlist, QString("Starting real-time transient stream (%1 ms update interval)...").arg(config.rtIntervalMs))) {
+        return;
+    }
 }
 
 void SimManager::stopRealTime() {
+    SimulationManager::instance().stopSimulation();
     if (m_rtTimer) {
         m_rtTimer->stop();
         delete m_rtTimer;
         m_rtTimer = nullptr;
     }
     m_rtScene = nullptr;
+    m_rtNetMgr = nullptr;
+    cleanupSimulation();
 }
 
 void SimManager::onInteractiveStateChanged() {
@@ -1146,6 +1219,67 @@ void SimManager::onInteractiveStateChanged() {
 
 void SimManager::onRealTimeTick() {
     // Real-time tick handling
+}
+
+bool SimManager::startSharedSimulation(const QString& netlistContent, const QString& startMessage) {
+    auto* tempFile = new QTemporaryFile(this);
+    tempFile->setAutoRemove(false);
+    if (!tempFile->open()) {
+        const QString msg = "Failed to create temporary shared ngspice netlist file.";
+        Q_EMIT logMessage(msg);
+        Q_EMIT errorOccurred(msg);
+        tempFile->deleteLater();
+        cleanupSimulation();
+        Q_EMIT simulationFinished(SimResults());
+        return false;
+    }
+
+    QTextStream out(tempFile);
+    const QString activeNetlist = stripNetStatementsFromNetlist(stripMeasStatementsFromNetlist(netlistContent));
+    out << activeNetlist;
+    out.flush();
+    tempFile->close();
+
+    m_sharedNetlistPath = tempFile->fileName();
+    tempFile->deleteLater();
+
+    Q_EMIT logMessage(startMessage);
+    SimulationManager::instance().runSimulation(m_sharedNetlistPath, m_control);
+    return true;
+}
+
+void SimManager::parseRawResultsFile(const QString& path, const QString& netlistText, SimAnalysisType analysisType) {
+    m_resultsPending = true;
+    auto* watcher = new QFutureWatcher<std::pair<bool, SimResults>>(this);
+    connect(watcher, &QFutureWatcher<std::pair<bool, SimResults>>::finished, this, [this, watcher]() {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        m_resultsPending = false;
+
+        if (result.first) {
+            Q_EMIT simulationFinished(result.second);
+        } else {
+            const QString err = "Ngspice: Data parse error or empty real-time results.";
+            Q_EMIT logMessage(err);
+            Q_EMIT errorOccurred(err);
+            Q_EMIT simulationFinished(SimResults());
+        }
+
+        cleanupSimulation();
+    });
+
+    watcher->setFuture(QtConcurrent::run([path, netlistText, analysisType]() {
+        RawData rd;
+        QString err;
+        if (RawDataParser::loadRawAscii(path, &rd, &err)) {
+            SimResults simResults = rd.toSimResults();
+            evaluateMeasStatementsIntoResults(netlistText, analysisType, &simResults);
+            evaluateNetStatementsIntoResults(netlistText, analysisType, &simResults);
+            return std::make_pair(true, simResults);
+        }
+        qDebug() << "RawDataParser error:" << err;
+        return std::make_pair(false, SimResults());
+    }));
 }
 
 QStringList SimManager::preflightCheck(QGraphicsScene* scene, NetManager* netMgr, SimNetlist& outNetlist) {

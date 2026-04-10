@@ -67,6 +67,8 @@ private Q_SLOTS:
 
 private:
     explicit SimManager(QObject* parent = nullptr);
+    void parseRawResultsFile(const QString& path, const QString& netlistText, SimAnalysisType analysisType);
+    bool startSharedSimulation(const QString& netlistContent, const QString& logMessage);
     void startNgspiceWithNetlist(const QString& netlistContent);
     void startNextStepSweepRun();
     void mergeStepSweepResults(const SimResults& runResults, const QString& stepLabel, int runIndex);
@@ -80,6 +82,7 @@ private:
     SimResults m_stepSweepResults;
     QString m_activeStepLabel;
     QString m_activeNetlistText;
+    QString m_sharedNetlistPath;
     int m_completedStepRuns = 0;
     class QProcess* m_ngspiceProcess = nullptr;
 
