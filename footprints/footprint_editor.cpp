@@ -60,9 +60,9 @@ using namespace Flux::Analysis;
 namespace {
 constexpr const char* kFootprintEditorStateKey = "FootprintEditor";
 
-QIcon getThemeIcon(const QString& path) {
+QIcon getThemeIcon(const QString& path, bool tinted = true) {
     QIcon icon(path);
-    if (!ThemeManager::theme()) {
+    if (!tinted || !ThemeManager::theme()) {
         return icon;
     }
 
@@ -71,12 +71,12 @@ QIcon getThemeIcon(const QString& path) {
         return icon;
     }
 
-    QPixmap tinted = pixmap;
-    QPainter painter(&tinted);
+    QPixmap result = pixmap;
+    QPainter painter(&result);
     painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-    painter.fillRect(tinted.rect(), ThemeManager::theme()->textColor());
+    painter.fillRect(result.rect(), ThemeManager::theme()->textColor());
     painter.end();
-    return QIcon(tinted);
+    return QIcon(result);
 }
 
 QPainterPath makeTrapezoidPath(qreal w, qreal h, qreal deltaX) {
@@ -1443,10 +1443,33 @@ void FootprintEditor::createInfoPanel() {
 void FootprintEditor::createToolBar() {
     // Top ToolBar (Settings, Utilities)
     m_toolbar = new QToolBar("Tools", this);
+    m_toolbar->setObjectName("TopToolbar");
     m_toolbar->setIconSize(QSize(20, 20));
     m_toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_toolbar->setMovable(false);
     m_toolbar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    
+    m_toolbar->setStyleSheet(
+        "QToolBar#TopToolbar {"
+        "  background: #252526;"
+        "  border: 1px solid #3e3e42;"
+        "  border-radius: 8px;"
+        "  margin: 5px;"
+        "  padding: 2px;"
+        "}"
+        "QToolBar#TopToolbar QToolButton {"
+        "  border-radius: 4px;"
+        "  padding: 4px;"
+        "  margin: 1px;"
+        "  background: transparent;"
+        "}"
+        "QToolBar#TopToolbar QToolButton:hover {"
+        "  background: #3e3e42;"
+        "}"
+        "QToolBar#TopToolbar QToolButton:pressed {"
+        "  background: #4e4e52;"
+        "}"
+    );
     
     // Left ToolBar (Drawing Tools)
     m_leftToolbar = new QToolBar("Drawing", this);
@@ -1511,22 +1534,35 @@ void FootprintEditor::createToolBar() {
     m_toolbar->addSeparator();
 
     // Alignment Tools
+    QToolButton* alignBtn = new QToolButton(this);
+    alignBtn->setIcon(getThemeIcon(":/icons/tool_duplicate.svg")); // Using 'Duplicate' icon as a conceptual group for alignment
+    alignBtn->setToolTip("Alignment & Distribution Tools");
+    alignBtn->setPopupMode(QToolButton::InstantPopup);
+    alignBtn->setAutoRaise(true);
+
+    QMenu* alignMenu = new QMenu(alignBtn);
     auto addAlignAct = [&](const QString& text, const QString& tooltip, void (FootprintEditor::*member)()) {
-        QAction* act = m_toolbar->addAction(text);
+        QAction* act = alignMenu->addAction(text, this, member);
         act->setToolTip(tooltip);
         connect(act, &QAction::triggered, this, member);
     };
 
-    addAlignAct("←", "Align Left",   &FootprintEditor::onAlignLeft);
-    addAlignAct("→", "Align Right",  &FootprintEditor::onAlignRight);
-    addAlignAct("↑", "Align Top",    &FootprintEditor::onAlignTop);
-    addAlignAct("↓", "Align Bottom", &FootprintEditor::onAlignBottom);
-    addAlignAct("⬌", "Center H",     &FootprintEditor::onAlignCenterH);
-    addAlignAct("⬍", "Center V",     &FootprintEditor::onAlignCenterV);
-    addAlignAct("⇥", "Distribute H", &FootprintEditor::onDistributeH);
-    addAlignAct("⤒", "Distribute V", &FootprintEditor::onDistributeV);
-    addAlignAct("↔", "Match Spacing",&FootprintEditor::onMatchSpacing);
-    addAlignAct("move", "Move Exactly", &FootprintEditor::onMoveExactly);
+    addAlignAct("←  Align Left",   "Align Left",   &FootprintEditor::onAlignLeft);
+    addAlignAct("→  Align Right",  "Align Right",  &FootprintEditor::onAlignRight);
+    addAlignAct("↑  Align Top",    "Align Top",    &FootprintEditor::onAlignTop);
+    addAlignAct("↓  Align Bottom", "Align Bottom", &FootprintEditor::onAlignBottom);
+    alignMenu->addSeparator();
+    addAlignAct("⬌  Center H",     "Center H",     &FootprintEditor::onAlignCenterH);
+    addAlignAct("⬍  Center V",     "Center V",     &FootprintEditor::onAlignCenterV);
+    alignMenu->addSeparator();
+    addAlignAct("⇥  Distribute H", "Distribute H", &FootprintEditor::onDistributeH);
+    addAlignAct("⤒  Distribute V", "Distribute V", &FootprintEditor::onDistributeV);
+    addAlignAct("↔  Match Spacing","Match Spacing",&FootprintEditor::onMatchSpacing);
+    alignMenu->addSeparator();
+    addAlignAct(" Arrows  Move Exactly", "Move Exactly", &FootprintEditor::onMoveExactly);
+
+    alignBtn->setMenu(alignMenu);
+    m_toolbar->addWidget(alignBtn);
 
     m_toolbar->addSeparator();
 
@@ -1568,7 +1604,7 @@ void FootprintEditor::createToolBar() {
     m_padNumberStepSpin->setToolTip("Pad number increment for repeated placement");
 
     m_padSettingsButton = new QToolButton(this);
-    m_padSettingsButton->setIcon(getThemeIcon(":/icons/tool_pad_settings.svg"));
+    m_padSettingsButton->setIcon(getThemeIcon(":/icons/tool_pad_settings.png", false));
     m_padSettingsButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_padSettingsButton->setPopupMode(QToolButton::DelayedPopup);
     m_padSettingsButton->setToolTip("Pad settings");
@@ -1602,7 +1638,7 @@ void FootprintEditor::createToolBar() {
     QAction* zoomFit = m_toolbar->addAction(getThemeIcon(":/icons/view_fit.svg"), "Zoom Fit");
     connect(zoomFit, &QAction::triggered, this, &FootprintEditor::onZoomFit);
     
-    QAction* wizardAction = m_toolbar->addAction("🔧 Wizard");
+    QAction* wizardAction = m_toolbar->addAction(getThemeIcon(":/icons/tool_wizard.png", false), "Wizard");
     wizardAction->setToolTip("Footprint Wizard — auto-generate standard packages");
     wizardAction->setShortcut(QKeySequence("Ctrl+W"));
     connect(wizardAction, &QAction::triggered, this, &FootprintEditor::onOpenWizard);
@@ -1755,7 +1791,7 @@ void FootprintEditor::createToolBar() {
         menu.exec(QCursor::pos());
     });
 
-    QAction* drcAct = m_toolbar->addAction(getThemeIcon(":/icons/check.svg"), "Check Footprint");
+    QAction* drcAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_drc.png", false), "Check Footprint");
     drcAct->setToolTip("Run Footprint Rule Check (DRC)");
     connect(drcAct, &QAction::triggered, this, &FootprintEditor::onRunDRC);
 
@@ -1763,7 +1799,7 @@ void FootprintEditor::createToolBar() {
     importKiCadAct->setToolTip("Import KiCad footprint (.kicad_mod)");
     connect(importKiCadAct, &QAction::triggered, this, &FootprintEditor::onImportKicadFootprint);
 
-    QAction* view3DAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_3d.svg"), "3D View");
+    QAction* view3DAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_3d.png", false), "3D View");
     view3DAct->setToolTip("Open 3D preview for current footprint");
     connect(view3DAct, &QAction::triggered, this, &FootprintEditor::onOpen3DPreview);
 

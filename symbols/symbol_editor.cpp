@@ -2180,13 +2180,14 @@ void SymbolEditor::onImportSpiceSubcircuit() {
 //  SymbolEditor – UI Setup
 // ─────────────────────────────────────────────────────────────────────────────
 
-QIcon SymbolEditor::getThemeIcon(const QString& path) {
+QIcon SymbolEditor::getThemeIcon(const QString& path, bool tinted) {
     QIcon icon(path);
-    if (!ThemeManager::theme()) {
+    if (!tinted || !ThemeManager::theme()) {
         return icon;
     }
 
-    QPixmap pixmap = icon.pixmap(QSize(32, 32));
+    // Use a larger pixmap for better scaling/High-DPI support
+    QPixmap pixmap = icon.pixmap(QSize(64, 64));
     if (pixmap.isNull()) return icon;
 
     QPainter painter(&pixmap);
@@ -3015,13 +3016,13 @@ void SymbolEditor::createMenuBar() {
 
     // --- File Menu ---
     QMenu* fileMenu = mb->addMenu("&File");
-    fileMenu->addAction(getThemeIcon(":/icons/toolbar_new.png"), "&New Symbol", QKeySequence::New, this, &SymbolEditor::onNewSymbol);
-    fileMenu->addAction(getThemeIcon(":/icons/check.svg"), "&Save", QKeySequence::Save, this, &SymbolEditor::onSave);
-    fileMenu->addAction(getThemeIcon(":/icons/toolbar_file.png"), "Save As...", QKeySequence(), this, &SymbolEditor::onExportVioSym);
-    fileMenu->addAction(getThemeIcon(":/icons/tool_gear.svg"), "Save as Wizard Template...", QKeySequence(), this, &SymbolEditor::onWizardSaveTemplate);
-    fileMenu->addAction(getThemeIcon(":/icons/toolbar_refresh.png"), "Refresh Libraries", QKeySequence::Refresh, this, &SymbolEditor::onRefreshLibraries);
+    fileMenu->addAction(getThemeIcon(":/icons/tool_new.svg", false), "&New Symbol", QKeySequence::New, this, &SymbolEditor::onNewSymbol);
+    fileMenu->addAction(getThemeIcon(":/icons/tool_save.svg", false), "&Save", QKeySequence::Save, this, &SymbolEditor::onSave);
+    fileMenu->addAction(getThemeIcon(":/icons/tool_save_as.svg", false), "Save As...", QKeySequence(), this, &SymbolEditor::onExportVioSym);
+    fileMenu->addAction(getThemeIcon(":/icons/tool_gear.svg", false), "Save as Wizard Template...", QKeySequence(), this, &SymbolEditor::onWizardSaveTemplate);
+    fileMenu->addAction(getThemeIcon(":/icons/tool_refresh.svg"), "Refresh Libraries", QKeySequence::Refresh, this, &SymbolEditor::onRefreshLibraries);
     fileMenu->addSeparator();
-    fileMenu->addAction(getThemeIcon(":/icons/schematic_editor.png"), "&Place in Schematic", QKeySequence(), this, &SymbolEditor::onPlaceInSchematic);
+    fileMenu->addAction(getThemeIcon(":/icons/nav_schematic.svg", false), "&Place in Schematic", QKeySequence(), this, &SymbolEditor::onPlaceInSchematic);
     fileMenu->addSeparator();
     fileMenu->addAction("Close", QKeySequence::Close, this, &QWidget::close);
 
@@ -3039,7 +3040,7 @@ void SymbolEditor::createMenuBar() {
 
     // --- AI Menu ---
     QMenu* aiMenu = mb->addMenu("&AI");
-    aiMenu->addAction(getThemeIcon(":/icons/tool_gear.svg"), "Generate Pins from Datasheet Text...", QKeySequence(), this, &SymbolEditor::onAIDatasheetImport);
+    aiMenu->addAction(getThemeIcon(":/icons/ai_wizard.png", false), "Generate Pins from Datasheet Text...", QKeySequence(), this, &SymbolEditor::onAIDatasheetImport);
     aiMenu->addAction(getThemeIcon(":/icons/tool_sheet.svg"), "Import SPICE Subcircuit...", QKeySequence(), this, &SymbolEditor::onImportSpiceSubcircuit);
 
     // --- View Menu (The core request) ---
@@ -3139,40 +3140,38 @@ void SymbolEditor::createMenuBar() {
 
 void SymbolEditor::createToolBar() {
     m_toolbar = new QToolBar("Utilities", this);
+    m_toolbar->setObjectName("TopToolbar");
     m_toolbar->setIconSize(QSize(20, 20));
     m_toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_toolbar->setMovable(false);
     m_toolbar->setStyleSheet(
-        "QToolBar {"
-        "  background-color: #2d2d30;"
-        "  border-bottom: 1px solid #1e1e1e;"
-        "  padding: 4px 8px;"
-        "  spacing: 3px;"
+        "QToolBar#TopToolbar {"
+        "  background: #252526;"
+        "  border: 1px solid #3e3e42;"
+        "  border-radius: 8px;"
+        "  margin: 5px;"
+        "  padding: 2px;"
         "}"
-        "QToolBar QToolButton {"
-        "  background: transparent;"
-        "  border: 1px solid transparent;"
-        "  border-radius: 3px;"
+        "QToolBar#TopToolbar QToolButton {"
+        "  border-radius: 4px;"
         "  padding: 4px;"
+        "  margin: 1px;"
+        "  background: transparent;"
         "  color: #cccccc;"
         "}"
-        "QToolBar QToolButton:hover {"
-        "  border-color: #555;"
-        "  background-color: #3c3c3c;"
+        "QToolBar#TopToolbar QToolButton:hover {"
+        "  background: #3e3e42;"
+        "  border: 1px solid #555;"
         "}"
-        "QToolBar QToolButton:checked {"
-        "  background-color: #094771;"
-        "  border-color: #094771;"
+        "QToolBar#TopToolbar QToolButton:checked, QToolBar#TopToolbar QToolButton:pressed {"
+        "  background: #094771;"
         "}"
-        "QToolBar QToolButton:pressed {"
-        "  background-color: #094771;"
-        "}"
-        "QToolBar QLabel {"
+        "QToolBar#TopToolbar QLabel {"
         "  color: #888;"
         "  font-size: 11px;"
         "  padding: 0 2px;"
         "}"
-        "QToolBar QComboBox {"
+        "QToolBar#TopToolbar QComboBox {"
         "  background-color: #1e1e1e;"
         "  color: #cccccc;"
         "  border: 1px solid #3c3c3c;"
@@ -3257,29 +3256,34 @@ void SymbolEditor::createToolBar() {
 
     // ── Top toolbar ──────────────────────────────────────────────────────────
 
-    QAction* newSym = m_toolbar->addAction(getThemeIcon(":/icons/toolbar_new.png"), "New Symbol");
+    QAction* newSym = m_toolbar->addAction(getThemeIcon(":/icons/tool_new.svg", false), "New Symbol");
     newSym->setShortcut(QKeySequence::New);
     newSym->setToolTip("New Symbol (Ctrl+N)");
     connect(newSym, &QAction::triggered, this, &SymbolEditor::onNewSymbol);
 
-    QAction* saveAction = m_toolbar->addAction(getThemeIcon(":/icons/check.svg"), "Save");
+    QAction* saveAction = m_toolbar->addAction(getThemeIcon(":/icons/tool_save.svg", false), "Save");
     saveAction->setShortcut(QKeySequence::Save);
     saveAction->setToolTip("Save (Ctrl+S)");
     connect(saveAction, &QAction::triggered, this, &SymbolEditor::onSave);
 
-    QAction* exportAction = m_toolbar->addAction(getThemeIcon(":/icons/toolbar_file.png"), "Save As...");
+    QAction* exportAction = m_toolbar->addAction(getThemeIcon(":/icons/tool_save_as.svg", false), "Save As...");
     exportAction->setToolTip("Save symbol to a .viosym file");
     connect(exportAction, &QAction::triggered, this, &SymbolEditor::onExportVioSym);
 
-    QAction* saveTplAction = m_toolbar->addAction(getThemeIcon(":/icons/tool_gear.svg"), "Save Wizard Template");
+    QAction* saveTplAction = m_toolbar->addAction(getThemeIcon(":/icons/tool_gear.svg", false), "Save Wizard Template");
     saveTplAction->setToolTip("Save current symbol as IC Wizard template");
     connect(saveTplAction, &QAction::triggered, this, &SymbolEditor::onWizardSaveTemplate);
 
-    auto* openSchAct = m_toolbar->addAction(getThemeIcon(":/icons/schematic_editor.png"), "Open in Schematic");
+    QAction* runAction = m_toolbar->addAction(getThemeIcon(":/icons/tool_run.png", false), "Run Simulation");
+    runAction->setToolTip("Run spice simulation on current symbol (F5)");
+    runAction->setShortcut(QKeySequence("F5"));
+    // connect(runAction, &QAction::triggered, this, &SomeAction);
+
+    auto* openSchAct = m_toolbar->addAction(getThemeIcon(":/icons/nav_schematic.svg", false), "Open in Schematic");
     openSchAct->setToolTip("Place this symbol in the current schematic");
     connect(openSchAct, &QAction::triggered, this, &SymbolEditor::onPlaceInSchematic);
 
-    auto* importImgAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_image.svg"), "Import Image");
+    auto* importImgAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_image.svg", false), "Import Image");
     importImgAct->setToolTip("Import a bitmap image into the symbol");
     connect(importImgAct, &QAction::triggered, this, &SymbolEditor::onImportImage);
 
@@ -3297,7 +3301,7 @@ void SymbolEditor::createToolBar() {
     m_redoAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     m_toolbar->addAction(m_redoAction);
 
-    m_deleteAction = new QAction(getThemeIcon(":/icons/tool_delete.svg"), "Delete", this);
+    m_deleteAction = new QAction(getThemeIcon(":/icons/tool_delete.svg", false), "Delete", this);
     m_deleteAction->setShortcut(QKeySequence::Delete);
     connect(m_deleteAction, &QAction::triggered, this, &SymbolEditor::onDelete);
     m_toolbar->addAction(m_deleteAction);
@@ -3335,7 +3339,7 @@ void SymbolEditor::createToolBar() {
     connect(flipV, &QAction::triggered, this, &SymbolEditor::onFlipV);
     this->addAction(flipV);
 
-    auto* srcAct = m_toolbar->addAction(getThemeIcon(":/icons/toolbar_refresh.png"), "Run SRC");
+    auto* srcAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_src.png", false), "Run SRC");
     srcAct->setToolTip("Run Symbol Rule Checker (F7)");
     srcAct->setShortcut(QKeySequence("F7"));
     connect(srcAct, &QAction::triggered, this, &SymbolEditor::onRunSRC);

@@ -144,7 +144,7 @@ private Q_SLOTS:
 private:
     void applyTheme();
     void setupUI();
-    QIcon getThemeIcon(const QString& path);
+    QIcon getThemeIcon(const QString& path, bool tinted = true);
     void updatePropertiesPanel();
     void populatePropertiesFor(int index);
     void createMenuBar();

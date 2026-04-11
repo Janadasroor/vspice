@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
     a.setApplicationName("viospice");
     a.setApplicationVersion("0.1.0");
     a.setOrganizationName("VIO");
-    a.setWindowIcon(QIcon(":/icons/viospice_logo.png"));
+    a.setWindowIcon(QIcon(":/icons/logo_viospice.png"));
 
     // --- Single Instance / Command Line Argument Handling ---
     QString serverName = "viospice_instance_server";

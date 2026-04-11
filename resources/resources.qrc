@@ -99,6 +99,20 @@
         <file>icons/toolbar_pcb.png</file>
         <file>icons/toolbar_refresh.png</file>
         <file>icons/toolbar_file.png</file>
+        <file>icons/tool_new.svg</file>
+        <file>icons/tool_save.svg</file>
+        <file>icons/tool_save_as.svg</file>
+        <file>icons/tool_refresh.svg</file>
+        <file>icons/tool_check.svg</file>
+        <file>icons/nav_schematic.svg</file>
+        <file>icons/logo_viospice.png</file>
+        <file>icons/ai_wizard.png</file>
+        <file>icons/tool_run.png</file>
+        <file>icons/tool_src.png</file>
+        <file>icons/tool_pad_settings.png</file>
+        <file>icons/tool_wizard.png</file>
+        <file>icons/tool_drc.png</file>
+        <file>icons/tool_3d.png</file>
         <file>icons/file_flux_sch.png</file>
         <file>icons/file_viora_eda.png</file>
         <file>icons/file_kicad_sch.png</file>
