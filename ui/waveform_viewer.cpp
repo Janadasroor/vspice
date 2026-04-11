@@ -902,6 +902,9 @@ void WaveformViewer::appendPoints(const QString& name, const std::vector<double>
     if (lineSeries) {
         const int batchSize = static_cast<int>(times.size());
         const int maxBucketsInChart = 5000;
+        double minVisibleY = 0.0;
+        double maxVisibleY = 0.0;
+        bool haveVisibleY = false;
         
         if (batchSize > 200) {
             int step = batchSize / 100;
@@ -909,12 +912,39 @@ void WaveformViewer::appendPoints(const QString& name, const std::vector<double>
             QList<QPointF> decimatedPoints;
             decimatedPoints.reserve(batchSize / step + 1);
             for (int i = 0; i < batchSize; i += step) {
-                decimatedPoints.append(QPointF(times[i], m_acMode ? toDb(values[i]) : values[i]));
+                const double y = m_acMode ? toDb(values[i]) : values[i];
+                decimatedPoints.append(QPointF(times[i], y));
+                if (!haveVisibleY) {
+                    minVisibleY = maxVisibleY = y;
+                    haveVisibleY = true;
+                } else {
+                    minVisibleY = std::min(minVisibleY, y);
+                    maxVisibleY = std::max(maxVisibleY, y);
+                }
+            }
+            if ((batchSize - 1) % step != 0) {
+                const double y = m_acMode ? toDb(values.back()) : values.back();
+                decimatedPoints.append(QPointF(times.back(), y));
+                if (!haveVisibleY) {
+                    minVisibleY = maxVisibleY = y;
+                    haveVisibleY = true;
+                } else {
+                    minVisibleY = std::min(minVisibleY, y);
+                    maxVisibleY = std::max(maxVisibleY, y);
+                }
             }
             lineSeries->append(decimatedPoints);
         } else {
             for (size_t i = 0; i < times.size(); ++i) {
-                lineSeries->append(times[i], m_acMode ? toDb(values[i]) : values[i]);
+                const double y = m_acMode ? toDb(values[i]) : values[i];
+                lineSeries->append(times[i], y);
+                if (!haveVisibleY) {
+                    minVisibleY = maxVisibleY = y;
+                    haveVisibleY = true;
+                } else {
+                    minVisibleY = std::min(minVisibleY, y);
+                    maxVisibleY = std::max(maxVisibleY, y);
+                }
             }
         }
 
@@ -923,6 +953,18 @@ void WaveformViewer::appendPoints(const QString& name, const std::vector<double>
         } else {
             double tLast = times.back();
             if (tLast > pane->axisX->max()) pane->axisX->setMax(tLast * 1.05);
+            if (haveVisibleY) {
+                if (maxVisibleY > pane->axisY->max()) {
+                    pane->axisY->setMax(maxVisibleY > 0.0 ? maxVisibleY * 1.2 : maxVisibleY * 0.8);
+                }
+                if (minVisibleY < pane->axisY->min()) {
+                    pane->axisY->setMin(minVisibleY < 0.0 ? minVisibleY * 1.2 : minVisibleY * 0.8);
+                }
+                if (std::abs(pane->axisY->max() - pane->axisY->min()) < 1e-12) {
+                    const double center = maxVisibleY;
+                    pane->axisY->setRange(center - 0.5, center + 0.5);
+                }
+            }
         }
         return;
     }
