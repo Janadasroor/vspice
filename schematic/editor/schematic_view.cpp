@@ -172,6 +172,32 @@ QString findNearbyProbeNet(SchematicView* view, NetManager* netManager, const QP
                                                 view->transform()));
     return net;
 }
+
+QString findNearbyComponentPinNet(SchematicItem* component, NetManager* netManager, const QPointF& scenePos) {
+    if (!component || !netManager) return {};
+
+    constexpr qreal kPinCaptureRadius = 16.0;
+    const QList<QPointF> pins = component->connectionPoints();
+    qreal bestDistance = kPinCaptureRadius;
+    QString bestNet;
+
+    for (int i = 0; i < pins.size(); ++i) {
+        const QPointF pinScene = component->mapToScene(pins.at(i));
+        const qreal distance = QLineF(scenePos, pinScene).length();
+        if (distance > bestDistance) continue;
+
+        QString net = netManager->findNetAtPoint(pinScene).trimmed();
+        if (net.isEmpty()) {
+            net = component->pinNet(i).trimmed();
+        }
+        if (net.isEmpty()) continue;
+
+        bestDistance = distance;
+        bestNet = net;
+    }
+
+    return bestNet;
+}
 }
 
 SchematicView::SchematicView(QWidget *parent)
@@ -564,11 +590,17 @@ void SchematicView::mousePressEvent(QMouseEvent *event) {
                 // Try voltage probe first (but not when Alt held = power probe intent)
                 QString bodyNet;
                 if (!powerHeld && m_netManager) {
-                    bodyNet = m_netManager->findNetAtPoint(scenePos);
-                    // If nets are stale, refresh once on-demand
+                    bodyNet = findNearbyProbeNet(this, m_netManager, event->pos(), scenePos);
+                    if (bodyNet.isEmpty() && compItem) {
+                        bodyNet = findNearbyComponentPinNet(compItem, m_netManager, scenePos);
+                    }
+                    // If nets are stale, refresh once on-demand and retry the same nearby-net lookup.
                     if (bodyNet.isEmpty() && compItem) {
                         m_netManager->updateNets(scene());
-                        bodyNet = m_netManager->findNetAtPoint(scenePos);
+                        bodyNet = findNearbyProbeNet(this, m_netManager, event->pos(), scenePos);
+                        if (bodyNet.isEmpty()) {
+                            bodyNet = findNearbyComponentPinNet(compItem, m_netManager, scenePos);
+                        }
                     }
                 }
 

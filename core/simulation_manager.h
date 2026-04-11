@@ -86,6 +86,7 @@ private:
         int index;
         QString name;
         bool isVoltage;
+        bool isScale = false;
     };
     std::vector<VectorMap> m_vectorMap;
 

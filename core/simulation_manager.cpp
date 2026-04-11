@@ -35,6 +35,35 @@ namespace {
         }
         return path; // Return original if not found
     }
+
+    QString normalizeStreamVectorName(const QString& rawName) {
+        const QString q = rawName.trimmed();
+        if (q.isEmpty()) return rawName;
+
+        static const QRegularExpression branchRe(
+            "^\\s*([A-Za-z0-9_.$:+-]+)\\s*#\\s*branch\\s*$",
+            QRegularExpression::CaseInsensitiveOption);
+        if (const auto m = branchRe.match(q); m.hasMatch()) {
+            return QString("I(%1)").arg(m.captured(1).toUpper());
+        }
+
+        static const QRegularExpression deviceCurrentRe(
+            "^@\\s*([A-Za-z0-9_.$:+-]+)\\s*\\[\\s*i[a-z]*\\s*\\]$",
+            QRegularExpression::CaseInsensitiveOption);
+        if (const auto m = deviceCurrentRe.match(q); m.hasMatch()) {
+            return QString("I(%1)").arg(m.captured(1).toUpper());
+        }
+
+        static const QRegularExpression wrapperRe(
+            "^(v|i)\\s*\\(\\s*(.+)\\s*\\)$",
+            QRegularExpression::CaseInsensitiveOption);
+        if (const auto m = wrapperRe.match(q); m.hasMatch()) {
+            return QString("%1(%2)")
+                .arg(m.captured(1).toUpper(), m.captured(2).trimmed().toUpper());
+        }
+
+        return q;
+    }
 }
 
 SimulationManager& SimulationManager::instance() {
@@ -443,8 +472,9 @@ void SimulationManager::processBufferedData() {
     }
 
     QStringList names;
-    for (size_t i = 1; i < m_vectorMap.size(); ++i) {
-        names << m_vectorMap[i].name;
+    for (const auto& vector : m_vectorMap) {
+        if (vector.isScale) continue;
+        names << vector.name;
     }
 
     Q_EMIT realTimeDataBatchReceived(times, valueRows, names);
@@ -591,8 +621,9 @@ int SimulationManager::cbSendInitData(pvecinfoall initData, int id, void* userDa
         
         VectorMap vm;
         vm.index = i;
-        vm.name = QString::fromLatin1(v->vecname);
+        vm.name = normalizeStreamVectorName(QString::fromLatin1(v->vecname));
         vm.isVoltage = (v->is_real && !vm.name.toLower().startsWith("i("));
+        vm.isScale = (v->pdvec != nullptr && v->pdvec == v->pdvecscale);
         self->m_vectorMap.push_back(vm);
     }
     
