@@ -316,7 +316,7 @@ QList<NetlistNet> NetlistGenerator::buildConnectivity(QGraphicsScene* scene, con
                            type != SchematicItem::NoConnectType &&
                            conn.item->itemTypeName() != "BusEntry") {
                     
-                    if (conn.item->excludeFromPcb()) continue;
+                    if (conn.item->excludeFromSimulation()) continue;
 
                     NetlistPin pin;
                     pin.componentRef = exportRefForItem(conn.item, prefix);
@@ -353,7 +353,7 @@ QList<NetlistNet> NetlistGenerator::buildConnectivity(QGraphicsScene* scene, con
         // and connect them to global nets matching their name.
         for (auto* item : s->items()) {
             if (auto* generic = dynamic_cast<GenericComponentItem*>(item)) {
-                if (generic->excludeFromPcb()) continue;
+                if (generic->excludeFromSimulation()) continue;
 
                 // Filter by unit: only process pins for this instance's unit (or shared)
                 int instanceUnit = generic->unit();
@@ -405,7 +405,7 @@ QList<NetlistNet> NetlistGenerator::buildConnectivity(QGraphicsScene* scene, con
 
         for (auto* item : s->items()) {
             if (auto* generic = dynamic_cast<GenericComponentItem*>(item)) {
-                if (generic->excludeFromPcb()) continue;
+                if (generic->excludeFromSimulation()) continue;
 
                 QMap<int, QString> groupToNet; // jumperGroupId -> globalNetId
 

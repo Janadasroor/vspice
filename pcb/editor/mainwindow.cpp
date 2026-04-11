@@ -115,6 +115,7 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle("Viora EDA - PCB Editor");
     setMinimumSize(800, 600);
     resize(1100, 800);
+    setObjectName("PCBEditor");
     setWindowFlags(windowFlags() | Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint);
 
     PCBItemRegistry::registerBuiltInItems();
@@ -1225,12 +1226,14 @@ void MainWindow::onNewProject() {
 
 bool MainWindow::openFile(const QString& filePath) {
     if (filePath.isEmpty()) return false;
-    
+
     if (PCBFileIO::loadPCB(m_scene, filePath)) {
         m_currentFilePath = filePath;
+        setProperty("currentFilePath", m_currentFilePath);
+        setProperty("unsavedChanges", false);
         setWindowTitle("Viora EDA - PCB Editor [" + QFileInfo(filePath).fileName() + "]");
         statusBar()->showMessage("Loaded PCB: " + filePath, 5000);
-        
+
         return true;
     } else {
         statusBar()->showMessage("Error loading PCB: " + PCBFileIO::lastError(), 5000);

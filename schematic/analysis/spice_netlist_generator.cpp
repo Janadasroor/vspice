@@ -2337,10 +2337,10 @@ QString inlinePwlFileIfNeeded(const QString& value, const QString& projectDir, Q
     if (!v.contains("PWL", Qt::CaseInsensitive)) return value;
 
     QRegularExpression re(R"(^PWL\s*(?:\((.*)\)|(.*))$)", QRegularExpression::CaseInsensitiveOption);
-    const QRegularExpressionMatch match = re.match(v);
-    if (!match.hasMatch()) return value;
+    const QRegularExpressionMatch fullMatch = re.match(v);
+    if (!fullMatch.hasMatch()) return value;
 
-    const QString body = !match.captured(1).isNull() && !match.captured(1).isEmpty() ? match.captured(1).trimmed() : match.captured(2).trimmed();
+    const QString body = !fullMatch.captured(1).isNull() && !fullMatch.captured(1).isEmpty() ? fullMatch.captured(1).trimmed() : fullMatch.captured(2).trimmed();
     QStringList tokens = tokenizePwlBody(body);
     if (tokens.isEmpty()) return value;
 
@@ -2379,6 +2379,13 @@ QString inlinePwlFileIfNeeded(const QString& value, const QString& projectDir, Q
 
 QString formatPwlValueForNetlist(const QString& value, int maxLen = 140) {
     const QString v = value.trimmed();
+    
+    // If it contains FILE or WAVEFILE, we don't want to mess with wrapping 
+    // as it might break the path or syntax (important for our native VioMATRIXC support)
+    if (v.contains("FILE", Qt::CaseInsensitive) || v.contains("WAVEFILE", Qt::CaseInsensitive)) {
+        return v;
+    }
+
     if (!v.startsWith("PWL", Qt::CaseInsensitive)) return value;
 
     int closeIdx = v.lastIndexOf(')');
@@ -2391,6 +2398,12 @@ QString formatPwlValueForNetlist(const QString& value, int maxLen = 140) {
 
     const QString head = inside.left(openIdx + 1); // "PWL("
     const QString body = inside.mid(openIdx + 1, inside.length() - openIdx - 2);
+
+    // If it's a simple FILE spec, don't wrap it to avoid corrupting the path or syntax
+    if (body.contains("FILE", Qt::CaseInsensitive)) {
+        return v;
+    }
+
     QStringList tokens = body.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
     if (tokens.isEmpty()) return value;
 
@@ -2862,7 +2875,8 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
 
     QString netlist;
     netlist += "* viospice Automated Hierarchical SPICE Netlist\n";
-    netlist += "* Generated on " + QDateTime::currentDateTime().toString() + "\n\n";
+    netlist += "* Generated: " + QDateTime::currentDateTime().toString(Qt::ISODate) + "\n";
+    netlist += ".options ngbehavior=ltps\n";
 
     // 0. Append SPICE Directives from schematic at the TOP 
     // This ensures .params and .model are defined before use
@@ -3479,6 +3493,42 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         // --- SPICE Mapper Logic ---
         value = comp.value;
         if (!comp.spiceModel.isEmpty()) value = comp.spiceModel;
+
+        // Standardize WAVEFILE and CHAN to space-separated syntax for better parser compatibility
+        if (value.contains("WAVEFILE", Qt::CaseInsensitive)) {
+            // Resolve relative path if needed
+            QRegularExpression reFile(R"(WAVEFILE\s*=\s*\"([^\"]+)\")", QRegularExpression::CaseInsensitiveOption);
+            auto match = reFile.match(value);
+            if (match.hasMatch()) {
+                QString rawPath = match.captured(1);
+                QString targetPath = rawPath;
+                QFileInfo fi(rawPath);
+                if (!fi.isAbsolute() && !projectDir.isEmpty()) {
+                    targetPath = QDir(projectDir).absoluteFilePath(rawPath);
+                }
+                value = QString("WAVEFILE \"%1\"").arg(targetPath);
+            }
+
+            QRegularExpression reChan(R"(CHAN\s*=\s*(\d+))", QRegularExpression::CaseInsensitiveOption);
+            auto matchChan = reChan.match(comp.value); // Check original comp.value if model didn't have it
+            if (!matchChan.hasMatch()) matchChan = reChan.match(value);
+            if (matchChan.hasMatch()) {
+                value += " CHAN " + matchChan.captured(1);
+            }
+        } else if (value.contains("FILE=", Qt::CaseInsensitive)) {
+            // Resolve relative paths for other FILE= references
+            QRegularExpression reFile(R"(FILE\s*=\s*\"([^\"]+)\")", QRegularExpression::CaseInsensitiveOption);
+            auto match = reFile.match(value);
+            if (match.hasMatch()) {
+                QString rawPath = match.captured(1);
+                QFileInfo fi(rawPath);
+                if (!fi.isAbsolute() && !projectDir.isEmpty()) {
+                    QString absPath = QDir(projectDir).absoluteFilePath(rawPath);
+                    value.replace(rawPath, absPath);
+                }
+            }
+        }
+
         value = inlinePwlFileIfNeeded(value, projectDir, nullptr);
         value = formatPwlValueForNetlist(value);
         QString instanceSuffix;
@@ -4541,6 +4591,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         }
     }
     netlist += ".control\n";
+    netlist += "set ngbehavior=ltps\n";
     // For SParameter analysis, save S-parameters to Touchstone file and load back
     if (params.type == SParameter) {
         netlist += "run\n";

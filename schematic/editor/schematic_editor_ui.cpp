@@ -67,6 +67,7 @@ using Flux::Model::SymbolPrimitive;
 #include <QPointer>
 #include <array>
 #include "../io/netlist_to_schematic.h"
+#include "../../core/ws_server.h"
 
 void SchematicEditor::createMenuBar() {
     // Hide traditional menu bar for modern UI
@@ -544,7 +545,14 @@ void SchematicEditor::createToolBar() {
     // Simulation Menu
     QMenu* simMenu = mainAppMenu->addMenu("&Simulation");
     m_runSimMenuAction = simMenu->addAction(createComponentIcon("Simulator"), "Run Simulation", QKeySequence("F8"), this, &SchematicEditor::onRunSimulation);
-    m_stopSimMenuAction = simMenu->addAction(getThemeIcon(":/icons/tool_delete.svg"), "Stop Simulation", QKeySequence("Shift+F8"), this, &SchematicEditor::onPauseSimulation);
+    m_stopSimMenuAction = simMenu->addAction(getThemeIcon(":/icons/tool_delete.svg"), "Stop Simulation");
+    m_stopSimMenuAction->setShortcut(QKeySequence("Shift+F8"));
+    connect(m_stopSimMenuAction, &QAction::triggered, this, [this]() {
+        if (m_simulationPanel) {
+            m_simulationPanel->cancelPendingRun();
+        }
+        SimManager::instance().stopAll();
+    });
     simMenu->addSeparator();
     simMenu->addAction(getThemeIcon(":/icons/tool_gear.svg"), "Simulation Setup...", QKeySequence(), this, &SchematicEditor::onOpenSimulationSetup);
 
@@ -830,7 +838,12 @@ void SchematicEditor::createToolBar() {
 
     m_stopSimToolbarAction = new QAction(getThemeIcon(":/icons/tool_stop.svg"), "Stop", this);
     m_stopSimToolbarAction->setShortcut(QKeySequence("Shift+F8"));
-    connect(m_stopSimToolbarAction, &QAction::triggered, this, []() { SimManager::instance().stopAll(); });
+    connect(m_stopSimToolbarAction, &QAction::triggered, this, [this]() {
+        if (m_simulationPanel) {
+            m_simulationPanel->cancelPendingRun();
+        }
+        SimManager::instance().stopAll();
+    });
     
     QToolButton* stopBtn = new QToolButton();
     stopBtn->setDefaultAction(m_stopSimToolbarAction);
@@ -1044,7 +1057,7 @@ void SchematicEditor::createToolBar() {
     addSchTool("Sheet", "Place Hierarchical Sheet", "tool_sheet", "Shift+S");
     addSchTool("No-Connect", "No-Connect Flag", "tool_no_connect", "X");
     addSchTool("GND", "Place Power GND", "comp_gnd", "G");
-    addSchTool("VCC", "Place Power VCC", "comp_vcc", "V");
+    addSchTool("VCC", "Place Power VCC", "comp_vcc");
     
     schToolbar->addSeparator();
 
@@ -1076,6 +1089,7 @@ void SchematicEditor::createToolBar() {
     addSchTool("Gate_NOR", "Place NOR Gate", "comp_ic");
     addSchTool("Gate_NOT", "Place NOT Gate", "comp_ic");
     addSchTool("Switch", "Place Switch", "comp_switch", "S");
+    addSchTool("Voltage Source (DC)", "Place DC Voltage Source", "comp_voltage_source", "V");
 
     // Set default tool
     if (m_toolActions.contains("Select")) {
@@ -1651,6 +1665,20 @@ void SchematicEditor::createStatusBar() {
     m_remoteLabel->setStyleSheet("color: #6b7280;"); // Muted gray when off
     statusBar()->addWidget(m_remoteLabel);
 
+    m_agentStatusBtn = new QToolButton();
+    m_agentStatusBtn->setText(" Agents: 0");
+    m_agentStatusBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_agentStatusBtn->setStyleSheet("QToolButton { border: none; padding: 0 4px; color: #6b7280; font-size: 11px; } QToolButton:hover { background: rgba(0,0,0,0.05); }");
+    connect(m_agentStatusBtn, &QToolButton::clicked, this, &SchematicEditor::onShowAgentList);
+    statusBar()->addWidget(m_agentStatusBtn);
+#if VIOSPICE_HAS_QT_WEBSOCKETS
+    auto* agentStatusTimer = new QTimer(this);
+    agentStatusTimer->setInterval(1000);
+    connect(agentStatusTimer, &QTimer::timeout, this, &SchematicEditor::updateAgentStatus);
+    agentStatusTimer->start();
+    QTimer::singleShot(0, this, &SchematicEditor::updateAgentStatus);
+#endif
+
     // Separator
     QFrame* sep1 = new QFrame();
     sep1->setFrameShape(QFrame::VLine);
@@ -1788,7 +1816,7 @@ void SchematicEditor::createDrawingToolbar() {
     drawToolbar->addSeparator();
     
     addManipAction("Flip H", "Flip Horizontal (H)", &SchematicEditor::onFlipHorizontal)->setShortcut(QKeySequence("H"));
-    addManipAction("Flip V", "Flip Vertical (V)", &SchematicEditor::onFlipVertical)->setShortcut(QKeySequence("V"));
+    addManipAction("Flip V", "Flip Vertical (Shift+V)", &SchematicEditor::onFlipVertical)->setShortcut(QKeySequence("Shift+V"));
 
     drawToolbar->addSeparator();
 
@@ -1867,6 +1895,12 @@ void SchematicEditor::connectSimulationSignals() {
             m_simulationRunning = false;
             updateSimulationUiState(false, "Simulation finished.");
         }
+    });
+
+    connect(&sim, &SimManager::simulationStopped, this, [this]() {
+        m_simPaused = false;
+        m_simulationRunning = false;
+        updateSimulationUiState(false, "Simulation stopped.");
     });
 
     connect(&sim, &SimManager::simulationPaused, this, &SchematicEditor::onSimulationPaused);
@@ -2414,4 +2448,52 @@ void SchematicEditor::updateBreadcrumbs() {
 
     // Sync the hierarchy tree with the current navigation state
     refreshHierarchyPanel();
+}
+
+void SchematicEditor::updateAgentStatus() {
+    if (!m_agentStatusBtn) return;
+    m_agentStatusBtn->show();
+    int count = 0;
+#if VIOSPICE_HAS_QT_WEBSOCKETS
+    if (auto* ws = WsServer::instance()) {
+        count = ws->connectedClients().size();
+    }
+#endif
+
+    m_agentStatusBtn->setText(QString(" Agents: %1").arg(count));
+    m_agentStatusBtn->setIcon(QIcon());
+    const QString color = count > 0 ? "#059669" : "#6b7280";
+    m_agentStatusBtn->setStyleSheet(
+        QString("QToolButton { border: none; padding: 0 4px; color: %1; font-size: 11px; } "
+                "QToolButton:hover { background: rgba(0,0,0,0.05); }").arg(color));
+}
+
+void SchematicEditor::onShowAgentList() {
+#if VIOSPICE_HAS_QT_WEBSOCKETS
+    if (!m_agentStatusBtn) return;
+    auto* ws = WsServer::instance();
+
+    QMenu menu(this);
+    menu.setStyleSheet(ThemeManager::theme() ? ThemeManager::theme()->widgetStylesheet() : "");
+
+    if (!ws) {
+        menu.addAction("Agent bridge not running")->setEnabled(false);
+    } else {
+        const auto clients = ws->connectedClients();
+        if (clients.isEmpty()) {
+            menu.addAction("No active agents")->setEnabled(false);
+        } else {
+            menu.addSection(QString("%1 Active Agent%2").arg(clients.size()).arg(clients.size() > 1 ? "s" : ""));
+            for (const auto& client : clients) {
+                QString label = client.name;
+                if (label.isEmpty()) {
+                    label = "Unknown Agent";
+                }
+                menu.addAction(label + " [" + client.address + "]")->setEnabled(false);
+            }
+        }
+    }
+
+    menu.exec(m_agentStatusBtn->mapToGlobal(QPoint(0, m_agentStatusBtn->height())));
+#endif
 }

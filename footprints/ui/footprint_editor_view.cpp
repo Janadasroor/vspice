@@ -1,5 +1,6 @@
 #include "footprint_editor_view.h"
 #include "../footprint_editor.h"
+#include "../../core/theme_manager.h"
 #include <QGraphicsScene>
 #include <QGraphicsItem>
 #include <QAbstractGraphicsShapeItem>
@@ -25,13 +26,21 @@ FootprintEditorView::FootprintEditorView(QWidget* parent)
     setDragMode(QGraphicsView::NoDrag);
     setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
     setResizeAnchor(QGraphicsView::AnchorViewCenter);
-    setBackgroundBrush(QBrush(QColor(18, 18, 18))); // Deep dark background
+    setBackgroundBrush(QBrush(ThemeManager::theme() ? ThemeManager::theme()->canvasBackground() : QColor(18, 18, 18)));
     scale(10.0, 10.0); // improved zoom level for mm units
 }
 
 void FootprintEditorView::setGridSize(qreal size) {
     m_gridSize = size;
     update(); // Redraw
+}
+
+QPointF FootprintEditorView::effectiveScenePos(const QPoint& viewPos, Qt::KeyboardModifiers modifiers) const {
+    const QPointF rawScenePos = mapToScene(viewPos);
+    if (modifiers & Qt::AltModifier) {
+        return rawScenePos;
+    }
+    return snapToGrid(rawScenePos);
 }
 
 QPointF FootprintEditorView::snapToGrid(QPointF pos) const {
@@ -77,15 +86,26 @@ void FootprintEditorView::mousePressEvent(QMouseEvent* event) {
 
     if (event->button() == Qt::LeftButton) {
         if (m_currentTool == 0) {
-            if (QGraphicsItem* handle = findResizeHandleItem(itemAt(event->pos()))) {
-                m_rectResizeActive = true;
-                emit rectResizeStarted(handle->data(1).toString(), snapToGrid(mapToScene(event->pos())));
+            const qreal originDistancePx = QLineF(mapFromScene(QPointF(0, 0)), event->pos()).length();
+            if (originDistancePx <= 14.0) {
+                m_originDragActive = true;
+                m_originDragPos = effectiveScenePos(event->pos(), event->modifiers());
+                viewport()->update();
                 event->accept();
                 return;
             }
         }
 
-        QPointF scenePos = snapToGrid(mapToScene(event->pos()));
+        if (m_currentTool == 0) {
+            if (QGraphicsItem* handle = findResizeHandleItem(itemAt(event->pos()))) {
+                m_rectResizeActive = true;
+                emit rectResizeStarted(handle->data(1).toString(), effectiveScenePos(event->pos(), event->modifiers()));
+                event->accept();
+                return;
+            }
+        }
+
+        QPointF scenePos = effectiveScenePos(event->pos(), event->modifiers());
         
         if (m_currentTool == 0) { // Select
             QGraphicsView::mousePressEvent(event);
@@ -101,6 +121,9 @@ void FootprintEditorView::mousePressEvent(QMouseEvent* event) {
 }
 
 void FootprintEditorView::mouseMoveEvent(QMouseEvent* event) {
+    m_cursorScenePos = mapToScene(event->pos());
+    viewport()->update();
+
     if (m_isPanning) {
         QPoint delta = event->pos() - m_lastPanPoint;
         horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
@@ -109,7 +132,7 @@ void FootprintEditorView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
-    QPointF scenePos = snapToGrid(mapToScene(event->pos()));
+    QPointF scenePos = effectiveScenePos(event->pos(), event->modifiers());
     emit mouseMoved(scenePos);
 
     if (m_isDrawing) {
@@ -118,6 +141,12 @@ void FootprintEditorView::mouseMoveEvent(QMouseEvent* event) {
              viewport()->update(); // Trigger redraw
          }
          emit lineDragged(m_drawStart, scenePos);
+    }
+    if (m_originDragActive) {
+        m_originDragPos = scenePos;
+        viewport()->update();
+        event->accept();
+        return;
     }
     if (m_rectResizeActive) {
         emit rectResizeUpdated(scenePos);
@@ -137,13 +166,21 @@ void FootprintEditorView::mouseReleaseEvent(QMouseEvent* event) {
 
     if (event->button() == Qt::LeftButton && m_isDrawing) {
         m_isDrawing = false;
-        QPointF scenePos = snapToGrid(mapToScene(event->pos()));
+        QPointF scenePos = effectiveScenePos(event->pos(), event->modifiers());
         emit drawingFinished(m_drawStart, scenePos);
         viewport()->update();
     }
+    if (event->button() == Qt::LeftButton && m_originDragActive) {
+        m_originDragActive = false;
+        m_originDragPos = effectiveScenePos(event->pos(), event->modifiers());
+        emit originDragFinished(m_originDragPos);
+        viewport()->update();
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton && m_rectResizeActive) {
         m_rectResizeActive = false;
-        emit rectResizeFinished(snapToGrid(mapToScene(event->pos())));
+        emit rectResizeFinished(effectiveScenePos(event->pos(), event->modifiers()));
         event->accept();
         return;
     }
@@ -164,7 +201,13 @@ void FootprintEditorView::wheelEvent(QWheelEvent* event) {
 
 void FootprintEditorView::drawBackground(QPainter* painter, const QRectF& rect) {
     Q_UNUSED(rect);
-    painter->fillRect(rect, QColor(14, 15, 17)); // Modern Dark Horizon color
+    PCBTheme* theme = ThemeManager::theme();
+    const QColor canvasColor = theme ? theme->canvasBackground() : QColor(14, 15, 17);
+    const QColor minorGridColor = theme ? theme->gridSecondary() : QColor(40, 42, 48);
+    const QColor majorGridColor = theme ? theme->gridPrimary() : QColor(60, 64, 72);
+    const QColor originColor = theme ? theme->accentColor() : QColor(0, 200, 255, 160);
+
+    painter->fillRect(rect, canvasColor);
     
     // Draw major and minor grid lines
     qreal fineGrid = m_gridSize;
@@ -173,8 +216,8 @@ void FootprintEditorView::drawBackground(QPainter* painter, const QRectF& rect) 
     qreal startX = std::floor(rect.left() / fineGrid) * fineGrid;
     qreal startY = std::floor(rect.top() / fineGrid) * fineGrid;
     
-    QPen minorPen(QColor(40, 42, 48), 0.0);
-    QPen majorPen(QColor(60, 64, 72), 0.0);
+    QPen minorPen(minorGridColor, 0.0);
+    QPen majorPen(majorGridColor, 0.0);
     minorPen.setCosmetic(true);
     majorPen.setCosmetic(true);
 
@@ -199,7 +242,7 @@ void FootprintEditorView::drawBackground(QPainter* painter, const QRectF& rect) 
     }
 
     // Draw Origin Crosshair
-    QPen originPen(QColor(0, 200, 255, 160)); // Vibrant cyan
+    QPen originPen(originColor);
     originPen.setWidth(0);
     originPen.setCosmetic(true);
     painter->setPen(originPen);
@@ -209,12 +252,40 @@ void FootprintEditorView::drawBackground(QPainter* painter, const QRectF& rect) 
     painter->drawLine(QLineF(0, -crossSize, 0, crossSize));
     
     // Draw a small circle at origin
-    painter->setBrush(QColor(0, 200, 255, 80));
+    QColor originFill = originColor;
+    originFill.setAlpha(80);
+    painter->setBrush(originFill);
     painter->drawEllipse(QPointF(0, 0), fineGrid/2.0, fineGrid/2.0);
 }
 
 void FootprintEditorView::drawForeground(QPainter* painter, const QRectF& rect) {
-    Q_UNUSED(rect);
+    if (m_crosshairEnabled) {
+        painter->save();
+        PCBTheme* theme = ThemeManager::theme();
+        QColor crossColor = theme ? theme->accentColor() : QColor(99, 102, 241);
+        crossColor.setAlpha(110);
+        QPen pen(crossColor, 0);
+        pen.setCosmetic(true);
+        painter->setPen(pen);
+        painter->drawLine(QPointF(rect.left(), m_cursorScenePos.y()), QPointF(rect.right(), m_cursorScenePos.y()));
+        painter->drawLine(QPointF(m_cursorScenePos.x(), rect.top()), QPointF(m_cursorScenePos.x(), rect.bottom()));
+        painter->restore();
+    }
+
+    if (m_originDragActive) {
+        painter->save();
+        QPen dragPen(QColor(16, 185, 129, 220));
+        dragPen.setWidth(0);
+        dragPen.setCosmetic(true);
+        dragPen.setStyle(Qt::DashLine);
+        painter->setPen(dragPen);
+        painter->setBrush(QColor(16, 185, 129, 70));
+        const qreal s = std::max(0.8, m_gridSize * 0.7);
+        painter->drawEllipse(m_originDragPos, s, s);
+        painter->drawLine(QLineF(QPointF(0, 0), m_originDragPos));
+        painter->restore();
+    }
+
     if (m_isDrawing && m_currentTool == FootprintEditor::Measure) {
         painter->save();
         QPointF start = m_drawStart;

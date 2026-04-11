@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <QStandardPaths>
 #include <QPainterPath>
+#include <QRegularExpression>
 
 using Flux::Model::FootprintDefinition;
 
@@ -355,16 +356,19 @@ void FootprintLibraryManager::addLibrary(const QString& path) {
 }
 
 FootprintLibrary* FootprintLibraryManager::createLibrary(const QString& name) {
-    QString basePath = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-    if (basePath.isEmpty()) basePath = QDir::currentPath() + "/footprints_lib";
-    else basePath += "/footprints";
-    
-    QString libPath = basePath + "/" + name;
+    QString basePath = QDir::homePath() + "/ViospiceLib/footprints";
+    QDir().mkpath(basePath);
+
+    QString safeName = name.trimmed();
+    if (safeName.isEmpty()) safeName = "User Library";
+    safeName.replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+
+    QString libPath = basePath + "/" + safeName;
     QDir dir(libPath);
     if (!dir.exists()) dir.mkpath(".");
     
     addLibrary(libPath);
-    return findLibrary(name);
+    return findLibrary(safeName);
 }
 
 FootprintLibrary* FootprintLibraryManager::findLibrary(const QString& name) {

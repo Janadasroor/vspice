@@ -26,6 +26,7 @@ public:
         , m_maskExpansion(0.0)
         , m_pasteExpansionOverride(false)
         , m_pasteExpansion(0.0)
+        , m_number()
     {}
 
     // Data Accessors
@@ -65,6 +66,9 @@ public:
     QString netName() const { return m_netName; }
     void setNetName(const QString& name) { m_netName = name; }
 
+    QString number() const { return m_number; }
+    void setNumber(const QString& number) { m_number = number; }
+
     // Serialization
     QJsonObject toJson() const {
         QJsonObject json;
@@ -82,6 +86,7 @@ public:
         json["pasteExpansionOverride"] = m_pasteExpansionOverride;
         json["pasteExpansion"] = m_pasteExpansion;
         json["netName"] = m_netName;
+        json["number"] = m_number;
         return json;
     }
 
@@ -98,6 +103,7 @@ public:
         m_pasteExpansionOverride = json["pasteExpansionOverride"].toBool();
         m_pasteExpansion = json["pasteExpansion"].toDouble();
         m_netName = json["netName"].toString();
+        m_number = json["number"].toString();
     }
 
 private:
@@ -113,6 +119,7 @@ private:
     bool m_pasteExpansionOverride;
     double m_pasteExpansion;
     QString m_netName;
+    QString m_number;
 };
 
 } // namespace Model

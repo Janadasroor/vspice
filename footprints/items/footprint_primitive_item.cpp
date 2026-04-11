@@ -27,7 +27,7 @@ void FootprintPrimitiveItem::paintSelectionBorder(QPainter* painter, const QStyl
 // Helper to get color for a footprint layer
 static QColor getLayerColor(Model::FootprintPrimitive::Layer layer) {
     PCBTheme* theme = ThemeManager::theme();
-    if (!theme) return Qt::yellow;
+    if (!theme) return QColor(255, 255, 100);
 
     switch (layer) {
         case Model::FootprintPrimitive::Top_Copper: return theme->topCopper();
@@ -36,11 +36,19 @@ static QColor getLayerColor(Model::FootprintPrimitive::Layer layer) {
         case Model::FootprintPrimitive::Bottom_Silkscreen: return theme->bottomSilkscreen();
         case Model::FootprintPrimitive::Top_SolderMask: return theme->topSoldermask();
         case Model::FootprintPrimitive::Bottom_SolderMask: return theme->bottomSoldermask();
-        case Model::FootprintPrimitive::Top_Courtyard: return QColor(100, 100, 100);
-        case Model::FootprintPrimitive::Bottom_Courtyard: return QColor(100, 100, 100);
-        case Model::FootprintPrimitive::Top_Fabrication: return QColor(150, 150, 150);
-        case Model::FootprintPrimitive::Bottom_Fabrication: return QColor(150, 150, 150);
-        default: return Qt::yellow;
+        case Model::FootprintPrimitive::Top_Courtyard: return theme->edgeCuts().lighter(115);
+        case Model::FootprintPrimitive::Bottom_Courtyard: return theme->edgeCuts().darker(110);
+        case Model::FootprintPrimitive::Top_Fabrication: return theme->componentOutline();
+        case Model::FootprintPrimitive::Bottom_Fabrication: return theme->componentOutline().darker(120);
+        case Model::FootprintPrimitive::Top_SolderPaste: return theme->padFill().lighter(125);
+        case Model::FootprintPrimitive::Bottom_SolderPaste: return theme->padFill().darker(105);
+        case Model::FootprintPrimitive::Top_Adhesive: return QColor(168, 85, 247);
+        case Model::FootprintPrimitive::Bottom_Adhesive: return QColor(217, 70, 239);
+        case Model::FootprintPrimitive::Inner_Copper_1: return theme->topCopper().lighter(120);
+        case Model::FootprintPrimitive::Inner_Copper_2: return theme->bottomCopper().lighter(120);
+        case Model::FootprintPrimitive::Inner_Copper_3: return theme->topCopper().darker(115);
+        case Model::FootprintPrimitive::Inner_Copper_4: return theme->bottomCopper().darker(115);
+        default: return theme->multiLayer();
     }
 }
 
@@ -217,19 +225,34 @@ void FootprintPadItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* 
     qreal h = m_model.data.value("height").toDouble();
     QString shape = m_model.data.value("shape").toString();
     QString num = m_model.data.value("number").toString();
-
-    QColor color = getLayerColor(m_model.layer);
-    painter->setPen(QPen(Qt::white, 0.05));
+    const bool isThroughHole = m_model.data.value("drill_size").toDouble() > 0.001;
+    const QColor color = isThroughHole && ThemeManager::theme()
+        ? ThemeManager::theme()->multiLayer()
+        : getLayerColor(m_model.layer);
+    painter->setPen(QPen(color.darker(150), 0.05));
     painter->setBrush(color);
 
     if (shape == "Circle" || shape == "Round") {
         painter->drawEllipse(QPointF(x, y), w/2, h/2);
+    } else if (shape == "Oblong") {
+        qreal r = std::min(w, h) / 2.0;
+        painter->drawRoundedRect(QRectF(x - w/2, y - h/2, w, h), r, r);
+    } else if (shape == "RoundedRect") {
+        qreal r = std::min(w, h) * 0.25;
+        painter->drawRoundedRect(QRectF(x - w/2, y - h/2, w, h), r, r);
     } else {
         painter->drawRect(QRectF(x - w/2, y - h/2, w, h));
     }
 
+    if (isThroughHole) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(QColor(30, 30, 30));
+        const qreal drill = m_model.data.value("drill_size").toDouble();
+        painter->drawEllipse(QPointF(x, y), drill / 2.0, drill / 2.0);
+    }
+
     // Draw number
-    painter->setPen(Qt::black);
+    painter->setPen(color.lightness() < 140 ? Qt::white : Qt::black);
     painter->setFont(QFont("Monospace", 1));
     painter->drawText(boundingRect(), Qt::AlignCenter, num);
 

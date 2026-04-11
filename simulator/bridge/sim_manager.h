@@ -49,6 +49,7 @@ public:
     void stopAll();
     void pauseSimulation(bool pause);
     bool isPaused() const { return m_paused; }
+    bool isRunning() const;
 
 Q_SIGNALS:
     void simulationStarted();
@@ -56,6 +57,7 @@ Q_SIGNALS:
     void netlistGenerated(const QString& netlist, const SimAnalysisConfig& config);
     void generationFailed(const QString& error);
     void simulationPaused(bool paused);
+    void simulationStopped();
     void realTimeDataBatchReceived(const std::vector<double>& times, const std::vector<std::vector<double>>& values, const QStringList& names);
     void errorOccurred(const QString& msg);
     void logMessage(const QString& msg);
@@ -83,6 +85,7 @@ private:
     QString m_activeStepLabel;
     QString m_activeNetlistText;
     QString m_sharedNetlistPath;
+    bool m_stopRequested = false;
     int m_completedStepRuns = 0;
     class QProcess* m_ngspiceProcess = nullptr;
 

@@ -717,6 +717,7 @@ bool SchematicEditor::openFile(const QString& filePath) {
     QJsonObject loadedSimulationSetup;
     if (SchematicFileIO::loadSchematic(m_scene, filePath, loadedPageSize, m_titleBlock, &embeddedScript, &loadedBusAliases, &loadedErcExclusions, &loadedSimulationSetup)) {
         m_currentFilePath = filePath;
+        syncWsState();
         updateGeminiProjectEffect();
         m_currentPageSize = loadedPageSize;
         m_isModified = false;
@@ -844,6 +845,7 @@ void SchematicEditor::onSaveSchematic() {
 
     if (success) {
         m_isModified = false;
+        syncWsState();
         if (m_undoStack) m_undoStack->setClean();
         QFileInfo fileInfo(m_currentFilePath);
         setWindowTitle(QString("viospice - Schematic Editor [%1]").arg(fileInfo.fileName()));
@@ -1960,4 +1962,72 @@ void SchematicEditor::onCreateSymbolFromSchematic() {
 
     // ── Step 6: Open Symbol Editor with the pre-built definition ─────────
     openSymbolEditorWindow(symbolName, def);
+}
+
+void SchematicEditor::syncWsState()
+{
+#if VIOSPICE_HAS_QT_WEBSOCKETS
+    auto* ws = WsServer::instance();
+    if (!ws) return;
+
+    // Set Qt properties so ws_server can read them from top-level widgets
+    setProperty("currentFilePath", m_currentFilePath);
+    setProperty("unsavedChanges", m_isModified);
+
+    AppState state;
+    state.activeWindow = "schematic";
+    state.currentFile = m_currentFilePath;
+    state.fileType = QFileInfo(m_currentFilePath).suffix().toLower();
+    state.unsavedChanges = m_isModified;
+
+    // Collect selected component references
+    const auto selected = m_view->scene()->selectedItems();
+    for (QGraphicsItem* item : selected) {
+        if (auto* ci = qgraphicsitem_cast<GenericComponentItem*>(item)) {
+            QString ref = ci->reference();
+            if (!ref.isEmpty()) {
+                state.selectedComponents.append(ref);
+            }
+        }
+    }
+
+    ws->setState(state);
+    ws->broadcastEvent("file.opened", {{"path", m_currentFilePath}});
+#endif
+}
+
+void SchematicEditor::onRemoteFileUpdated(const QString& filePath, const QString& content)
+{
+    Q_UNUSED(content);
+
+    // Empty path = reload all open files (checkpoint restore scenario)
+    const bool reloadAll = filePath.isEmpty();
+    const bool isOurFile = reloadAll || filePath == m_currentFilePath;
+    if (!isOurFile) return;
+
+    // If no file is loaded, nothing to reload
+    if (m_currentFilePath.isEmpty()) return;
+
+    // Reload the schematic from disk
+    QString loadedPageSize;
+    QString embeddedScript;
+    QMap<QString, QList<QString>> loadedBusAliases;
+    QSet<QString> loadedErcExclusions;
+    QJsonObject loadedSimulationSetup;
+
+    if (SchematicFileIO::loadSchematic(m_scene, m_currentFilePath, loadedPageSize, m_titleBlock, &embeddedScript, &loadedBusAliases, &loadedErcExclusions, &loadedSimulationSetup)) {
+        m_isModified = false;
+        m_currentPageSize = loadedPageSize;
+        m_busAliases = loadedBusAliases;
+        m_ercExclusions = loadedErcExclusions;
+        if (m_netManager) m_netManager->setBusAliases(m_busAliases);
+        if (m_undoStack) m_undoStack->clear();
+
+        // Refresh UI
+        if (m_view) m_view->update();
+        statusBar()->showMessage(QString(reloadAll ? "Checkpoint restored — file reloaded: %1" : "Remote update applied: %1").arg(QFileInfo(m_currentFilePath).fileName()), 5000);
+        syncWsState();
+    } else {
+        statusBar()->showMessage("Failed to reload file: " + m_currentFilePath, 5000);
+    }
 }

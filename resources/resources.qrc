@@ -50,6 +50,7 @@
         <file>icons/tool_generic.svg</file>
         <file>icons/tool_pin.svg</file>
         <file>icons/tool_pad.svg</file>
+        <file>icons/tool_pad_settings.svg</file>
         <file>icons/pad_rect.svg</file>
         <file>icons/pad_circle.svg</file>
         <file>icons/pad_oblong.svg</file>

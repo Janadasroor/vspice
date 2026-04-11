@@ -24,6 +24,7 @@ public:
         SFFM,    // Single Frequency FM
         PWL,     // Piecewise Linear
         PWLFile, // PWL from file
+        WaveFile, // WAV file source (ngspice 33+)
         Noise,   // Random Noise
         Behavioral, // Arbitrary Behavioral Source (BV)
         AC = Sine // Legacy compatibility
@@ -125,6 +126,14 @@ public:
     bool pwlRepeat() const { return m_pwlRepeat; }
     void setPwlRepeat(bool r) { m_pwlRepeat = r; updateValue(); update(); }
 
+    // Wave Params
+    QString waveFile() const { return m_waveFile; }
+    void setWaveFile(const QString& f) { m_waveFile = f; updateValue(); update(); }
+    int waveChan() const { return m_waveChan; }
+    void setWaveChan(int c) { m_waveChan = c; updateValue(); update(); }
+    double waveScale() const { return m_waveScale; }
+    void setWaveScale(double s) { m_waveScale = s; updateValue(); update(); }
+
     ~VoltageSourceItem() override;
 
     // AC Analysis
@@ -200,6 +209,11 @@ private:
     QString m_pwlPoints;
     QString m_pwlFile;
     bool m_pwlRepeat;
+
+    // Wave
+    QString m_waveFile;
+    int m_waveChan = 0;
+    double m_waveScale = 1.0;
 
     // AC
     QString m_acAmplitude;

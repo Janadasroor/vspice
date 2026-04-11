@@ -116,6 +116,62 @@ SchematicItem* findProbeableComponentAt(SchematicView* view, const QPoint& viewP
                                               Qt::DescendingOrder,
                                               view->transform()));
 }
+
+QString findNearbyProbeNet(SchematicView* view, NetManager* netManager, const QPoint& viewPos, const QPointF& scenePos) {
+    if (!view || !netManager) return {};
+
+    auto resolveFromItems = [&](const QList<QGraphicsItem*>& items) -> QString {
+        for (QGraphicsItem* it : items) {
+            SchematicItem* candidate = owningSchematicItem(it);
+            if (!candidate) continue;
+
+            const auto type = candidate->itemType();
+            if (type == SchematicItem::WireType) {
+                if (auto* wire = dynamic_cast<WireItem*>(candidate)) {
+                    QString net = wire->pinNet(0).trimmed();
+                    if (!net.isEmpty()) return net;
+                    net = wire->pinNet(1).trimmed();
+                    if (!net.isEmpty()) return net;
+                }
+            }
+
+            if (type != SchematicItem::WireType &&
+                type != SchematicItem::LabelType &&
+                type != SchematicItem::NetLabelType) {
+                continue;
+            }
+
+            const QList<QPointF> pins = candidate->connectionPoints();
+            for (int i = 0; i < pins.size(); ++i) {
+                const QPointF pinScene = candidate->mapToScene(pins.at(i));
+                QString net = netManager->findNetAtPoint(pinScene).trimmed();
+                if (net.isEmpty()) {
+                    net = candidate->pinNet(i).trimmed();
+                }
+                if (!net.isEmpty()) return net;
+            }
+        }
+        return {};
+    };
+
+    QString net = netManager->findNetAtPoint(scenePos).trimmed();
+    if (!net.isEmpty()) return net;
+
+    const QRect exactRect(viewPos.x() - 3, viewPos.y() - 3, 7, 7);
+    net = resolveFromItems(view->items(exactRect));
+    if (!net.isEmpty()) return net;
+
+    constexpr qreal kWireHitRadius = 10.0;
+    const QRectF sceneRect(scenePos.x() - kWireHitRadius,
+                           scenePos.y() - kWireHitRadius,
+                           kWireHitRadius * 2.0,
+                           kWireHitRadius * 2.0);
+    net = resolveFromItems(view->scene()->items(sceneRect,
+                                                Qt::IntersectsItemBoundingRect,
+                                                Qt::DescendingOrder,
+                                                view->transform()));
+    return net;
+}
 }
 
 SchematicView::SchematicView(QWidget *parent)
@@ -462,32 +518,11 @@ void SchematicView::mousePressEvent(QMouseEvent *event) {
                 }
             }
             if (m_netManager) {
-                probedNet = m_netManager->findNetAtPoint(scenePos);
+                probedNet = findNearbyProbeNet(this, m_netManager, event->pos(), scenePos);
                 if (!probedNet.isEmpty()) isWireOrLabel = true;
-                // If nets are stale (often after simulation), refresh once on-demand.
                 if (probedNet.isEmpty() && isWireOrLabel) {
                     m_netManager->updateNets(scene());
-                    probedNet = m_netManager->findNetAtPoint(scenePos);
-                }
-            }
-
-            // Fallback: if we clicked a wire, try to probe its net directly
-            if (probedNet.isEmpty()) {
-                QGraphicsItem* hit = scene()->itemAt(scenePos, transform());
-                QGraphicsItem* curr = hit;
-                WireItem* wire = nullptr;
-                while (curr) {
-                    wire = dynamic_cast<WireItem*>(curr);
-                    if (wire) break;
-                    curr = curr->parentItem();
-                }
-                if (wire) {
-                    isWireOrLabel = true;
-                    probedNet = wire->pinNet(0);
-                    if (probedNet.isEmpty() && m_netManager) {
-                        m_netManager->updateNets(scene());
-                        probedNet = wire->pinNet(0);
-                    }
+                    probedNet = findNearbyProbeNet(this, m_netManager, event->pos(), scenePos);
                 }
             }
             

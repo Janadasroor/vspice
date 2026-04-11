@@ -3,11 +3,13 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
+#include <QFormLayout>
 #include <QGroupBox>
 #include <QPushButton>
 #include <QPlainTextEdit>
 #include <QFileDialog>
 #include <QCompleter>
+#include <QComboBox>
 #include <QStringListModel>
 #include <QKeyEvent>
 #include <QJSEngine>
@@ -15,6 +17,11 @@
 #include <QAbstractItemView>
 #include <QSyntaxHighlighter>
 #include <QTextDocument>
+#include <QFileInfo>
+#include <QMessageBox>
+#include <QSaveFile>
+#include <QtEndian>
+#include <cmath>
 #include "../analysis/net_manager.h"
 #include "../editor/schematic_commands.h"
 
@@ -38,6 +45,195 @@ QString validateBehavioralExpr(const QString& expr) {
     if (depth != 0) return "Unbalanced parentheses.";
     if (!v.startsWith("V=", Qt::CaseInsensitive)) return "Missing 'V=' prefix. It will be added.";
     return QString();
+}
+
+struct DecodedWavData {
+    int sampleRate = 0;
+    int channelCount = 0;
+    QVector<QVector<double>> channels;
+};
+
+quint32 readLe32(const char* data) {
+    return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(data));
+}
+
+quint16 readLe16(const char* data) {
+    return qFromLittleEndian<quint16>(reinterpret_cast<const uchar*>(data));
+}
+
+bool decodeWavFile(const QString& path, DecodedWavData* out, QString* error) {
+    if (!out) return false;
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) *error = file.errorString();
+        return false;
+    }
+
+    const QByteArray bytes = file.readAll();
+    if (bytes.size() < 44 || bytes.mid(0, 4) != "RIFF" || bytes.mid(8, 4) != "WAVE") {
+        if (error) *error = "Not a valid RIFF/WAVE file.";
+        return false;
+    }
+
+    quint16 audioFormat = 0;
+    quint16 channelCount = 0;
+    quint16 bitsPerSample = 0;
+    quint16 blockAlign = 0;
+    quint32 sampleRate = 0;
+    QByteArray pcmData;
+
+    int offset = 12;
+    while (offset + 8 <= bytes.size()) {
+        const QByteArray chunkId = bytes.mid(offset, 4);
+        const quint32 chunkSize = readLe32(bytes.constData() + offset + 4);
+        offset += 8;
+        if (offset + static_cast<int>(chunkSize) > bytes.size()) break;
+
+        if (chunkId == "fmt ") {
+            if (chunkSize < 16) {
+                if (error) *error = "Invalid WAV fmt chunk.";
+                return false;
+            }
+            const char* fmt = bytes.constData() + offset;
+            audioFormat = readLe16(fmt + 0);
+            channelCount = readLe16(fmt + 2);
+            sampleRate = readLe32(fmt + 4);
+            blockAlign = readLe16(fmt + 12);
+            bitsPerSample = readLe16(fmt + 14);
+        } else if (chunkId == "data") {
+            pcmData = bytes.mid(offset, chunkSize);
+        }
+
+        offset += static_cast<int>(chunkSize);
+        if (chunkSize & 1) ++offset;
+    }
+
+    if (sampleRate == 0 || channelCount == 0 || bitsPerSample == 0 || blockAlign == 0 || pcmData.isEmpty()) {
+        if (error) *error = "Missing WAV format or data chunk.";
+        return false;
+    }
+
+    if (audioFormat != 1 && audioFormat != 3) {
+        if (error) *error = QString("Unsupported WAV encoding format %1. Only PCM and IEEE float are supported.").arg(audioFormat);
+        return false;
+    }
+
+    const int bytesPerSample = bitsPerSample / 8;
+    if (bytesPerSample <= 0 || blockAlign < bytesPerSample * channelCount) {
+        if (error) *error = "Invalid WAV sample format.";
+        return false;
+    }
+
+    const int frameCount = pcmData.size() / blockAlign;
+    if (frameCount <= 0) {
+        if (error) *error = "WAV file contains no audio frames.";
+        return false;
+    }
+
+    out->sampleRate = static_cast<int>(sampleRate);
+    out->channelCount = static_cast<int>(channelCount);
+    out->channels = QVector<QVector<double>>(out->channelCount);
+    for (auto& channel : out->channels) {
+        channel.reserve(frameCount);
+    }
+
+    for (int frame = 0; frame < frameCount; ++frame) {
+        const char* frameData = pcmData.constData() + frame * blockAlign;
+        for (int channel = 0; channel < out->channelCount; ++channel) {
+            const char* sampleData = frameData + channel * bytesPerSample;
+            double sample = 0.0;
+
+            if (audioFormat == 3 && bitsPerSample == 32) {
+                float value = 0.0f;
+                memcpy(&value, sampleData, sizeof(float));
+                sample = static_cast<double>(value);
+            } else if (audioFormat == 3 && bitsPerSample == 64) {
+                double value = 0.0;
+                memcpy(&value, sampleData, sizeof(double));
+                sample = value;
+            } else if (bitsPerSample == 8) {
+                const quint8 value = static_cast<quint8>(sampleData[0]);
+                sample = (static_cast<double>(value) - 128.0) / 128.0;
+            } else if (bitsPerSample == 16) {
+                const qint16 value = static_cast<qint16>(readLe16(sampleData));
+                sample = static_cast<double>(value) / 32768.0;
+            } else if (bitsPerSample == 24) {
+                qint32 value = (static_cast<quint8>(sampleData[0])) |
+                               (static_cast<quint8>(sampleData[1]) << 8) |
+                               (static_cast<quint8>(sampleData[2]) << 16);
+                if (value & 0x00800000) value |= ~0x00FFFFFF;
+                sample = static_cast<double>(value) / 8388608.0;
+            } else if (bitsPerSample == 32) {
+                const qint32 value = static_cast<qint32>(readLe32(sampleData));
+                sample = static_cast<double>(value) / 2147483648.0;
+            } else {
+                if (error) *error = QString("Unsupported WAV bit depth %1.").arg(bitsPerSample);
+                return false;
+            }
+
+            out->channels[channel].append(sample);
+        }
+    }
+
+    return true;
+}
+
+bool writePwlFromWav(const QString& wavPath,
+                     const QString& projectDir,
+                     const QString& reference,
+                     int channelIndex,
+                     double amplitudeScale,
+                     double dcOffset,
+                     QString* outPath,
+                     QString* error) {
+    DecodedWavData wav;
+    if (!decodeWavFile(wavPath, &wav, error)) {
+        return false;
+    }
+    if (channelIndex < 0 || channelIndex >= wav.channels.size()) {
+        if (error) *error = "Selected WAV channel is out of range.";
+        return false;
+    }
+
+    QFileInfo wavInfo(wavPath);
+    const QString targetDir = !projectDir.isEmpty() ? projectDir : wavInfo.absolutePath();
+    const QString baseName = !reference.isEmpty() ? reference : wavInfo.completeBaseName();
+    QDir().mkpath(targetDir);
+    const QString pwlPath = QDir(targetDir).filePath(baseName + "_audio.pwl");
+
+    QSaveFile outFile(pwlPath);
+    if (!outFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        if (error) *error = outFile.errorString();
+        return false;
+    }
+
+    QTextStream out(&outFile);
+    constexpr int kMaxPwlPoints = 100000;
+    const QVector<double>& samples = wav.channels[channelIndex];
+    const int stride = std::max(1, static_cast<int>(std::ceil(static_cast<double>(samples.size()) / kMaxPwlPoints)));
+    const double dt = 1.0 / static_cast<double>(wav.sampleRate);
+
+    for (int i = 0; i < samples.size(); i += stride) {
+        const double t = static_cast<double>(i) * dt;
+        const double value = samples[i] * amplitudeScale + dcOffset;
+        out << QString::number(t, 'g', 12) << ' ' << QString::number(value, 'g', 12) << '\n';
+    }
+
+    if (!samples.isEmpty() && (samples.size() - 1) % stride != 0) {
+        const int lastIndex = samples.size() - 1;
+        const double t = static_cast<double>(lastIndex) * dt;
+        const double value = samples[lastIndex] * amplitudeScale + dcOffset;
+        out << QString::number(t, 'g', 12) << ' ' << QString::number(value, 'g', 12) << '\n';
+    }
+
+    if (!outFile.commit()) {
+        if (error) *error = outFile.errorString();
+        return false;
+    }
+
+    if (outPath) *outPath = pwlPath;
+    return true;
 }
 }
 
@@ -115,6 +311,7 @@ void VoltageSourceLTSpiceDialog::setupUi() {
     m_behavioralRadio = new QRadioButton("Behavioral (BV: V=expression)");
     m_customRadio = new QRadioButton("CUSTOM (Draw)");
     m_pwlFileRadio = new QRadioButton("PWL FILE:");
+    m_waveFileRadio = new QRadioButton("WAVEFILE (Audio .wav):");
 
     functionsLayout->addWidget(m_noneRadio);
     functionsLayout->addWidget(m_pulseRadio);
@@ -124,16 +321,26 @@ void VoltageSourceLTSpiceDialog::setupUi() {
     functionsLayout->addWidget(m_pwlRadio);
     functionsLayout->addWidget(m_behavioralRadio);
     functionsLayout->addWidget(m_customRadio);
-    
+
     auto* pwlFileLayout = new QHBoxLayout();
     pwlFileLayout->addWidget(m_pwlFileRadio);
     m_pwlFile = new QLineEdit();
     pwlFileLayout->addWidget(m_pwlFile);
-    auto* browseBtn = new QPushButton("Browse");
-    pwlFileLayout->addWidget(browseBtn);
+    auto* pwlBrowseBtn = new QPushButton("Browse");
+    pwlFileLayout->addWidget(pwlBrowseBtn);
     functionsLayout->addLayout(pwlFileLayout);
-    
-    connect(browseBtn, &QPushButton::clicked, this, &VoltageSourceLTSpiceDialog::onPwlBrowse);
+
+    connect(pwlBrowseBtn, &QPushButton::clicked, this, &VoltageSourceLTSpiceDialog::onPwlBrowse);
+
+    auto* waveFileRadioLayout = new QHBoxLayout();
+    waveFileRadioLayout->addWidget(m_waveFileRadio);
+    m_waveFile = new QLineEdit();
+    waveFileRadioLayout->addWidget(m_waveFile);
+    auto* waveBrowseBtn = new QPushButton("Browse");
+    waveFileRadioLayout->addWidget(waveBrowseBtn);
+    functionsLayout->addLayout(waveFileRadioLayout);
+
+    connect(waveBrowseBtn, &QPushButton::clicked, this, &VoltageSourceLTSpiceDialog::onWaveBrowse);
 
     // Function Parameters (Stacked)
     m_paramStack = new QStackedWidget();
@@ -257,6 +464,59 @@ void VoltageSourceLTSpiceDialog::setupUi() {
 
     m_paramStack->addWidget(behavioralPage);
 
+    // 7: WAVEFILE
+    auto* waveFilePage = new QWidget();
+    auto* waveFileLayout = new QVBoxLayout(waveFilePage);
+
+    auto* waveFilePathLayout = new QHBoxLayout();
+    waveFilePathLayout->addWidget(new QLabel("WAV File:"));
+    m_waveFile = new QLineEdit();
+    m_waveFile->setPlaceholderText("Path to .wav file...");
+    waveFilePathLayout->addWidget(m_waveFile);
+    auto* waveFileBrowseBtn = new QPushButton("Browse...");
+    waveFilePathLayout->addWidget(waveFileBrowseBtn);
+    waveFileLayout->addLayout(waveFilePathLayout);
+
+    auto* waveChanLayout = new QHBoxLayout();
+    waveChanLayout->addWidget(new QLabel("Channel:"));
+    m_waveChan = new QLineEdit("0");
+    m_waveChan->setMaximumWidth(80);
+    waveChanLayout->addWidget(m_waveChan);
+    waveChanLayout->addSpacing(10);
+    waveChanLayout->addWidget(new QLabel("Peak Scale:"));
+    auto* m_waveScale = new QDoubleSpinBox();
+    m_waveScale->setRange(0.001, 10000.0);
+    m_waveScale->setDecimals(4);
+    m_waveScale->setValue(1.0);
+    m_waveScale->setMaximumWidth(120);
+    m_waveScale->setToolTip("Multiply all WAV samples by this factor.\n1.0 = original amplitude, 2.0 = 6dB gain, 0.5 = -6dB.");
+    waveChanLayout->addWidget(m_waveScale);
+    m_waveScaleSpin = m_waveScale;
+    waveChanLayout->addStretch();
+    waveFileLayout->addLayout(waveChanLayout);
+
+    m_waveFileInfo = new QLabel();
+    m_waveFileInfo->setWordWrap(true);
+    m_waveFileInfo->setStyleSheet("color: #555555; font-size: 11px; background: #f8f8f8; border: 1px solid #e0e0e0; border-radius: 4px; padding: 8px;");
+    m_waveFileInfo->setTextFormat(Qt::RichText);
+    m_waveFileInfo->setMinimumHeight(80);
+    m_waveFileInfo->setText("<b>No WAV file selected.</b><br><br>"
+                            "Select a WAV file to see its properties here.<br>"
+                            "Supported: 8/16/24/32-bit PCM, 32/64-bit IEEE float.");
+    waveFileLayout->addWidget(m_waveFileInfo);
+
+    auto* waveInfoNote = new QLabel("<b>Note:</b> WAV samples are normalized to ±1.0 V. Use <b>Peak Scale</b> to adjust amplitude (e.g. 2.0 = 6dB gain).");
+    waveInfoNote->setWordWrap(true);
+    waveInfoNote->setStyleSheet("color: #888888; font-size: 10px;");
+    waveFileLayout->addWidget(waveInfoNote);
+
+    waveFileLayout->addStretch();
+
+    connect(waveFileBrowseBtn, &QPushButton::clicked, this, &VoltageSourceLTSpiceDialog::onWaveBrowse);
+    connect(m_waveFile, &QLineEdit::textChanged, this, &VoltageSourceLTSpiceDialog::onWaveFileChanged);
+
+    m_paramStack->addWidget(waveFilePage);
+
     functionsLayout->addWidget(m_paramStack);
     
     m_functionVisible = new QCheckBox("Make this information visible on schematic:");
@@ -316,6 +576,7 @@ void VoltageSourceLTSpiceDialog::setupUi() {
     connect(m_behavioralRadio, &QRadioButton::toggled, this, &VoltageSourceLTSpiceDialog::onFunctionChanged);
     connect(m_customRadio, &QRadioButton::toggled, this, &VoltageSourceLTSpiceDialog::onFunctionChanged);
     connect(m_pwlFileRadio, &QRadioButton::toggled, this, &VoltageSourceLTSpiceDialog::onFunctionChanged);
+    connect(m_waveFileRadio, &QRadioButton::toggled, this, &VoltageSourceLTSpiceDialog::onFunctionChanged);
 
     connect(okBtn, &QPushButton::clicked, this, &VoltageSourceLTSpiceDialog::onAccepted);
     connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
@@ -477,7 +738,8 @@ void VoltageSourceLTSpiceDialog::onFunctionChanged() {
         m_paramStack->setCurrentIndex(5);
         onCustomDraw();
     }
-    else if (m_pwlFileRadio->isChecked()) m_paramStack->setCurrentIndex(0); // PWL File uses the HLayout line edit
+    else if (m_pwlFileRadio->isChecked()) m_paramStack->setCurrentIndex(0);
+    else if (m_waveFileRadio->isChecked()) m_paramStack->setCurrentIndex(7);
 }
 
 void VoltageSourceLTSpiceDialog::onPwlBrowse() {
@@ -486,6 +748,181 @@ void VoltageSourceLTSpiceDialog::onPwlBrowse() {
         m_pwlFile->setText(fileName);
         m_pwlFileRadio->setChecked(true);
     }
+}
+
+void VoltageSourceLTSpiceDialog::onWaveBrowse() {
+    const QString wavPath = QFileDialog::getOpenFileName(this, "Select WAV Audio File", m_projectDir, "WAV Audio Files (*.wav);;All Files (*)");
+    if (wavPath.isEmpty()) {
+        return;
+    }
+
+    DecodedWavData wavInfo;
+    QString error;
+    if (!decodeWavFile(wavPath, &wavInfo, &error)) {
+        QMessageBox::warning(this, "WAV File Error", "Could not read WAV file.\n\n" + error);
+        return;
+    }
+
+    m_waveFile->setText(wavPath);
+    m_waveFileRadio->setChecked(true);
+}
+
+void VoltageSourceLTSpiceDialog::onWaveFileChanged() {
+    updateWaveFileInfo();
+}
+
+void VoltageSourceLTSpiceDialog::updateWaveFileInfo() {
+    QString path = m_waveFile->text().trimmed();
+    double scale = m_waveScaleSpin ? m_waveScaleSpin->value() : 1.0;
+    if (path.isEmpty()) {
+        m_waveFileInfo->setText("<b>No WAV file selected.</b><br><br>"
+                                "Select a WAV file to see its properties here.<br>"
+                                "Supported: 8/16/24/32-bit PCM, 32/64-bit IEEE float.");
+        return;
+    }
+
+    DecodedWavData wavInfo;
+    QString error;
+    if (!decodeWavFile(path, &wavInfo, &error)) {
+        m_waveFileInfo->setText(QString("<b style='color: #cc0000;'>⚠ Error reading file</b><br><br>%1").arg(error));
+        return;
+    }
+
+    double duration = wavInfo.channels.isEmpty() ? 0.0 : static_cast<double>(wavInfo.channels.first().size()) / wavInfo.sampleRate;
+
+    QString channels;
+    if (wavInfo.channelCount == 1) channels = "Mono";
+    else if (wavInfo.channelCount == 2) channels = "Stereo";
+    else channels = QString("%1 channels").arg(wavInfo.channelCount);
+
+    QString channelNames;
+    if (wavInfo.channelCount >= 1) {
+        QStringList names;
+        if (wavInfo.channelCount == 2) {
+            names << "0: Left" << "1: Right";
+        } else {
+            for (int i = 0; i < wavInfo.channelCount; ++i) {
+                names << QString("%1: Ch%2").arg(i).arg(i + 1);
+            }
+        }
+        channelNames = "<br><b>Channels:</b> " + names.join(", ");
+    }
+
+    // Compute RMS and peak for selected channel
+    int chanIdx = 0;
+    bool ok = false;
+    int inputChan = m_waveChan->text().toInt(&ok);
+    if (ok && inputChan >= 0 && inputChan < wavInfo.channelCount) {
+        chanIdx = inputChan;
+    }
+
+    QString scaleNote;
+    if (std::abs(scale - 1.0) > 1e-6) {
+        double db = 20.0 * std::log10(scale);
+        scaleNote = QString("<br><b>⚡ Scale:</b> %1× (%2 dB)").arg(scale, 0, 'f', 3).arg(db, 0, 'f', 1);
+    }
+
+    if (!wavInfo.channels.isEmpty() && chanIdx < wavInfo.channels.size()) {
+        const auto& samples = wavInfo.channels[chanIdx];
+        double rms = 0.0;
+        double peak = 0.0;
+        for (double s : samples) {
+            rms += s * s;
+            double absS = std::abs(s);
+            if (absS > peak) peak = absS;
+        }
+        if (!samples.isEmpty()) rms = std::sqrt(rms / samples.size());
+
+        double effRms = rms * scale;
+        double effPeak = peak * scale;
+        channelNames += QString("<br><b>RMS (ch %1):</b> %2 V").arg(chanIdx).arg(effRms, 0, 'f', 6);
+        channelNames += QString("<br><b>Peak (ch %1):</b> %2 V").arg(chanIdx).arg(effPeak, 0, 'f', 6);
+    }
+
+    m_waveFileInfo->setText(
+        QString("<b style='color: #008800;'>✓ WAV file loaded</b><br><br>"
+                "<b>File:</b> %1<br>"
+                "<b>Sample Rate:</b> %2 Hz<br>"
+                "<b>Format:</b> %3<br>"
+                "<b>Duration:</b> %4 sec (%5 samples)")
+            .arg(QFileInfo(path).fileName())
+            .arg(wavInfo.sampleRate)
+            .arg(channels)
+            .arg(duration, 0, 'f', 3)
+            .arg(wavInfo.channels.isEmpty() ? 0 : wavInfo.channels.first().size())
+        + channelNames + scaleNote
+    );
+}
+
+void VoltageSourceLTSpiceDialog::onWavBrowse() {
+    const QString wavPath = QFileDialog::getOpenFileName(this, "Import WAV Audio", m_projectDir, "WAV Audio (*.wav)");
+    if (wavPath.isEmpty()) {
+        return;
+    }
+
+    DecodedWavData wavInfo;
+    QString error;
+    if (!decodeWavFile(wavPath, &wavInfo, &error)) {
+        QMessageBox::warning(this, "WAV Import Failed", "Could not read WAV file.\n\n" + error);
+        return;
+    }
+
+    QDialog options(this);
+    options.setWindowTitle("WAV Import Options");
+    QFormLayout* form = new QFormLayout(&options);
+
+    QComboBox* channelCombo = new QComboBox(&options);
+    for (int i = 0; i < wavInfo.channelCount; ++i) {
+        channelCombo->addItem(QString("Channel %1").arg(i + 1), i);
+    }
+    form->addRow("Channel:", channelCombo);
+
+    QDoubleSpinBox* scaleSpin = new QDoubleSpinBox(&options);
+    scaleSpin->setRange(0.000001, 1000000.0);
+    scaleSpin->setDecimals(6);
+    scaleSpin->setValue(1.0);
+    scaleSpin->setSuffix(" V");
+    form->addRow("Peak Scale:", scaleSpin);
+
+    QDoubleSpinBox* offsetSpin = new QDoubleSpinBox(&options);
+    offsetSpin->setRange(-1000000.0, 1000000.0);
+    offsetSpin->setDecimals(6);
+    offsetSpin->setValue(0.0);
+    offsetSpin->setSuffix(" V");
+    form->addRow("DC Offset:", offsetSpin);
+
+    QLabel* info = new QLabel(QString("Sample rate: %1 Hz\nFrames: %2\nChannels: %3")
+                              .arg(wavInfo.sampleRate)
+                              .arg(wavInfo.channels.isEmpty() ? 0 : wavInfo.channels.first().size())
+                              .arg(wavInfo.channelCount), &options);
+    form->addRow("", info);
+
+    QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &options);
+    form->addRow("", buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &options, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &options, &QDialog::reject);
+    if (options.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    QString pwlPath;
+    if (!writePwlFromWav(wavPath,
+                         m_projectDir,
+                         m_item ? m_item->reference() : QString(),
+                         channelCombo->currentData().toInt(),
+                         scaleSpin->value(),
+                         offsetSpin->value(),
+                         &pwlPath,
+                         &error)) {
+        QMessageBox::warning(this, "WAV Import Failed", "Could not convert WAV file to a PWL source.\n\n" + error);
+        return;
+    }
+
+    m_pwlFile->setText(pwlPath);
+    m_pwlFileRadio->setChecked(true);
+    m_paramStack->setCurrentIndex(0);
+    QMessageBox::information(this, "WAV Imported",
+                             QString("Audio was converted to a PWL file for ngspice.\n\nOutput: %1").arg(pwlPath));
 }
 
 void VoltageSourceLTSpiceDialog::onCustomDraw() {
@@ -529,6 +966,7 @@ void VoltageSourceLTSpiceDialog::loadFromItem() {
     m_pwlRadio->setChecked(m_item->sourceType() == VoltageSourceItem::PWL);
     m_customRadio->setChecked(false);
     m_pwlFileRadio->setChecked(m_item->sourceType() == VoltageSourceItem::PWLFile);
+    m_waveFileRadio->setChecked(m_item->sourceType() == VoltageSourceItem::WaveFile);
     m_behavioralRadio->setChecked(m_item->sourceType() == VoltageSourceItem::Behavioral);
     
     onFunctionChanged();
@@ -571,6 +1009,12 @@ void VoltageSourceLTSpiceDialog::loadFromItem() {
     m_pwlPoints->setText(m_item->pwlPoints());
     m_pwlFile->setText(m_item->pwlFile());
     m_pwlRepeat->setChecked(m_item->pwlRepeat());
+
+    // WAVEFILE
+    m_waveFile->setText(m_item->waveFile());
+    m_waveChan->setText(QString::number(m_item->waveChan()));
+    m_waveScaleSpin->setValue(m_item->waveScale());
+    updateWaveFileInfo();
 
     // Behavioral
     m_behavioralExpr->setPlainText(m_item->value());
@@ -620,6 +1064,7 @@ void VoltageSourceLTSpiceDialog::saveToItem() {
     else if (m_pwlRadio->isChecked()) type = VoltageSourceItem::PWL;
     else if (m_customRadio->isChecked()) type = VoltageSourceItem::PWL;
     else if (m_pwlFileRadio->isChecked()) type = VoltageSourceItem::PWLFile;
+    else if (m_waveFileRadio->isChecked()) type = VoltageSourceItem::WaveFile;
     else if (m_behavioralRadio->isChecked()) type = VoltageSourceItem::Behavioral;
 
     m_item->setSourceType(type);
@@ -662,6 +1107,16 @@ void VoltageSourceLTSpiceDialog::saveToItem() {
     m_item->setPwlPoints(m_pwlPoints->text());
     m_item->setPwlFile(m_pwlFile->text());
     m_item->setPwlRepeat(m_pwlRepeat->isChecked());
+
+    // WAVEFILE
+    if (type == VoltageSourceItem::WaveFile) {
+        m_item->setWaveFile(m_waveFile->text());
+        bool ok = false;
+        int chan = m_waveChan->text().toInt(&ok);
+        if (!ok || chan < 0) chan = 0;
+        m_item->setWaveChan(chan);
+        m_item->setWaveScale(m_waveScaleSpin->value());
+    }
 
     // Behavioral
     if (type == VoltageSourceItem::Behavioral) {

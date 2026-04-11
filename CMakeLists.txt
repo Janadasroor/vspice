@@ -130,6 +130,13 @@ if(BUILD_VIOSPICE_CLI)
     if(VIOSPICE_ENGINE_FOUND)
         target_link_libraries(vio_cmd PRIVATE ${VIOSPICE_ENGINE_LIBRARIES})
         target_include_directories(vio_cmd PRIVATE ${VIOSPICE_ENGINE_INCLUDE_DIRS})
+        # Set rpath so vio-cmd finds VioMATRIXC's libngspice at runtime
+        get_filename_component(_engine_lib_dir "${VIOSPICE_ENGINE_LIBRARY}" DIRECTORY)
+        set_target_properties(vio_cmd PROPERTIES
+            BUILD_RPATH "${_engine_lib_dir}"
+            BUILD_RPATH_USE_ORIGIN TRUE
+            INSTALL_RPATH "$ORIGIN/../lib"
+        )
     endif()
 
     vioraeda_configure_app_target(vio_cmd)
@@ -162,6 +169,13 @@ if(BUILD_VIOSPICE_APP)
     if(VIOSPICE_ENGINE_FOUND)
         target_link_libraries(viospice PRIVATE ${VIOSPICE_ENGINE_LIBRARIES})
         target_include_directories(viospice PRIVATE ${VIOSPICE_ENGINE_INCLUDE_DIRS})
+        # Set rpath so viospice finds VioMATRIXC's libngspice at runtime
+        get_filename_component(_engine_lib_dir "${VIOSPICE_ENGINE_LIBRARY}" DIRECTORY)
+        set_target_properties(viospice PROPERTIES
+            BUILD_RPATH "${_engine_lib_dir}"
+            BUILD_RPATH_USE_ORIGIN TRUE
+            INSTALL_RPATH "$ORIGIN/../lib"
+        )
     endif()
 
     vioraeda_configure_app_target(viospice)

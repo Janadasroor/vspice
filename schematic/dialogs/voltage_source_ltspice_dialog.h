@@ -25,12 +25,16 @@ private Q_SLOTS:
     void onFunctionChanged();
     void onAccepted();
     void onPwlBrowse();
+    void onWavBrowse();
+    void onWaveBrowse();
+    void onWaveFileChanged();
     void onCustomDraw();
 
 private:
     void setupUi();
     void loadFromItem();
     void saveToItem();
+    void updateWaveFileInfo();
 
     VoltageSourceItem* m_item;
     QUndoStack* m_undoStack;
@@ -46,6 +50,7 @@ private:
     QRadioButton* m_pwlRadio;
     QRadioButton* m_customRadio;
     QRadioButton* m_pwlFileRadio;
+    QRadioButton* m_waveFileRadio;
     QRadioButton* m_behavioralRadio;
 
     QStackedWidget* m_paramStack;
@@ -91,6 +96,12 @@ private:
 
     // PWL File Params
     QLineEdit* m_pwlFile;
+
+    // WAVEFILE Params
+    QLineEdit* m_waveFile;
+    QLineEdit* m_waveChan;
+    QDoubleSpinBox* m_waveScaleSpin;
+    QLabel* m_waveFileInfo;
 
     // Behavioral Params
     QPlainTextEdit* m_behavioralExpr;

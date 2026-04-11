@@ -154,19 +154,23 @@ bool SpiceWorkerThread::loadCircuit(const QString& netlistText) {
 #ifdef HAVE_NGSPICE
     ngSpice_Command(const_cast<char*>("reset"));
 
-    QByteArray joined = netlistText.toLatin1();
-    QList<QByteArray> lineStorage;
-    QList<char*> rawLines;
+    // ngSpice_Circ expects a char** where each entry is a single line,
+    // and the last entry is NULL.
+    QString processed = netlistText;
+    processed.remove('\r');
+    QStringList lines = processed.split('\n');
+    m_lineStorage.clear();
+    m_rawLines.clear();
 
-    for (const QByteArray& line : joined.split('\n')) {
-        lineStorage.push_back(line);
+    for (const QString& line : lines) {
+        m_lineStorage.append(line.toUtf8());
     }
-    for (QByteArray& line : lineStorage) {
-        rawLines.push_back(line.data());
+    for (int i = 0; i < m_lineStorage.size(); ++i) {
+        m_rawLines.push_back(m_lineStorage[i].data());
     }
-    rawLines.push_back(nullptr);
+    m_rawLines.push_back(nullptr);
 
-    const int rc = ngSpice_Circ(rawLines.data());
+    const int rc = ngSpice_Circ(m_rawLines.data());
     return rc == 0;
 #else
     Q_UNUSED(netlistText);

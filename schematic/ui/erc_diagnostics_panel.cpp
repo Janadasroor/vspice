@@ -6,11 +6,28 @@
 #include <QIcon>
 #include <QApplication>
 #include <QClipboard>
+#include <QLibrary>
+#include <QFileInfo>
+#include <dlfcn.h>
+
+// Forward declarations for ngspice functions (to find library path via dladdr)
+extern "C" {
+    int ngSpice_Init(void*, void*, void*, void*, void*, void*, void*);
+    int ngSpice_Command(char*);
+}
 
 ERCDiagnosticsPanel::ERCDiagnosticsPanel(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
+
+    // Library Info Label
+    m_libraryInfoLabel = new QLabel();
+    m_libraryInfoLabel->setStyleSheet("background: #1a1a2e; color: #a0a0c0; padding: 6px; font-size: 11px; border-bottom: 1px solid #3c3c5c;");
+    m_libraryInfoLabel->setTextFormat(Qt::RichText);
+    m_libraryInfoLabel->setWordWrap(true);
+    updateLibraryInfo();
+    layout->addWidget(m_libraryInfoLabel);
 
     // Toolbar
     QWidget* toolbar = new QWidget();
@@ -51,6 +68,47 @@ ERCDiagnosticsPanel::ERCDiagnosticsPanel(QWidget* parent) : QWidget(parent) {
     connect(m_treeWidget, &QTreeWidget::customContextMenuRequested, this, &ERCDiagnosticsPanel::onCustomContextMenu);
 
     layout->addWidget(m_treeWidget);
+}
+
+void ERCDiagnosticsPanel::updateLibraryInfo() {
+    if (!m_libraryInfoLabel) return;
+
+    // Check which ngspice library is loaded
+    Dl_info info;
+    QString libPath;
+    bool isVioMatrix = false;
+    
+    // Try to find the path to ngSpice_Init or ngSpice_Circ
+    if (dladdr((void*)ngSpice_Init, &info) && info.dli_fname) {
+        libPath = QString::fromLocal8Bit(info.dli_fname);
+    } else if (dladdr((void*)ngSpice_Command, &info) && info.dli_fname) {
+        libPath = QString::fromLocal8Bit(info.dli_fname);
+    }
+
+    // Determine if it's VioMATRIXC
+    isVioMatrix = libPath.contains("VioMATRIXC", Qt::CaseInsensitive) || 
+                  libPath.contains("releasesh", Qt::CaseInsensitive);
+
+    QString icon = isVioMatrix ? "🔧" : "⚙️";
+    QString type = isVioMatrix ? "VioMATRIXC (Custom Fork)" : "System ngspice";
+    QString color = isVioMatrix ? "#4ade80" : "#fbbf24";
+    QString status = isVioMatrix ? "✅ Full feature set (WAV, LTspice compat, XSPICE)" : "⚠️ Standard features only";
+
+    if (libPath.isEmpty()) {
+        libPath = "Not loaded";
+        color = "#f87171";
+    }
+
+    m_libraryInfoLabel->setText(
+        QString("<b>%1 Simulation Engine:</b> <span style='color:%2'>%3</span><br>"
+                "<span style='color:#808080'>Library:</span> %4<br>"
+                "<span style='color:%2'>%5</span>")
+            .arg(icon)
+            .arg(color)
+            .arg(type)
+            .arg(libPath.isEmpty() ? "Unknown" : QFileInfo(libPath).fileName())
+            .arg(status)
+    );
 }
 
 void ERCDiagnosticsPanel::setViolations(const QList<ERCViolation>& violations) {

@@ -96,7 +96,7 @@ public:
     bool currentXRange(double& minX, double& maxX) const;
     void preserveXRangeOnce(double minX, double maxX);
     static QString formatValue(double val, const QString &unit = "");
-    void updatePlot(bool autoScale = false);
+    Q_INVOKABLE void updatePlot(bool autoScale = false);
     void setPlotQuality(PlotQuality quality);
     PlotQuality plotQuality() const { return m_plotQuality; }
 
@@ -107,15 +107,23 @@ public:
         QVector<double> phase;
         bool hasPhase = false;
         bool checked = false;
+        bool selected = false;
         QColor customColor;
         double lineWidth = 1.5;
         Qt::PenStyle penStyle = Qt::SolidLine;
+        int paneIndex = -1;
     };
     QList<SignalExport> exportSignals() const;
     void importSignals(const QList<SignalExport>& signalExports);
     bool getSignalData(const QString& name, QVector<double>& time, QVector<double>& values);
     QStringList getSignalNames() const;
     int focusedPaneIndex() const;
+    int paneCount() const { return m_panes.size(); }
+    QString currentSignalName() const;
+    void ensurePaneCount(int count);
+    void setFocusedPaneIndex(int index);
+    void setSignalPaneIndex(const QString& name, int paneIndex);
+    void setCurrentSignal(const QString& name);
     QStringList getSignalsInPane(int index) const;
 
 protected:

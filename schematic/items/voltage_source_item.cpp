@@ -48,6 +48,7 @@ QString VoltageSourceItem::itemTypeName() const {
         case SFFM: return "Voltage_Source_SFFM";
         case PWL: return "Voltage_Source_PWL";
         case PWLFile: return "Voltage_Source_PWLFile";
+        case WaveFile: return "Voltage_Source_WaveFile";
         case Behavioral: return "Voltage_Source_Behavioral";
         default: return "Voltage_Source_DC";
     }
@@ -128,6 +129,18 @@ void VoltageSourceItem::setValue(const QString& val) {
                 QStringList parts = captureParams(v, "PWL");
                 m_pwlPoints = parts.join(" ");
             }
+        }
+    } else if (v.contains("WAVEFILE", Qt::CaseInsensitive)) {
+        m_sourceType = WaveFile;
+        QRegularExpression reFile(R"(WAVEFILE\s*[= ]\s*\"([^\"]+)\")", QRegularExpression::CaseInsensitiveOption);
+        auto m1 = reFile.match(v);
+        if (m1.hasMatch()) {
+            m_waveFile = m1.captured(1);
+        }
+        QRegularExpression reChan(R"(CHAN\s*[= ]\s*(\d+))", QRegularExpression::CaseInsensitiveOption);
+        auto m2 = reChan.match(v);
+        if (m2.hasMatch()) {
+            m_waveChan = m2.captured(1).toInt();
         }
     } else {
         // DC or Simple value
@@ -227,6 +240,7 @@ void VoltageSourceItem::updateValue() {
                                 .arg(acStr).arg(tail); break;
         case PWL:   m_value = QString("PWL(%1)%2").arg(m_pwlPoints).arg(repeatStr); break;
         case PWLFile: m_value = QString("PWL(file=\"%1\")%2").arg(m_pwlFile).arg(repeatStr); break;
+        case WaveFile: m_value = QString("WAVEFILE \"%1\" CHAN %2").arg(m_waveFile).arg(m_waveChan); break;
         case Behavioral: 
             if (!m_value.startsWith("V=")) m_value = "V=0"; // Default
             break;
@@ -253,7 +267,7 @@ void VoltageSourceItem::updateLabelText() {
             display = before + "\n" + after;
         }
     }
-    if ((m_sourceType == PWL || m_sourceType == PWLFile) && display.length() > 48) {
+    if ((m_sourceType == PWL || m_sourceType == PWLFile || m_sourceType == WaveFile) && display.length() > 48) {
         display = display.left(45) + "...";
     } else if (display.length() > 64) {
         display = display.left(61) + "...";
@@ -437,6 +451,11 @@ QJsonObject VoltageSourceItem::toJson() const {
     json["pwlFile"]   = m_pwlFile;
     json["pwlRepeat"] = m_pwlRepeat;
 
+    // Wave
+    json["waveFile"] = m_waveFile;
+    json["waveChan"] = m_waveChan;
+    json["waveScale"] = m_waveScale;
+
     // AC overlay
     json["acAmplitude"] = m_acAmplitude;
     json["acPhase"]     = m_acPhase;
@@ -500,6 +519,11 @@ bool VoltageSourceItem::fromJson(const QJsonObject& json) {
     m_pwlPoints = json["pwlPoints"].toString();
     m_pwlFile   = json["pwlFile"].toString();
     m_pwlRepeat = json["pwlRepeat"].toBool(false);
+
+    // Wave
+    m_waveFile = json["waveFile"].toString();
+    m_waveChan = json["waveChan"].toInt(0);
+    m_waveScale = json["waveScale"].toDouble(1.0);
 
     // AC overlay
     m_acAmplitude = json["acAmplitude"].toString("");

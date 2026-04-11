@@ -825,6 +825,7 @@ void SchematicEditor::onSelectionChanged() {
             }
         }
     }
+    syncWsState();
 }
 
 void SchematicEditor::onItemDoubleClicked(SchematicItem* item) {

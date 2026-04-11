@@ -23,6 +23,8 @@
 #include <QTextEdit>
 #include <QListWidget>
 #include <QGraphicsItem>
+#include <QToolButton>
+#include <QSet>
 #include "../ui/property_editor.h"
 #include "models/footprint_definition.h"
 
@@ -129,12 +131,30 @@ private:
     void drawGrid();
     void updateSceneFromDefinition();
     QGraphicsItem* buildVisual(const FootprintPrimitive& prim, int index);
+    enum class SaveTarget { None, CurrentFlow, Library };
+    bool ensureFootprintName();
     bool prepareFootprint();
+    bool saveFootprintToCurrentFlow(bool closeAfterSave);
+    bool saveFootprintToLibrary();
+    bool promptForSaveTarget();
     bool importKicadFootprintFromFile(const QString& path);
     QString resolveModelPathForPreview(const QString& rawPath) const;
     void refreshModelSelector();
     void loadModelToFields(int index);
     void syncCurrentModelFromFields();
+    bool hasUnsavedChanges() const;
+    void applyPadToolbarDefaults(FootprintPrimitive& prim) const;
+    void applyPadPresetFromDrill();
+    void applyPadToolbarToSelection();
+    void openPadSettingsDialog();
+    void syncPadToolbarFromSelection();
+    bool isLayerVisible(FootprintPrimitive::Layer layer) const;
+    void setLayerVisibility(FootprintPrimitive::Layer layer, bool visible);
+    void isolateLayer(FootprintPrimitive::Layer layer);
+    void restoreAllLayerVisibility();
+    void refreshLayerChipStates();
+    void generateOutlineFromSelection(FootprintPrimitive::Layer layer, qreal margin, const QString& commandText);
+    void renumberPads(const QString& pattern);
     
     // Current editing state
     // Current editing state
@@ -188,6 +208,7 @@ private:
     FootprintDefinition m_footprint;
     QList<QGraphicsItem*> m_drawnItems;
     QMap<QString, QAction*> m_toolActions;
+    SaveTarget m_lastSaveTarget = SaveTarget::None;
     
     // Undo/Redo
     class QUndoStack* m_undoStack = nullptr;
@@ -211,10 +232,21 @@ private:
     // Pad settings
     QString m_currentPadShape;
     void setPadShape(const QString& shape);
+    QComboBox* m_padShapeCombo = nullptr;
+    QDoubleSpinBox* m_padWidthSpin = nullptr;
+    QDoubleSpinBox* m_padHeightSpin = nullptr;
+    QDoubleSpinBox* m_padDrillSpin = nullptr;
+    QSpinBox* m_padNumberStepSpin = nullptr;
+    QToolButton* m_padSettingsButton = nullptr;
+    double m_padRotationDefault = 0.0;
+    double m_padTrapezoidDeltaX = 0.0;
 
     // Layer settings
     FootprintPrimitive::Layer m_activeLayer;
     QComboBox* m_layerCombo;
+    QWidget* m_layerChipsBar = nullptr;
+    QMap<int, QToolButton*> m_layerChipButtons;
+    QSet<int> m_visibleLayers;
 
     // Library Browser
     void createLibraryBrowser();
@@ -233,6 +265,7 @@ private:
     QGraphicsScene* m_footprint3DScene = nullptr;
     QString m_lastImportBaseDir;
     QList<Footprint3DModel> m_models3D;
+    QPointF m_lastMouseScenePos;
     
     QString getNextPadNumber() const;
     void clearResizeHandles();

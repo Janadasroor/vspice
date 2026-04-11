@@ -71,6 +71,7 @@ private Q_SLOTS:
      void updateBezierEditPreview();
     void onNewSymbol();
     void onAIDatasheetImport();
+    void onImportSpiceSubcircuit();
     void onCloneSymbol(class QTreeWidgetItem* item, int column);
     void onRotateCW();
     void onRotateCCW();
@@ -151,8 +152,12 @@ private:
     void rebuildPanelsMenu();
     void tryAutoDetectModelName();
     void createStatusBar();
+    enum class SaveTarget { None, CurrentFlow, Library };
     void setEditingUnlocked(bool unlocked, const QString& message = QString());
     QString promptForTargetLibrary();
+    bool saveSymbolToCurrentFlow();
+    bool saveSymbolToLibrary();
+    bool promptForSaveTarget();
     void connectViewSignals();
     void createSymbolInfoPanel();
     void createLibraryBrowser();
@@ -335,6 +340,7 @@ protected:
     bool m_editingUnlocked = false;
     QString m_targetLibraryName;
     QString m_projectKey;
+    SaveTarget m_lastSaveTarget = SaveTarget::None;
 
     friend class AddPrimitiveCommand;
     friend class RemovePrimitiveCommand;

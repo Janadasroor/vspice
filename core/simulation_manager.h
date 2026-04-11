@@ -60,6 +60,8 @@ private:
     bool m_lastLoadFailed = false;
     QString m_lastErrorMessage;
     bool m_bgRunIssued = false;
+    bool m_stopRequested = false;
+    bool m_pauseRequested = false;
     QString m_currentNetlist;
     SimControl* m_streamingControl = nullptr;
     

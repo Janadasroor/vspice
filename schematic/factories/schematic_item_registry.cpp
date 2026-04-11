@@ -373,6 +373,12 @@ void SchematicItemRegistry::registerBuiltInItems() {
         return item;
     });
 
+    factory.registerItemType("Voltage_Source_WaveFile", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
+        auto* item = new VoltageSourceItem(pos, "WAVEFILE \"audio.wav\" CHAN 0", VoltageSourceItem::WaveFile, parent);
+        if (!properties.isEmpty()) item->fromJson(properties);
+        return item;
+    });
+
     factory.registerItemType("Voltage_Source_Behavioral", [](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
         auto* item = new VoltageSourceItem(pos, "V=V(1)*2", VoltageSourceItem::Behavioral, parent);
         if (!properties.isEmpty()) item->fromJson(properties);

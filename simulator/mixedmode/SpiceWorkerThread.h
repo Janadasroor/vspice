@@ -54,6 +54,8 @@ private:
     };
 
     QString m_pendingNetlist;
+    QList<QByteArray> m_lineStorage;
+    QList<char*> m_rawLines;
     QMutex m_stateMutex;
     QMutex m_commandMutex;
     QWaitCondition m_commandReady;

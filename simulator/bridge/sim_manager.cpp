@@ -19,6 +19,7 @@
 #include <QSharedPointer>
 #include <QRegularExpression>
 #include <QSet>
+#include <QtConcurrent>
 
 namespace {
 
@@ -806,6 +807,8 @@ void SimManager::runNetlistText(const QString& netlistContent) {
         Q_EMIT logMessage("A simulation is already running.");
         return;
     }
+    m_stopRequested = false;
+    m_paused = false;
     Q_EMIT simulationStarted();
     Q_EMIT logMessage("Running ngspice netlist...");
     SimAnalysisConfig config;
@@ -882,6 +885,8 @@ void SimManager::runNgspiceSimulation(const QString& netlist, const SimAnalysisC
         return;
     }
 
+    m_stopRequested = false;
+    m_paused = false;
     Q_EMIT simulationStarted();
     m_lastConfig = config;
 
@@ -1022,6 +1027,11 @@ void SimManager::startNgspiceWithNetlist(const QString& netlistContent) {
             watcher->deleteLater();
             
             m_resultsPending = false;
+            if (m_stopRequested) {
+                if (safeTempFile) safeTempFile->deleteLater();
+                cleanupSimulation();
+                return;
+            }
             if (result.first) {
                 if (!m_activeStepLabel.isEmpty() || !m_pendingStepRuns.isEmpty()) {
                     mergeStepSweepResults(result.second, m_activeStepLabel, m_completedStepRuns + 1);
@@ -1094,6 +1104,11 @@ void SimManager::startNgspiceWithNetlist(const QString& netlistContent) {
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, [this, safeTempFile, rawPath, proc, parseRawResults, processLogTail](int exitCode, QProcess::ExitStatus exitStatus) {
         if (proc != m_ngspiceProcess) return;
+        if (m_stopRequested) {
+            if (safeTempFile) safeTempFile->deleteLater();
+            cleanupSimulation();
+            return;
+        }
         const QString trailingText = QString::fromLocal8Bit(proc->readAllStandardOutput());
         if (!trailingText.trimmed().isEmpty()) {
             const QStringList lines = trailingText.split(QRegularExpression("[\\r\\n]+"), Qt::SkipEmptyParts);
@@ -1193,6 +1208,8 @@ void SimManager::runRealTime(QGraphicsScene* scene, NetManager* netMgr, int inte
     m_activeStepLabel.clear();
     m_completedStepRuns = 0;
     m_stepSweepResults = SimResults();
+    m_stopRequested = false;
+    m_paused = false;
 
     m_control = new SimControl();
     Q_EMIT simulationStarted();
@@ -1202,6 +1219,12 @@ void SimManager::runRealTime(QGraphicsScene* scene, NetManager* netMgr, int inte
 }
 
 void SimManager::stopRealTime() {
+    m_stopRequested = true;
+    m_paused = false;
+    if (m_control) {
+        m_control->stopRequested = true;
+        m_control->pauseRequested = false;
+    }
     SimulationManager::instance().stopSimulation();
     if (m_rtTimer) {
         m_rtTimer->stop();
@@ -1211,6 +1234,8 @@ void SimManager::stopRealTime() {
     m_rtScene = nullptr;
     m_rtNetMgr = nullptr;
     cleanupSimulation();
+    Q_EMIT simulationPaused(false);
+    Q_EMIT simulationStopped();
 }
 
 void SimManager::onInteractiveStateChanged() {
@@ -1256,6 +1281,11 @@ void SimManager::parseRawResultsFile(const QString& path, const QString& netlist
         watcher->deleteLater();
         m_resultsPending = false;
 
+        if (m_stopRequested) {
+            cleanupSimulation();
+            return;
+        }
+
         if (result.first) {
             Q_EMIT simulationFinished(result.second);
         } else {
@@ -1299,17 +1329,55 @@ void SimManager::runWithNetlist(const SimNetlist& netlist) {
      Q_EMIT errorOccurred("Direct SimNetlist execution not supported with Ngspice backend yet. Use UI.");
 }
 
+bool SimManager::isRunning() const {
+    return m_control != nullptr || (m_ngspiceProcess && m_ngspiceProcess->state() != QProcess::NotRunning) || m_resultsPending;
+}
+
 void SimManager::stopAll() {
+    m_stopRequested = true;
+    m_paused = false;
+    if (m_control) {
+        m_control->stopRequested = true;
+        m_control->pauseRequested = false;
+    }
     if (m_ngspiceProcess && m_ngspiceProcess->state() != QProcess::NotRunning) {
         m_ngspiceProcess->kill();
     } else {
         SimulationManager::instance().stopSimulation();
     }
+    if (m_rtTimer) {
+        m_rtTimer->stop();
+    }
+    m_rtScene = nullptr;
+    m_rtNetMgr = nullptr;
     cleanupSimulation();
+    Q_EMIT simulationPaused(false);
+    Q_EMIT simulationStopped();
     Q_EMIT logMessage("Simulation stopped.");
 }
 
 void SimManager::pauseSimulation(bool pause) {
-    // Ngspice bg_halt / bg_resume could be used
-    Q_EMIT logMessage("Pause not fully implemented for Ngspice.");
+    if (!isRunning()) {
+        Q_EMIT logMessage("No active simulation to pause or resume.");
+        return;
+    }
+
+    if (m_ngspiceProcess && m_ngspiceProcess->state() != QProcess::NotRunning) {
+        Q_EMIT logMessage("Pause/resume is not available for batch ngspice runs.");
+        return;
+    }
+
+    if (m_paused == pause) {
+        return;
+    }
+
+    if (m_control) {
+        m_control->pauseRequested = pause;
+    }
+    m_paused = pause;
+    Q_EMIT simulationPaused(m_paused);
+    Q_EMIT logMessage(m_paused ? "Simulation paused." : "Simulation resumed.");
+    QtConcurrent::run([pause]() {
+        SimulationManager::instance().sendInternalCommand(pause ? "bg_halt" : "bg_resume");
+    });
 }

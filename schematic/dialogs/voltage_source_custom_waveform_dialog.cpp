@@ -299,7 +299,7 @@ QString VoltageSourceCustomWaveformDialog::buildPwlPoints() const {
         double x = (samples == 1) ? 0.0 : double(i) / double(samples - 1);
         double t = x * period;
         double y = offset + amplitude * sampleY(x);
-        tokens << QString::number(t, 'g', 6) << QString::number(y, 'g', 6);
+        tokens << QString::number(t, 'g', 12) << QString::number(y, 'g', 12);
     }
 
     return tokens.join(' ');

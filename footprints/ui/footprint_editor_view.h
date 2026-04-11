@@ -20,6 +20,8 @@ public:
     
     void setSnapToGrid(bool enabled) { m_snapToGrid = enabled; update(); }
     bool snapToGridEnabled() const { return m_snapToGrid; }
+    void setCrosshairEnabled(bool enabled) { m_crosshairEnabled = enabled; viewport()->update(); }
+    bool isCrosshairEnabled() const { return m_crosshairEnabled; }
     
 signals:
     void toolCancelled();
@@ -31,6 +33,7 @@ signals:
     void rectResizeUpdated(QPointF scenePos);
     void rectResizeFinished(QPointF scenePos);
     void contextMenuRequested(QPoint pos);
+    void originDragFinished(QPointF scenePos);
     
 protected:
     void mousePressEvent(QMouseEvent* event) override;
@@ -42,16 +45,21 @@ protected:
     void drawForeground(QPainter* painter, const QRectF& rect) override;
 
 private:
+    QPointF effectiveScenePos(const QPoint& viewPos, Qt::KeyboardModifiers modifiers) const;
     int m_currentTool;
     qreal m_gridSize;
     bool m_isPanning;
     bool m_isDrawing;
     bool m_isMeasuring;
     bool m_rectResizeActive = false;
+    bool m_originDragActive = false;
     QPoint m_lastPanPoint;
     QPointF m_drawStart;
     QPointF m_measureCurrent;
+    QPointF m_originDragPos;
+    QPointF m_cursorScenePos;
     bool m_snapToGrid;
+    bool m_crosshairEnabled = false;
 };
 
 #endif // FOOTPRINT_EDITOR_VIEW_H

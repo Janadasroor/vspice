@@ -799,6 +799,8 @@ void WaveformViewer::addSignal(const QString& name, const QVector<double>& time,
     
     if (m_focusedPane) {
         data.paneIndex = m_panes.indexOf(m_focusedPane);
+    } else if (m_panes.size() == 1) {
+        data.paneIndex = 0;
     } else {
         data.paneIndex = -1; // Default: automatic
     }
@@ -1118,6 +1120,7 @@ void WaveformViewer::updatePlot(bool autoScale) {
         bool hasData = false;
     };
     QMap<ChartPane*, PaneStats> paneStats;
+    QMap<ChartPane*, QSet<SignalType>> paneSignalTypes;
     double globalMinX = 1e30, globalMaxX = -1e30;
     bool hasAnyData = false;
 
@@ -1129,8 +1132,18 @@ void WaveformViewer::updatePlot(bool autoScale) {
                 auto& sig = m_signals[name];
                 if (sig.time.isEmpty()) continue;
                 
-                ChartPane* pane = getPaneForType(sig.type);
+                ChartPane* pane = nullptr;
+                if (sig.paneIndex >= 0) {
+                    ensurePaneCount(sig.paneIndex + 1);
+                    if (sig.paneIndex < m_panes.size()) {
+                        pane = m_panes[sig.paneIndex];
+                    }
+                }
+                if (!pane) {
+                    pane = getPaneForType(sig.type);
+                }
                 auto& stats = paneStats[pane];
+                paneSignalTypes[pane].insert(sig.type);
                 
                 double sMinX = *std::min_element(sig.time.begin(), sig.time.end());
                 double sMaxX = *std::max_element(sig.time.begin(), sig.time.end());
@@ -1153,6 +1166,17 @@ void WaveformViewer::updatePlot(bool autoScale) {
     }
 
     for (auto* pane : m_panes) {
+        if (paneSignalTypes.contains(pane)) {
+            const QSet<SignalType>& types = paneSignalTypes[pane];
+            if (types.size() == 1) {
+                pane->type = *types.constBegin();
+            } else if (types.isEmpty()) {
+                pane->type = SignalType::OTHER;
+            } else {
+                pane->type = SignalType::OTHER;
+            }
+        }
+
         if (autoScale) {
             pane->axisX->setRange(globalMinX, globalMaxX);
         }
@@ -1432,6 +1456,9 @@ void WaveformViewer::onPaneClicked() {
 }
 
 WaveformViewer::ChartPane* WaveformViewer::getPaneForType(WaveformViewer::SignalType type) {
+    if (m_panes.size() == 1) {
+        return m_panes.first();
+    }
     for (auto* p : m_panes) {
         if (p->type == type) return p;
     }
@@ -2659,6 +2686,18 @@ void WaveformViewer::showAnalysisForSeries(const QString &seriesName) {
 
 QList<WaveformViewer::SignalExport> WaveformViewer::exportSignals() const {
     QList<SignalExport> result;
+    QString currentName;
+    if (m_nodeList && m_nodeList->currentItem()) {
+        currentName = m_nodeList->currentItem()->text();
+    }
+    QMap<int, int> paneIndexMap;
+    int compactPaneIndex = 0;
+    for (auto it = m_signals.constBegin(); it != m_signals.constEnd(); ++it) {
+        const int paneIndex = it->paneIndex;
+        if (paneIndex >= 0 && !paneIndexMap.contains(paneIndex)) {
+            paneIndexMap.insert(paneIndex, compactPaneIndex++);
+        }
+    }
     for (auto it = m_signals.constBegin(); it != m_signals.constEnd(); ++it) {
         SignalExport exp;
         exp.name = it->name;
@@ -2669,7 +2708,9 @@ QList<WaveformViewer::SignalExport> WaveformViewer::exportSignals() const {
         exp.customColor = it->customColor;
         exp.lineWidth = it->lineWidth;
         exp.penStyle = it->penStyle;
+        exp.paneIndex = paneIndexMap.value(it->paneIndex, -1);
         exp.checked = false;
+        exp.selected = currentName.compare(it->name, Qt::CaseInsensitive) == 0;
         for (int i = 0; i < m_nodeList->count(); ++i) {
             if (m_nodeList->item(i)->text() == it->name) {
                 exp.checked = (m_nodeList->item(i)->checkState() == Qt::Checked);
@@ -2682,6 +2723,19 @@ QList<WaveformViewer::SignalExport> WaveformViewer::exportSignals() const {
 }
 
 void WaveformViewer::importSignals(const QList<SignalExport>& signalExports) {
+    int requiredPaneCount = m_panes.size();
+    QString selectedSignalName;
+    for (const auto& sig : signalExports) {
+        if (sig.paneIndex >= 0) {
+            requiredPaneCount = std::max(requiredPaneCount, sig.paneIndex + 1);
+        }
+        if (selectedSignalName.isEmpty() && sig.selected) {
+            selectedSignalName = sig.name;
+        }
+    }
+
+    ensurePaneCount(requiredPaneCount);
+
     for (const auto& sig : signalExports) {
         if (sig.hasPhase) {
             addSignal(sig.name, sig.time, sig.values, sig.phase);
@@ -2693,8 +2747,12 @@ void WaveformViewer::importSignals(const QList<SignalExport>& signalExports) {
             sd.customColor = sig.customColor;
             sd.lineWidth = sig.lineWidth;
             sd.penStyle = sig.penStyle;
+            sd.paneIndex = sig.paneIndex;
         }
         setSignalChecked(sig.name, sig.checked);
+    }
+    if (!selectedSignalName.isEmpty()) {
+        setCurrentSignal(selectedSignalName);
     }
     updatePlot(true);
 }
@@ -2716,6 +2774,59 @@ QStringList WaveformViewer::getSignalNames() const {
 int WaveformViewer::focusedPaneIndex() const {
     if (!m_focusedPane) return -1;
     return m_panes.indexOf(m_focusedPane);
+}
+
+QString WaveformViewer::currentSignalName() const {
+    if (!m_nodeList || !m_nodeList->currentItem()) return QString();
+    return m_nodeList->currentItem()->text();
+}
+
+void WaveformViewer::ensurePaneCount(int count) {
+    if (count < 0) return;
+    while (m_panes.size() < count) {
+        createPane(SignalType::OTHER);
+    }
+}
+
+void WaveformViewer::setFocusedPaneIndex(int index) {
+    if (index < 0 || index >= m_panes.size()) return;
+
+    m_focusedPane = m_panes[index];
+    for (int i = 0; i < m_panes.size(); ++i) {
+        auto* pane = m_panes[i];
+        if (!pane || !pane->view) continue;
+        if (i == index) {
+            pane->view->setStyleSheet("VioChartView { border: 2px solid #55aaff; background: transparent; padding: 0px; margin: 0px; }");
+        } else {
+            pane->view->setStyleSheet("VioChartView { border: none; background: transparent; padding: 0px; margin: 0px; }");
+        }
+    }
+}
+
+void WaveformViewer::setSignalPaneIndex(const QString& name, int paneIndex) {
+    if (!m_signals.contains(name)) return;
+    if (paneIndex < 0) {
+        m_signals[name].paneIndex = -1;
+        return;
+    }
+
+    ensurePaneCount(paneIndex + 1);
+    m_signals[name].paneIndex = paneIndex;
+}
+
+void WaveformViewer::setCurrentSignal(const QString& name) {
+    if (!m_nodeList) return;
+    for (int i = 0; i < m_nodeList->count(); ++i) {
+        QListWidgetItem* item = m_nodeList->item(i);
+        if (item && item->text().compare(name, Qt::CaseInsensitive) == 0) {
+            m_nodeList->setCurrentRow(i);
+            m_activeSeriesName = item->text();
+            if (m_signals.contains(item->text())) {
+                setFocusedPaneIndex(m_signals[item->text()].paneIndex);
+            }
+            return;
+        }
+    }
 }
 
 QStringList WaveformViewer::getSignalsInPane(int index) const {

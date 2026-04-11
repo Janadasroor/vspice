@@ -1,6 +1,7 @@
 #include "ui/splash_screen.h"
 #include "core/theme_manager.h"
 #include "core/recent_projects.h"
+#include "core/ws_server.h"
 #include "schematic/editor/schematic_editor.h"
 #include "schematic/ui/netlist_editor.h"
 #include "ui/csv_viewer.h"
@@ -93,6 +94,13 @@ int main(int argc, char *argv[])
     QLocalServer* server = new QLocalServer(&a);
     QLocalServer::removeServer(serverName);
     server->listen(serverName);
+
+    // Start WebSocket state bridge server
+#if VIOSPICE_HAS_QT_WEBSOCKETS
+    WsServer* wsServer = new WsServer(18420, &a);
+    WsServer::setInstance(wsServer);
+    wsServer->start();
+#endif
 
     // Show splash screen
     SplashScreen* splash = new SplashScreen();

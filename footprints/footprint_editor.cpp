@@ -47,6 +47,9 @@
 #include <QShowEvent>
 #include <QScreen>
 #include <QGuiApplication>
+#include <QApplication>
+#include <QCursor>
+#include <QSignalBlocker>
 #include "items/footprint_primitive_item.h"
 #include "analysis/footprint_engine.h"
 
@@ -56,6 +59,25 @@ using namespace Flux::Analysis;
 
 namespace {
 constexpr const char* kFootprintEditorStateKey = "FootprintEditor";
+
+QIcon getThemeIcon(const QString& path) {
+    QIcon icon(path);
+    if (!ThemeManager::theme()) {
+        return icon;
+    }
+
+    const QPixmap pixmap = icon.pixmap(QSize(32, 32));
+    if (pixmap.isNull()) {
+        return icon;
+    }
+
+    QPixmap tinted = pixmap;
+    QPainter painter(&tinted);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(tinted.rect(), ThemeManager::theme()->textColor());
+    painter.end();
+    return QIcon(tinted);
+}
 
 QPainterPath makeTrapezoidPath(qreal w, qreal h, qreal deltaX) {
     // deltaX is total top-width reduction (positive narrows top, negative widens top)
@@ -115,6 +137,81 @@ qreal cross2D(const QPointF& o, const QPointF& a, const QPointF& b) {
     return (a.x() - o.x()) * (b.y() - o.y()) - (a.y() - o.y()) * (b.x() - o.x());
 }
 
+QPointF rotatePoint90CW(const QPointF& point, const QPointF& center) {
+    const QPointF rel = point - center;
+    return QPointF(center.x() + rel.y(), center.y() - rel.x());
+}
+
+void rotatePrimitive90CW(FootprintPrimitive& prim, const QPointF& center) {
+    if (prim.type == FootprintPrimitive::Line || prim.type == FootprintPrimitive::Dimension) {
+        const QPointF p1 = rotatePoint90CW(QPointF(prim.data["x1"].toDouble(), prim.data["y1"].toDouble()), center);
+        const QPointF p2 = rotatePoint90CW(QPointF(prim.data["x2"].toDouble(), prim.data["y2"].toDouble()), center);
+        prim.data["x1"] = p1.x();
+        prim.data["y1"] = p1.y();
+        prim.data["x2"] = p2.x();
+        prim.data["y2"] = p2.y();
+        return;
+    }
+
+    if (prim.type == FootprintPrimitive::Rect) {
+        QRectF rect(prim.data["x"].toDouble(), prim.data["y"].toDouble(),
+                    prim.data["width"].toDouble(), prim.data["height"].toDouble());
+        rect = rect.normalized();
+        const QPointF tl = rotatePoint90CW(rect.topLeft(), center);
+        const QPointF tr = rotatePoint90CW(rect.topRight(), center);
+        const QPointF br = rotatePoint90CW(rect.bottomRight(), center);
+        const QPointF bl = rotatePoint90CW(rect.bottomLeft(), center);
+        QRectF rotatedBounds(tl, QSizeF(0, 0));
+        rotatedBounds = rotatedBounds.united(QRectF(tr, QSizeF(0, 0)));
+        rotatedBounds = rotatedBounds.united(QRectF(br, QSizeF(0, 0)));
+        rotatedBounds = rotatedBounds.united(QRectF(bl, QSizeF(0, 0)));
+        prim.data["x"] = rotatedBounds.left();
+        prim.data["y"] = rotatedBounds.top();
+        prim.data["width"] = rotatedBounds.width();
+        prim.data["height"] = rotatedBounds.height();
+        return;
+    }
+
+    if (prim.type == FootprintPrimitive::Circle) {
+        const QPointF c = rotatePoint90CW(QPointF(prim.data["cx"].toDouble(), prim.data["cy"].toDouble()), center);
+        prim.data["cx"] = c.x();
+        prim.data["cy"] = c.y();
+        return;
+    }
+
+    if (prim.type == FootprintPrimitive::Arc) {
+        const QPointF c = rotatePoint90CW(QPointF(prim.data["cx"].toDouble(), prim.data["cy"].toDouble()), center);
+        prim.data["cx"] = c.x();
+        prim.data["cy"] = c.y();
+        prim.data["startAngle"] = prim.data["startAngle"].toDouble() - 90.0;
+        return;
+    }
+
+    if (prim.type == FootprintPrimitive::Pad && prim.data["shape"].toString() == "Custom") {
+        QJsonArray points = prim.data["points"].toArray();
+        QJsonArray rotatedPoints;
+        for (const QJsonValue& value : points) {
+            const QJsonObject pointObj = value.toObject();
+            const QPointF rotated = rotatePoint90CW(QPointF(pointObj["x"].toDouble(), pointObj["y"].toDouble()), center);
+            QJsonObject newPoint;
+            newPoint["x"] = rotated.x();
+            newPoint["y"] = rotated.y();
+            rotatedPoints.append(newPoint);
+        }
+        prim.data["points"] = rotatedPoints;
+    }
+
+    if (prim.data.contains("x") && prim.data.contains("y")) {
+        const QPointF p = rotatePoint90CW(QPointF(prim.data["x"].toDouble(), prim.data["y"].toDouble()), center);
+        prim.data["x"] = p.x();
+        prim.data["y"] = p.y();
+    }
+
+    if (prim.data.contains("rotation")) {
+        prim.data["rotation"] = prim.data["rotation"].toDouble() - 90.0;
+    }
+}
+
 QList<QPointF> convexHull2D(const QList<QPointF>& input) {
     if (input.size() < 3) return input;
 
@@ -148,6 +245,70 @@ QList<QPointF> convexHull2D(const QList<QPointF>& input) {
     QVector<QPointF> hull = lower + upper;
     return hull.toList();
 }
+
+QString footprintLayerName(FootprintPrimitive::Layer layer) {
+    switch (layer) {
+        case FootprintPrimitive::Top_Silkscreen: return "Top Silk";
+        case FootprintPrimitive::Top_Courtyard: return "Top Court";
+        case FootprintPrimitive::Top_Fabrication: return "Top Fab";
+        case FootprintPrimitive::Top_Copper: return "Top Cu";
+        case FootprintPrimitive::Bottom_Copper: return "Bottom Cu";
+        case FootprintPrimitive::Bottom_Silkscreen: return "Bottom Silk";
+        case FootprintPrimitive::Top_SolderMask: return "Top Mask";
+        case FootprintPrimitive::Bottom_SolderMask: return "Bottom Mask";
+        case FootprintPrimitive::Top_SolderPaste: return "Top Paste";
+        case FootprintPrimitive::Bottom_SolderPaste: return "Bottom Paste";
+        case FootprintPrimitive::Top_Adhesive: return "Top Adhesive";
+        case FootprintPrimitive::Bottom_Adhesive: return "Bottom Adhesive";
+        case FootprintPrimitive::Bottom_Courtyard: return "Bottom Court";
+        case FootprintPrimitive::Bottom_Fabrication: return "Bottom Fab";
+        case FootprintPrimitive::Inner_Copper_1: return "In Cu 1";
+        case FootprintPrimitive::Inner_Copper_2: return "In Cu 2";
+        case FootprintPrimitive::Inner_Copper_3: return "In Cu 3";
+        case FootprintPrimitive::Inner_Copper_4: return "In Cu 4";
+    }
+    return "Layer";
+}
+
+QColor footprintLayerColor(FootprintPrimitive::Layer layer) {
+    if (PCBTheme* theme = ThemeManager::theme()) {
+        switch (layer) {
+            case FootprintPrimitive::Top_Copper: return theme->topCopper();
+            case FootprintPrimitive::Bottom_Copper: return theme->bottomCopper();
+            case FootprintPrimitive::Top_Silkscreen: return theme->topSilkscreen();
+            case FootprintPrimitive::Bottom_Silkscreen: return theme->bottomSilkscreen();
+            case FootprintPrimitive::Top_SolderMask: return theme->topSoldermask();
+            case FootprintPrimitive::Bottom_SolderMask: return theme->bottomSoldermask();
+            case FootprintPrimitive::Top_Courtyard:
+            case FootprintPrimitive::Bottom_Courtyard: return QColor(148, 163, 184);
+            case FootprintPrimitive::Top_Fabrication:
+            case FootprintPrimitive::Bottom_Fabrication: return QColor(203, 213, 225);
+            default: break;
+        }
+    }
+    switch (layer) {
+        case FootprintPrimitive::Top_Copper: return QColor("#ef4444");
+        case FootprintPrimitive::Bottom_Copper: return QColor("#3b82f6");
+        case FootprintPrimitive::Top_Silkscreen: return QColor("#f8fafc");
+        case FootprintPrimitive::Bottom_Silkscreen: return QColor("#94a3b8");
+        case FootprintPrimitive::Top_Courtyard:
+        case FootprintPrimitive::Bottom_Courtyard: return QColor("#94a3b8");
+        case FootprintPrimitive::Top_Fabrication:
+        case FootprintPrimitive::Bottom_Fabrication: return QColor("#cbd5e1");
+        default: return QColor("#fbbf24");
+    }
+}
+
+QList<FootprintPrimitive::Layer> quickLayerChipOrder() {
+    return {
+        FootprintPrimitive::Top_Copper,
+        FootprintPrimitive::Bottom_Copper,
+        FootprintPrimitive::Top_Silkscreen,
+        FootprintPrimitive::Bottom_Silkscreen,
+        FootprintPrimitive::Top_Fabrication,
+        FootprintPrimitive::Top_Courtyard
+    };
+}
 }
 
 // === FootprintEditor ===
@@ -170,6 +331,342 @@ FootprintEditor::FootprintEditor(const FootprintDefinition& footprint, QWidget* 
 
 void FootprintEditor::setPadShape(const QString& shape) {
     m_currentPadShape = shape;
+    if (m_padShapeCombo && m_padShapeCombo->currentText() != shape) {
+        const QSignalBlocker blocker(m_padShapeCombo);
+        m_padShapeCombo->setCurrentText(shape);
+    }
+}
+
+void FootprintEditor::applyPadToolbarDefaults(FootprintPrimitive& prim) const {
+    if (prim.type != FootprintPrimitive::Pad) return;
+
+    const QString shape = m_padShapeCombo ? m_padShapeCombo->currentText() : (m_currentPadShape.isEmpty() ? "Rect" : m_currentPadShape);
+    prim.data["shape"] = shape;
+    prim.data["width"] = m_padWidthSpin ? m_padWidthSpin->value() : prim.data["width"].toDouble(1.5);
+    prim.data["height"] = m_padHeightSpin ? m_padHeightSpin->value() : prim.data["height"].toDouble(1.5);
+    prim.data["drill_size"] = m_padDrillSpin ? m_padDrillSpin->value() : prim.data["drill_size"].toDouble();
+    prim.data["pad_type"] = prim.data["drill_size"].toDouble() > 0.0 ? "Through-Hole" : "SMD";
+    prim.data["rotation"] = m_padRotationDefault;
+    if (shape == "Trapezoid") {
+        prim.data["trapezoid_delta_x"] = qFuzzyIsNull(m_padTrapezoidDeltaX)
+            ? prim.data["width"].toDouble() * 0.35
+            : m_padTrapezoidDeltaX;
+    }
+}
+
+void FootprintEditor::applyPadPresetFromDrill() {
+    if (!m_padDrillSpin || !m_padWidthSpin || !m_padHeightSpin || !m_padShapeCombo) return;
+
+    const bool throughHole = m_padDrillSpin->value() > 0.0;
+    const QSignalBlocker widthBlocker(m_padWidthSpin);
+    const QSignalBlocker heightBlocker(m_padHeightSpin);
+    const QSignalBlocker shapeBlocker(m_padShapeCombo);
+
+    if (throughHole) {
+        m_padWidthSpin->setValue(1.8);
+        m_padHeightSpin->setValue(1.8);
+        if (m_padShapeCombo->currentText() == "Rect") {
+            m_padShapeCombo->setCurrentText("Round");
+        }
+    } else {
+        m_padWidthSpin->setValue(1.5);
+        m_padHeightSpin->setValue(1.5);
+        if (m_padShapeCombo->currentText() == "Round") {
+            m_padShapeCombo->setCurrentText("Rect");
+        }
+    }
+
+    setPadShape(m_padShapeCombo->currentText());
+}
+
+void FootprintEditor::applyPadToolbarToSelection() {
+    if (!m_scene) return;
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
+    FootprintDefinition oldDef = m_footprint;
+    FootprintDefinition newDef = oldDef;
+    bool changed = false;
+    for (QGraphicsItem* item : selected) {
+        const int index = m_drawnItems.indexOf(item);
+        if (index < 0 || index >= newDef.primitives().size()) continue;
+        FootprintPrimitive& prim = newDef.primitives()[index];
+        if (prim.type != FootprintPrimitive::Pad) continue;
+        applyPadToolbarDefaults(prim);
+        prim.layer = m_activeLayer;
+        changed = true;
+    }
+    if (changed) {
+        m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Apply Pad Toolbar Settings"));
+    }
+}
+
+void FootprintEditor::openPadSettingsDialog() {
+    if (!m_padShapeCombo || !m_padWidthSpin || !m_padHeightSpin || !m_padDrillSpin || !m_padNumberStepSpin) return;
+
+    QDialog dlg(this);
+    dlg.setWindowTitle("Pad Settings");
+    dlg.setModal(true);
+    dlg.resize(360, 0);
+
+    auto* layout = new QVBoxLayout(&dlg);
+    auto* form = new QFormLayout();
+    layout->addLayout(form);
+
+    auto* shapeCombo = new QComboBox(&dlg);
+    shapeCombo->addItems({"Rect", "Round", "Oblong", "RoundedRect", "Trapezoid"});
+    shapeCombo->setCurrentText(m_padShapeCombo->currentText());
+    form->addRow("Shape", shapeCombo);
+
+    auto* padTypeCombo = new QComboBox(&dlg);
+    padTypeCombo->addItems({"SMD", "Through-Hole"});
+    padTypeCombo->setCurrentText(m_padDrillSpin->value() > 0.0 ? "Through-Hole" : "SMD");
+    form->addRow("Pad Type", padTypeCombo);
+
+    auto* widthSpin = new QDoubleSpinBox(&dlg);
+    widthSpin->setDecimals(3);
+    widthSpin->setRange(0.1, 50.0);
+    widthSpin->setSingleStep(0.1);
+    widthSpin->setSuffix(" mm");
+    widthSpin->setValue(m_padWidthSpin->value());
+    form->addRow("Width", widthSpin);
+
+    auto* heightSpin = new QDoubleSpinBox(&dlg);
+    heightSpin->setDecimals(3);
+    heightSpin->setRange(0.1, 50.0);
+    heightSpin->setSingleStep(0.1);
+    heightSpin->setSuffix(" mm");
+    heightSpin->setValue(m_padHeightSpin->value());
+    form->addRow("Height", heightSpin);
+
+    auto* drillSpin = new QDoubleSpinBox(&dlg);
+    drillSpin->setDecimals(3);
+    drillSpin->setRange(0.0, 20.0);
+    drillSpin->setSingleStep(0.05);
+    drillSpin->setSuffix(" mm");
+    drillSpin->setValue(m_padDrillSpin->value());
+    form->addRow("Drill", drillSpin);
+
+    auto* layerCombo = new QComboBox(&dlg);
+    if (m_layerCombo) {
+        for (int i = 0; i < m_layerCombo->count(); ++i) {
+            layerCombo->addItem(m_layerCombo->itemText(i), m_layerCombo->itemData(i));
+        }
+        const int idx = layerCombo->findData(static_cast<int>(m_activeLayer));
+        if (idx >= 0) layerCombo->setCurrentIndex(idx);
+    }
+    form->addRow("Layer", layerCombo);
+
+    auto* rotationSpin = new QDoubleSpinBox(&dlg);
+    rotationSpin->setDecimals(1);
+    rotationSpin->setRange(-360.0, 360.0);
+    rotationSpin->setSingleStep(15.0);
+    rotationSpin->setSuffix(" deg");
+    rotationSpin->setValue(m_padRotationDefault);
+    form->addRow("Rotation", rotationSpin);
+
+    auto* trapezoidDeltaSpin = new QDoubleSpinBox(&dlg);
+    trapezoidDeltaSpin->setDecimals(3);
+    trapezoidDeltaSpin->setRange(-50.0, 50.0);
+    trapezoidDeltaSpin->setSingleStep(0.1);
+    trapezoidDeltaSpin->setSuffix(" mm");
+    trapezoidDeltaSpin->setValue(m_padTrapezoidDeltaX);
+    form->addRow("Trapezoid Delta", trapezoidDeltaSpin);
+
+    auto* stepSpin = new QSpinBox(&dlg);
+    stepSpin->setRange(1, 64);
+    stepSpin->setValue(m_padNumberStepSpin->value());
+    form->addRow("Number Step", stepSpin);
+
+    auto* applyToSelection = new QCheckBox("Apply to selected pads", &dlg);
+    applyToSelection->setChecked(!m_scene->selectedItems().isEmpty());
+    layout->addWidget(applyToSelection);
+
+    auto* snapToGrid = new QCheckBox("Snap to grid", &dlg);
+    snapToGrid->setChecked(m_view && m_view->snapToGridEnabled());
+    layout->addWidget(snapToGrid);
+
+    auto* showCrosshair = new QCheckBox("Show crosshair", &dlg);
+    showCrosshair->setChecked(m_view && m_view->isCrosshairEnabled());
+    layout->addWidget(showCrosshair);
+
+    auto updateDerivedState = [&]() {
+        const bool throughHole = padTypeCombo->currentText() == "Through-Hole";
+        const QSignalBlocker drillBlocker(drillSpin);
+        const QSignalBlocker widthBlocker(widthSpin);
+        const QSignalBlocker heightBlocker(heightSpin);
+        const QSignalBlocker shapeBlocker(shapeCombo);
+
+        if (throughHole) {
+            if (drillSpin->value() <= 0.0) drillSpin->setValue(0.8);
+            if (widthSpin->value() < 1.8) widthSpin->setValue(1.8);
+            if (heightSpin->value() < 1.8) heightSpin->setValue(1.8);
+            if (shapeCombo->currentText() == "Rect") shapeCombo->setCurrentText("Round");
+        } else {
+            drillSpin->setValue(0.0);
+            if (shapeCombo->currentText() == "Round") shapeCombo->setCurrentText("Rect");
+        }
+
+        const bool trapezoid = shapeCombo->currentText() == "Trapezoid";
+        trapezoidDeltaSpin->setEnabled(trapezoid);
+        if (trapezoid && qFuzzyIsNull(trapezoidDeltaSpin->value())) {
+            trapezoidDeltaSpin->setValue(widthSpin->value() * 0.35);
+        }
+    };
+
+    QObject::connect(padTypeCombo, &QComboBox::currentTextChanged, &dlg, [&](const QString&) { updateDerivedState(); });
+    QObject::connect(shapeCombo, &QComboBox::currentTextChanged, &dlg, [&](const QString&) { updateDerivedState(); });
+    QObject::connect(drillSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), &dlg, [&](double value) {
+        const QSignalBlocker typeBlocker(padTypeCombo);
+        padTypeCombo->setCurrentText(value > 0.0 ? "Through-Hole" : "SMD");
+        updateDerivedState();
+    });
+    QObject::connect(widthSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), &dlg, [&](double) {
+        if (shapeCombo->currentText() == "Trapezoid" && qFuzzyIsNull(trapezoidDeltaSpin->value())) {
+            trapezoidDeltaSpin->setValue(widthSpin->value() * 0.35);
+        }
+    });
+    updateDerivedState();
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    auto* applyButton = buttons->addButton("Apply", QDialogButtonBox::ApplyRole);
+    layout->addWidget(buttons);
+
+    auto applyValues = [this, shapeCombo, widthSpin, heightSpin, drillSpin, layerCombo, rotationSpin, trapezoidDeltaSpin, stepSpin, applyToSelection, snapToGrid, showCrosshair]() {
+        {
+            const QSignalBlocker shapeBlocker(m_padShapeCombo);
+            m_padShapeCombo->setCurrentText(shapeCombo->currentText());
+        }
+        {
+            const QSignalBlocker widthBlocker(m_padWidthSpin);
+            m_padWidthSpin->setValue(widthSpin->value());
+        }
+        {
+            const QSignalBlocker heightBlocker(m_padHeightSpin);
+            m_padHeightSpin->setValue(heightSpin->value());
+        }
+        {
+            const QSignalBlocker drillBlocker(m_padDrillSpin);
+            m_padDrillSpin->setValue(drillSpin->value());
+        }
+        {
+            const QSignalBlocker stepBlocker(m_padNumberStepSpin);
+            m_padNumberStepSpin->setValue(stepSpin->value());
+        }
+
+        m_padRotationDefault = rotationSpin->value();
+        m_padTrapezoidDeltaX = trapezoidDeltaSpin->value();
+        setPadShape(shapeCombo->currentText());
+
+        if (m_layerCombo && layerCombo->count() > 0) {
+            const int idx = m_layerCombo->findData(layerCombo->currentData());
+            if (idx >= 0) {
+                const QSignalBlocker layerBlocker(m_layerCombo);
+                m_layerCombo->setCurrentIndex(idx);
+            }
+            m_activeLayer = static_cast<FootprintPrimitive::Layer>(layerCombo->currentData().toInt());
+            refreshLayerChipStates();
+        }
+
+        if (m_view) {
+            m_view->setSnapToGrid(snapToGrid->isChecked());
+            m_view->setCrosshairEnabled(showCrosshair->isChecked());
+        }
+        ConfigManager::instance().setToolProperty("FootprintEditor", "showCrosshair", showCrosshair->isChecked());
+        if (applyToSelection->isChecked()) {
+            applyPadToolbarToSelection();
+        }
+        if (m_statusLabel) {
+            m_statusLabel->setText(QString("Pad defaults: %1 %2 x %3 mm, drill %4 mm, rot %5 deg, step %6")
+                .arg(shapeCombo->currentText())
+                .arg(widthSpin->value(), 0, 'f', 3)
+                .arg(heightSpin->value(), 0, 'f', 3)
+                .arg(drillSpin->value(), 0, 'f', 3)
+                .arg(rotationSpin->value(), 0, 'f', 1)
+                .arg(stepSpin->value()));
+        }
+    };
+
+    QObject::connect(applyButton, &QPushButton::clicked, &dlg, applyValues);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, [&]() {
+        applyValues();
+        dlg.accept();
+    });
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    dlg.exec();
+}
+
+void FootprintEditor::syncPadToolbarFromSelection() {
+    if (!m_scene) return;
+    const QList<QGraphicsItem*> selected = m_scene->selectedItems();
+    if (selected.size() != 1) return;
+    const int index = m_drawnItems.indexOf(selected.first());
+    if (index < 0 || index >= m_footprint.primitives().size()) return;
+    const FootprintPrimitive& prim = m_footprint.primitives().at(index);
+    if (prim.type != FootprintPrimitive::Pad) return;
+
+    if (m_padShapeCombo) {
+        const QSignalBlocker blocker(m_padShapeCombo);
+        m_padShapeCombo->setCurrentText(prim.data.value("shape").toString("Rect"));
+    }
+    if (m_padWidthSpin) {
+        const QSignalBlocker blocker(m_padWidthSpin);
+        m_padWidthSpin->setValue(prim.data.value("width").toDouble(1.5));
+    }
+    if (m_padHeightSpin) {
+        const QSignalBlocker blocker(m_padHeightSpin);
+        m_padHeightSpin->setValue(prim.data.value("height").toDouble(1.5));
+    }
+    if (m_padDrillSpin) {
+        const QSignalBlocker blocker(m_padDrillSpin);
+        m_padDrillSpin->setValue(prim.data.value("drill_size").toDouble());
+    }
+    m_padRotationDefault = prim.data.value("rotation").toDouble();
+    m_padTrapezoidDeltaX = prim.data.value("trapezoid_delta_x").toDouble();
+}
+
+bool FootprintEditor::isLayerVisible(FootprintPrimitive::Layer layer) const {
+    Q_UNUSED(layer);
+    return true;
+}
+
+void FootprintEditor::setLayerVisibility(FootprintPrimitive::Layer layer, bool visible) {
+    Q_UNUSED(layer);
+    Q_UNUSED(visible);
+    refreshLayerChipStates();
+}
+
+void FootprintEditor::isolateLayer(FootprintPrimitive::Layer layer) {
+    m_activeLayer = layer;
+    if (m_layerCombo) {
+        const int idx = m_layerCombo->findData(layer);
+        if (idx >= 0) m_layerCombo->setCurrentIndex(idx);
+    }
+    refreshLayerChipStates();
+}
+
+void FootprintEditor::restoreAllLayerVisibility() {
+    refreshLayerChipStates();
+}
+
+void FootprintEditor::refreshLayerChipStates() {
+    for (auto it = m_layerChipButtons.begin(); it != m_layerChipButtons.end(); ++it) {
+        if (!it.value()) continue;
+        const FootprintPrimitive::Layer layer = static_cast<FootprintPrimitive::Layer>(it.key());
+        const QColor color = footprintLayerColor(layer);
+        const bool active = (m_activeLayer == layer);
+        it.value()->setChecked(active);
+        it.value()->setStyleSheet(QString(
+            "QToolButton { border: 1px solid %1; border-radius: 10px; padding: 4px 10px; background-color: %2; color: %3; font-weight: %4; }"
+            "QToolButton:hover { border-color: %5; }")
+            .arg(color.darker(150).name())
+            .arg(active ? color.lighter(110).name() : QString("#1f2937"))
+            .arg(active ? QString("#0f172a") : QString("#cbd5e1"))
+            .arg(active ? "700" : "500")
+            .arg(color.name()));
+        it.value()->setToolTip(QString("%1\nClick: make active layer").arg(footprintLayerName(layer)));
+    }
 }
 
 FootprintEditor::~FootprintEditor() {}
@@ -179,6 +676,9 @@ void FootprintEditor::setupUI() {
     resize(1240, 850);
     setWindowFlags(Qt::Window | Qt::WindowMaximizeButtonHint | Qt::WindowMinimizeButtonHint | Qt::WindowCloseButtonHint);
     setAcceptDrops(true);
+    for (int layer = int(FootprintPrimitive::Top_Silkscreen); layer <= int(FootprintPrimitive::Inner_Copper_4); ++layer) {
+        m_visibleLayers.insert(layer);
+    }
     
     // Global Dark Style patterned after components-library-panel.html
     setStyleSheet(
@@ -315,8 +815,47 @@ void FootprintEditor::setupUI() {
     
     m_view = new FootprintEditorView(this);
     m_view->setScene(m_scene);
+    m_view->setCrosshairEnabled(ConfigManager::instance().toolProperty("FootprintEditor", "showCrosshair", true).toBool());
     connect(m_view, &FootprintEditorView::contextMenuRequested, this, &FootprintEditor::onContextMenu);
-    contentLayout->addWidget(m_view, 1);
+
+    QWidget* centerPane = new QWidget(this);
+    QVBoxLayout* centerLayout = new QVBoxLayout(centerPane);
+    centerLayout->setContentsMargins(0, 0, 0, 0);
+    centerLayout->setSpacing(0);
+
+    m_layerChipsBar = new QWidget(centerPane);
+    m_layerChipsBar->setStyleSheet("background-color: #17181b; border-bottom: 1px solid #26272b;");
+    QHBoxLayout* chipsLayout = new QHBoxLayout(m_layerChipsBar);
+    chipsLayout->setContentsMargins(10, 6, 10, 6);
+    chipsLayout->setSpacing(6);
+
+    auto makeChip = [this, chipsLayout](const QString& label, FootprintPrimitive::Layer layer) {
+        auto* button = new QToolButton(m_layerChipsBar);
+        button->setText(label);
+        button->setCheckable(true);
+        button->setAutoRaise(false);
+        button->setCursor(Qt::PointingHandCursor);
+        chipsLayout->addWidget(button);
+        m_layerChipButtons[int(layer)] = button;
+        connect(button, &QToolButton::clicked, this, [this, layer]() {
+            isolateLayer(layer);
+        });
+    };
+
+    for (FootprintPrimitive::Layer layer : quickLayerChipOrder()) {
+        makeChip(footprintLayerName(layer), layer);
+    }
+
+    chipsLayout->addStretch();
+
+    QLabel* chipHint = new QLabel("Click a chip to set the active layer.", m_layerChipsBar);
+    chipHint->setStyleSheet("color: #9ca3af; font-size: 11px;");
+    chipHint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    chipsLayout->addWidget(chipHint);
+
+    centerLayout->addWidget(m_layerChipsBar);
+    centerLayout->addWidget(m_view, 1);
+    contentLayout->addWidget(centerPane, 1);
     
     // -- Right Side Configuration Panel --
     QScrollArea* sideScroll = new QScrollArea();
@@ -354,7 +893,7 @@ void FootprintEditor::setupUI() {
     infoForm->setLabelAlignment(Qt::AlignRight);
     
     createInfoPanel();
-    infoForm->addRow("Ref Name", m_nameEdit);
+    infoForm->addRow("Footprint Name", m_nameEdit);
     infoForm->addRow("Desc", m_descriptionEdit);
     infoForm->addRow("Category", m_categoryCombo);
     infoForm->addRow("Class", m_classificationCombo);
@@ -464,12 +1003,6 @@ void FootprintEditor::setupUI() {
         updatePreview();
         if (m_footprint3DWindow && m_footprint3DWindow->isVisible()) onOpen3DPreview();
     });
-    connect(m_modelVisibleCheck, &QCheckBox::toggled, this, [this](bool) {
-        syncCurrentModelFromFields();
-        refreshModelSelector();
-        updatePreview();
-    });
-
     connect(m_modelSelector, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         loadModelToFields(index);
     });
@@ -619,14 +1152,14 @@ void FootprintEditor::setupUI() {
     QWidget* propsPage = new QWidget();
     QVBoxLayout* propsLayout = new QVBoxLayout(propsPage);
     propsLayout->setContentsMargins(5, 5, 5, 5);
+    propsLayout->setSpacing(0);
     createPropertiesPanel();
-    propsLayout->addWidget(m_propertyEditor);
-    propsLayout->addStretch();
+    propsLayout->addWidget(m_propertyEditor, 1);
 
     m_rightTabWidget->addTab(propsPage, "Selection");
     m_rightTabWidget->addTab(metadataPage, "Metadata");
     m_rightTabWidget->addTab(modelPage, "3D");
-    sideLayout->addWidget(m_rightTabWidget);
+    sideLayout->addWidget(m_rightTabWidget, 1);
     
     // Bottom Action Bar
     QHBoxLayout* actionLayout = new QHBoxLayout();
@@ -690,16 +1223,10 @@ void FootprintEditor::setupUI() {
          
          if (m_currentTool == Pad) {
              QString num = getNextPadNumber();
-             QString shape = m_currentPadShape;
-             
-             QSizeF size(1.5, 1.5);
-             if (shape == "Oblong") size = QSizeF(2.0, 1.2);
-             
-             FootprintPrimitive prim = FootprintPrimitive::createPad(pos, num, shape, size);
-             if (shape == "Trapezoid") {
-                 prim.data["trapezoid_delta_x"] = 0.6;
-             }
-             prim.layer = FootprintPrimitive::Top_Copper;
+             QString shape = m_currentPadShape.isEmpty() ? QString("Rect") : m_currentPadShape;
+             FootprintPrimitive prim = FootprintPrimitive::createPad(pos, num, shape, QSizeF(1.5, 1.5));
+             applyPadToolbarDefaults(prim);
+             prim.layer = m_activeLayer;
              m_undoStack->push(new AddFootprintPrimitiveCommand(this, prim));
          } else if (m_currentTool == Text) {
              bool ok;
@@ -805,13 +1332,29 @@ void FootprintEditor::setupUI() {
     });
     
     connect(m_view, &FootprintEditorView::mouseMoved, [this](QPointF pos){
+        m_lastMouseScenePos = pos;
         if (m_previewItem) {
             m_scene->removeItem(m_previewItem);
             delete m_previewItem;
             m_previewItem = nullptr;
         }
 
-        if (m_currentTool == Line || m_currentTool == Rect || m_currentTool == Circle) {
+        if (m_currentTool == Pad) {
+            QString shape = m_currentPadShape.isEmpty() ? QString("Rect") : m_currentPadShape;
+            FootprintPrimitive prim = FootprintPrimitive::createPad(pos, "", shape, QSizeF(1.5, 1.5));
+            applyPadToolbarDefaults(prim);
+            prim.layer = m_activeLayer;
+
+            m_previewItem = buildVisual(prim, -1);
+            if (m_previewItem) {
+                m_previewItem->setOpacity(0.58);
+                m_previewItem->setZValue(2500);
+                m_previewItem->setAcceptedMouseButtons(Qt::NoButton);
+                m_previewItem->setFlag(QGraphicsItem::ItemIsSelectable, false);
+                m_previewItem->setFlag(QGraphicsItem::ItemIsMovable, false);
+                m_scene->addItem(m_previewItem);
+            }
+        } else if (m_currentTool == Line || m_currentTool == Rect || m_currentTool == Circle) {
             const QPen previewPen(Qt::cyan, 1, Qt::DashLine);
             const QPointF start = m_polyPoints.isEmpty() ? pos : m_polyPoints.first();
 
@@ -827,18 +1370,20 @@ void FootprintEditor::setupUI() {
         }
 
         if (m_statusLabel) {
-            m_statusLabel->setText(QString("X: %1 mm  Y: %2 mm | Grid: %3 mm")
+            m_statusLabel->setText(QString("X: %1 mm  Y: %2 mm | Grid: %3 mm | Snap: %4 | Alt = free")
                                    .arg(pos.x(), 0, 'f', 2)
                                    .arg(pos.y(), 0, 'f', 2)
-                                   .arg(m_view->gridSize(), 0, 'f', 2));
+                                   .arg(m_view->gridSize(), 0, 'f', 2)
+                                   .arg(m_view->snapToGridEnabled() ? "ON" : "OFF"));
         }
     });
 
-    connect(m_scene, &QGraphicsScene::selectionChanged, this, &FootprintEditor::onSelectionChanged);
     connect(m_view, &FootprintEditorView::rectResizeStarted, this, &FootprintEditor::onRectResizeStarted);
     connect(m_view, &FootprintEditorView::rectResizeUpdated, this, &FootprintEditor::onRectResizeUpdated);
     connect(m_view, &FootprintEditorView::rectResizeFinished, this, &FootprintEditor::onRectResizeFinished);
+    connect(m_view, &FootprintEditorView::originDragFinished, this, &FootprintEditor::onSetAnchor);
     updatePreview();
+    refreshLayerChipStates();
 
     QByteArray geom = ConfigManager::instance().windowGeometry(kFootprintEditorStateKey);
     if (!geom.isEmpty()) {
@@ -899,8 +1444,9 @@ void FootprintEditor::createToolBar() {
     // Top ToolBar (Settings, Utilities)
     m_toolbar = new QToolBar("Tools", this);
     m_toolbar->setIconSize(QSize(20, 20));
-    m_toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_toolbar->setMovable(false);
+    m_toolbar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     
     // Left ToolBar (Drawing Tools)
     m_leftToolbar = new QToolBar("Drawing", this);
@@ -915,12 +1461,14 @@ void FootprintEditor::createToolBar() {
     
     // Helper to add tool to appropriate toolbar
     auto addTool = [&](QToolBar* bar, const QString& name, Tool tool, const QString& iconFile, const QString& shortcut = "") {
-        QAction* action = new QAction(QIcon(":/icons/" + iconFile), name, this);
+        QAction* action = new QAction(getThemeIcon(":/icons/" + iconFile), name, this);
         action->setData(static_cast<int>(tool));
         action->setCheckable(true);
         if (!shortcut.isEmpty()) {
              action->setShortcut(QKeySequence(shortcut));
+             action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
              action->setToolTip(name + " (" + shortcut + ")");
+             this->addAction(action);
         }
         bar->addAction(action);
         group->addAction(action);
@@ -934,18 +1482,29 @@ void FootprintEditor::createToolBar() {
     addTool(m_toolbar, "Select", Select, "tool_select.svg", "Esc");
     m_toolbar->addSeparator();
     
-    m_undoAction = m_toolbar->addAction(QIcon(":/icons/undo.svg"), "Undo");
+    m_undoAction = m_toolbar->addAction(getThemeIcon(":/icons/undo.svg"), "Undo");
     m_undoAction->setShortcut(QKeySequence::Undo);
+    m_undoAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     connect(m_undoAction, &QAction::triggered, this, &FootprintEditor::onUndo);
+    this->addAction(m_undoAction);
     
-    m_redoAction = m_toolbar->addAction(QIcon(":/icons/redo.svg"), "Redo");
+    m_redoAction = m_toolbar->addAction(getThemeIcon(":/icons/redo.svg"), "Redo");
     m_redoAction->setShortcut(QKeySequence::Redo);
+    m_redoAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     connect(m_redoAction, &QAction::triggered, this, &FootprintEditor::onRedo);
+    this->addAction(m_redoAction);
+
+    QAction* saveAction = new QAction(getThemeIcon(":/icons/check.svg"), "Save", this);
+    saveAction->setShortcut(QKeySequence::Save);
+    saveAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(saveAction, &QAction::triggered, this, &FootprintEditor::onSave);
+    this->addAction(saveAction);
 
     m_toolbar->addSeparator();
 
-    QAction* deleteAction = m_toolbar->addAction(QIcon(":/icons/tool_delete.svg"), "Delete");
+    QAction* deleteAction = m_toolbar->addAction(getThemeIcon(":/icons/tool_delete.svg"), "Delete");
     deleteAction->setShortcuts({QKeySequence::Delete, QKeySequence(Qt::Key_Backspace)});
+    deleteAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     connect(deleteAction, &QAction::triggered, this, &FootprintEditor::onDelete);
     this->addAction(deleteAction);
     
@@ -971,44 +1530,76 @@ void FootprintEditor::createToolBar() {
 
     m_toolbar->addSeparator();
 
-    // Pad Shape Selector Actions (Top)
-    QActionGroup* shapeGroup = new QActionGroup(this);
-    shapeGroup->setExclusive(true);
-    
-    auto addShape = [&](const QString& name, const QString& iconFile) {
-        QAction* action = m_toolbar->addAction(QIcon(iconFile), name);
-        action->setCheckable(true);
-        action->setToolTip("Pad Shape: " + name);
-        shapeGroup->addAction(action);
-        connect(action, &QAction::triggered, this, [this, name](){ 
-            setPadShape(name); 
-            // Activate Pad Tool automatically for better UX
-            m_currentTool = Pad;
-            m_view->setCurrentTool(Pad);
-            if (m_toolActions.contains("Pad")) {
-                 m_toolActions["Pad"]->setChecked(true);
-            }
-        });
-        if (m_currentPadShape == name) action->setChecked(true);
-    };
-    
-    addShape("Rect", ":/icons/pad_rect.svg");
-    addShape("Round", ":/icons/pad_circle.svg");
-    addShape("Oblong", ":/icons/pad_oblong.svg");
-    addShape("Trapezoid", ":/icons/pad_rect.svg");
+    m_padShapeCombo = new QComboBox(this);
+    m_padShapeCombo->addItems({"Rect", "Round", "Oblong", "RoundedRect", "Trapezoid"});
+    m_padShapeCombo->setCurrentText(m_currentPadShape.isEmpty() ? "Rect" : m_currentPadShape);
+
+    m_padWidthSpin = new QDoubleSpinBox(this);
+    m_padWidthSpin->setDecimals(3);
+    m_padWidthSpin->setRange(0.1, 50.0);
+    m_padWidthSpin->setValue(1.5);
+    m_padWidthSpin->setPrefix("W ");
+    m_padWidthSpin->setSuffix(" mm");
+    m_padWidthSpin->setSingleStep(0.1);
+    m_padWidthSpin->setToolTip("Pad width");
+
+    m_padHeightSpin = new QDoubleSpinBox(this);
+    m_padHeightSpin->setDecimals(3);
+    m_padHeightSpin->setRange(0.1, 50.0);
+    m_padHeightSpin->setValue(1.5);
+    m_padHeightSpin->setPrefix("H ");
+    m_padHeightSpin->setSuffix(" mm");
+    m_padHeightSpin->setSingleStep(0.1);
+    m_padHeightSpin->setToolTip("Pad height");
+
+    m_padDrillSpin = new QDoubleSpinBox(this);
+    m_padDrillSpin->setDecimals(3);
+    m_padDrillSpin->setRange(0.0, 20.0);
+    m_padDrillSpin->setValue(0.0);
+    m_padDrillSpin->setPrefix("D ");
+    m_padDrillSpin->setSuffix(" mm");
+    m_padDrillSpin->setSingleStep(0.05);
+    m_padDrillSpin->setToolTip("Drill size. Zero keeps the pad SMD.");
+
+    m_padNumberStepSpin = new QSpinBox(this);
+    m_padNumberStepSpin->setRange(1, 64);
+    m_padNumberStepSpin->setValue(1);
+    m_padNumberStepSpin->setPrefix("#+");
+    m_padNumberStepSpin->setToolTip("Pad number increment for repeated placement");
+
+    m_padSettingsButton = new QToolButton(this);
+    m_padSettingsButton->setIcon(getThemeIcon(":/icons/tool_pad_settings.svg"));
+    m_padSettingsButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_padSettingsButton->setPopupMode(QToolButton::DelayedPopup);
+    m_padSettingsButton->setToolTip("Pad settings");
+    m_padSettingsButton->setAutoRaise(true);
+    connect(m_padSettingsButton, &QToolButton::clicked, this, &FootprintEditor::openPadSettingsDialog);
+    m_toolbar->addWidget(m_padSettingsButton);
+
+    connect(m_padShapeCombo, &QComboBox::currentTextChanged, this, [this](const QString& shape) {
+        setPadShape(shape);
+        m_currentTool = Pad;
+        if (m_view) m_view->setCurrentTool(Pad);
+        if (m_toolActions.contains("Pad")) m_toolActions["Pad"]->setChecked(true);
+    });
+
+    connect(m_padDrillSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) {
+        applyPadPresetFromDrill();
+    });
+    applyPadPresetFromDrill();
     
     m_toolbar->addSeparator();
 
     // Zoom Tools
     addTool(m_toolbar, "Zoom Area", ZoomArea, "tool_zoom_area.svg", "Z");
     
-    QAction* zoomIn = m_toolbar->addAction(QIcon(":/icons/view_zoom_in.svg"), "Zoom In");
+    QAction* zoomIn = m_toolbar->addAction(getThemeIcon(":/icons/view_zoom_in.svg"), "Zoom In");
     connect(zoomIn, &QAction::triggered, this, &FootprintEditor::onZoomIn);
     
-    QAction* zoomOut = m_toolbar->addAction(QIcon(":/icons/view_zoom_out.svg"), "Zoom Out");
+    QAction* zoomOut = m_toolbar->addAction(getThemeIcon(":/icons/view_zoom_out.svg"), "Zoom Out");
     connect(zoomOut, &QAction::triggered, this, &FootprintEditor::onZoomOut);
     
-    QAction* zoomFit = m_toolbar->addAction(QIcon(":/icons/view_fit.svg"), "Zoom Fit");
+    QAction* zoomFit = m_toolbar->addAction(getThemeIcon(":/icons/view_fit.svg"), "Zoom Fit");
     connect(zoomFit, &QAction::triggered, this, &FootprintEditor::onZoomFit);
     
     QAction* wizardAction = m_toolbar->addAction("🔧 Wizard");
@@ -1037,6 +1628,11 @@ void FootprintEditor::createToolBar() {
     connect(gridCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this, gridCombo](int index){
         onGridSizeChanged(gridCombo->itemData(index).toString());
     });
+
+    connect(m_padDrillSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) {
+        applyPadPresetFromDrill();
+    });
+    applyPadPresetFromDrill();
 
     m_toolbar->addSeparator();
 
@@ -1069,70 +1665,105 @@ void FootprintEditor::createToolBar() {
 
     connect(m_layerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this](int index){
         m_activeLayer = static_cast<FootprintPrimitive::Layer>(m_layerCombo->itemData(index).toInt());
+        refreshLayerChipStates();
     });
 
     m_toolbar->addSeparator();
 
-    QAction* snapAction = m_toolbar->addAction(QIcon(":/icons/snap_grid.svg"), "Snap");
+    QAction* snapAction = m_toolbar->addAction(getThemeIcon(":/icons/snap_grid.svg"), "Snap");
     snapAction->setCheckable(true);
     snapAction->setChecked(true);
     snapAction->setToolTip("Toggle Grid Snapping (S)");
     snapAction->setShortcut(QKeySequence("S"));
     connect(snapAction, &QAction::toggled, this, [this](bool checked){
         if (m_view) m_view->setSnapToGrid(checked);
+        if (m_statusLabel) {
+            m_statusLabel->setText(QString("Grid snap %1. Alt temporarily bypasses snap while placing pads/shapes.")
+                                   .arg(checked ? "enabled" : "disabled"));
+        }
     });
     
     m_toolbar->addSeparator();
     
     // Alignment / Orientation
-    QAction* rotate = m_toolbar->addAction(QIcon(":/icons/tool_rotate.svg"), "Rotate");
+    QAction* rotate = m_toolbar->addAction(getThemeIcon(":/icons/tool_rotate.svg"), "Rotate");
     rotate->setShortcut(QKeySequence("Ctrl+R"));
     this->addAction(rotate);
     connect(rotate, &QAction::triggered, this, [this](){
         QList<QGraphicsItem*> selected = m_scene->selectedItems();
-        for(auto item : selected) {
-            item->setRotation(item->rotation() + 90);
-            // Updating internal primitive?
-            int index = m_drawnItems.indexOf(item);
-            if (index != -1) {
-                // Ideally update primitive data, but rotation is graphical.
-                // For Pad/Text, we might want to store rotation
-                FootprintPrimitive& prim = m_footprint.primitives()[index];
-                prim.data["rotation"] = item->rotation();
-                // Flip handling?
-            }
+        if (selected.isEmpty()) return;
+
+        QRectF bounds = selected.first()->sceneBoundingRect();
+        for (auto* item : selected) bounds = bounds.united(item->sceneBoundingRect());
+        const QPointF center = bounds.center();
+
+        FootprintDefinition oldDef = m_footprint;
+        FootprintDefinition newDef = oldDef;
+        bool changed = false;
+
+        for (auto* item : selected) {
+            const int index = m_drawnItems.indexOf(item);
+            if (index < 0 || index >= newDef.primitives().size()) continue;
+            rotatePrimitive90CW(newDef.primitives()[index], center);
+            changed = true;
+        }
+
+        if (changed) {
+            m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Rotate 90 CW"));
         }
     });
 
-    QAction* flipH = m_toolbar->addAction(QIcon(":/icons/flip_h.svg"), "Flip H");
+    QAction* flipH = m_toolbar->addAction(getThemeIcon(":/icons/flip_h.svg"), "Flip H");
     connect(flipH, &QAction::triggered, this, &FootprintEditor::onFlipHorizontal);
     
-    QAction* flipV = m_toolbar->addAction(QIcon(":/icons/flip_v.svg"), "Flip V");
+    QAction* flipV = m_toolbar->addAction(getThemeIcon(":/icons/flip_v.svg"), "Flip V");
     connect(flipV, &QAction::triggered, this, &FootprintEditor::onFlipVertical);
 
-    QAction* pairAct = m_toolbar->addAction(QIcon(":/icons/tool_array.svg"), "Mirror Pair");
+    QAction* pairAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_array.svg"), "Mirror Pair");
     pairAct->setToolTip("Create mirrored copies (with optional top/bottom layer swap)");
     connect(pairAct, &QAction::triggered, this, &FootprintEditor::onCreateMirroredPair);
 
     m_toolbar->addSeparator();
     
-    QAction* arrayAct = m_toolbar->addAction(QIcon(":/icons/tool_duplicate.svg"), "Array Tool");
+    QAction* arrayAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_duplicate.svg"), "Array Tool");
     arrayAct->setToolTip("Create Linear or Circular Array of items");
     connect(arrayAct, &QAction::triggered, this, &FootprintEditor::onArrayTool);
 
-    QAction* polarAct = m_toolbar->addAction(QIcon(":/icons/tool_pad.svg"), "Polar Grid");
+    QAction* polarAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_pad.svg"), "Polar Grid");
     polarAct->setToolTip("Generate pads arranged on a circular/radial grid");
     connect(polarAct, &QAction::triggered, this, &FootprintEditor::onPolarGridTool);
 
-    QAction* drcAct = m_toolbar->addAction(QIcon(":/icons/check.svg"), "Check Footprint");
+    QAction* fabOutlineAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_rect.svg"), "Fab From Selection");
+    fabOutlineAct->setToolTip("Generate a fabrication outline rectangle from the current selection");
+    connect(fabOutlineAct, &QAction::triggered, this, [this]() {
+        generateOutlineFromSelection(FootprintPrimitive::Top_Fabrication, 0.25, "Generate Fab Outline");
+    });
+
+    QAction* courtOutlineAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_rect.svg"), "Courtyard From Selection");
+    courtOutlineAct->setToolTip("Generate a courtyard rectangle from the current selection");
+    connect(courtOutlineAct, &QAction::triggered, this, [this]() {
+        generateOutlineFromSelection(FootprintPrimitive::Top_Courtyard, 0.5, "Generate Courtyard");
+    });
+
+    QAction* renumberAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_text.svg"), "Renumber Pads");
+    renumberAct->setToolTip("Renumber selected pads by layout pattern");
+    connect(renumberAct, &QAction::triggered, this, [this]() {
+        QMenu menu(this);
+        menu.addAction("Left to Right", this, [this]() { renumberPads("left-right"); });
+        menu.addAction("Top to Bottom", this, [this]() { renumberPads("top-bottom"); });
+        menu.addAction("Clockwise", this, [this]() { renumberPads("clockwise"); });
+        menu.exec(QCursor::pos());
+    });
+
+    QAction* drcAct = m_toolbar->addAction(getThemeIcon(":/icons/check.svg"), "Check Footprint");
     drcAct->setToolTip("Run Footprint Rule Check (DRC)");
     connect(drcAct, &QAction::triggered, this, &FootprintEditor::onRunDRC);
 
-    QAction* importKiCadAct = m_toolbar->addAction(QIcon(":/icons/folder_open.svg"), "Import KiCad");
+    QAction* importKiCadAct = m_toolbar->addAction(getThemeIcon(":/icons/folder_open.svg"), "Import KiCad");
     importKiCadAct->setToolTip("Import KiCad footprint (.kicad_mod)");
     connect(importKiCadAct, &QAction::triggered, this, &FootprintEditor::onImportKicadFootprint);
 
-    QAction* view3DAct = m_toolbar->addAction(QIcon(":/icons/tool_3d.svg"), "3D View");
+    QAction* view3DAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_3d.svg"), "3D View");
     view3DAct->setToolTip("Open 3D preview for current footprint");
     connect(view3DAct, &QAction::triggered, this, &FootprintEditor::onOpen3DPreview);
 
@@ -1201,7 +1832,7 @@ void FootprintEditor::createToolBar() {
     // Anchor tool
     addTool(m_leftToolbar, "Set Anchor", Anchor, "tool_anchor.svg", "H");
     
-    QAction* addExactAct = m_leftToolbar->addAction(QIcon(":/icons/tool_line.svg"), "Exact Dimensions...");
+    QAction* addExactAct = m_leftToolbar->addAction(getThemeIcon(":/icons/tool_line.svg"), "Exact Dimensions...");
     addExactAct->setToolTip("Add Primitive (Exact Dimensions)...");
     connect(addExactAct, &QAction::triggered, this, &FootprintEditor::onAddPrimitiveExact);
     
@@ -1261,7 +1892,9 @@ void FootprintEditor::onAddPrimitiveExact() {
         QString type = typeCombo->currentText();
         if (type == "Pad") {
             prim = FootprintPrimitive::createPad(QPointF(x1->value(), y1->value()), textEdit->text(), shapeCombo->currentText(), QSizeF(x2->value(), y2->value()));
-            prim.layer = FootprintPrimitive::Top_Copper;
+            prim.layer = m_activeLayer;
+            prim.data["drill_size"] = m_padDrillSpin ? m_padDrillSpin->value() : 0.0;
+            prim.data["pad_type"] = prim.data["drill_size"].toDouble() > 0.0 ? "Through-Hole" : "SMD";
         } else if (type == "Line") {
             prim = FootprintPrimitive::createLine(QPointF(x1->value(), y1->value()), QPointF(x2->value(), y2->value()));
             prim.layer = m_activeLayer;
@@ -1443,18 +2076,22 @@ void FootprintEditor::onCreateMirroredPair() {
         return dst;
     };
 
+    FootprintDefinition oldDef = m_footprint;
+    FootprintDefinition newDef = oldDef;
+    int nextPadNumber = getNextPadNumber().toInt();
+
     for (auto* item : selected) {
         const int idx = m_drawnItems.indexOf(item);
-        if (idx < 0 || idx >= m_footprint.primitives().size()) continue;
-        FootprintPrimitive mirrored = mirrorPrimitive(m_footprint.primitives()[idx]);
+        if (idx < 0 || idx >= oldDef.primitives().size()) continue;
+        FootprintPrimitive mirrored = mirrorPrimitive(oldDef.primitives()[idx]);
 
         if (mirrored.type == FootprintPrimitive::Pad) {
             // Keep pad numbering unique for automatic pair generation.
-            mirrored.data["number"] = getNextPadNumber();
+            mirrored.data["number"] = QString::number(nextPadNumber++);
         }
-        m_footprint.addPrimitive(mirrored);
+        newDef.addPrimitive(mirrored);
     }
-    updateSceneFromDefinition();
+    m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Create Mirrored Pair"));
 }
 
 void FootprintEditor::createPropertiesPanel() {
@@ -1463,19 +2100,46 @@ void FootprintEditor::createPropertiesPanel() {
     connect(m_propertyEditor, &PropertyEditor::propertyChanged, this, [this](const QString& name, const QVariant& value){
         QList<QGraphicsItem*> selected = m_scene->selectedItems();
         if (selected.size() != 1) {
+            FootprintDefinition oldDef = m_footprint;
+            FootprintDefinition newDef = oldDef;
             bool changed = false;
-            if (name == "Footprint Name" && m_nameEdit) { m_nameEdit->setText(value.toString()); changed = true; }
-            else if (name == "Description" && m_descriptionEdit) { m_descriptionEdit->setText(value.toString()); changed = true; }
-            else if (name == "Category" && m_categoryCombo) { m_categoryCombo->setCurrentText(value.toString()); changed = true; }
-            else if (name == "Classification" && m_classificationCombo) { m_classificationCombo->setCurrentText(value.toString()); changed = true; }
-            else if (name == "Keywords" && m_keywordsEdit) { m_keywordsEdit->setText(value.toString()); changed = true; }
-            else if (name == "Exclude From BOM" && m_excludeBOMCheck) { m_excludeBOMCheck->setChecked(value.toBool()); changed = true; }
-            else if (name == "Exclude From Position Files" && m_excludePosCheck) { m_excludePosCheck->setChecked(value.toBool()); changed = true; }
-            else if (name == "DNP" && m_dnpCheck) { m_dnpCheck->setChecked(value.toBool()); changed = true; }
-            else if (name == "Net Tie" && m_netTieCheck) { m_netTieCheck->setChecked(value.toBool()); changed = true; }
-            if (changed) {
-                updatePreview();
-                updatePropertiesPanel();
+
+            if (name == "Footprint Name") {
+                newDef.setName(value.toString());
+                changed = true;
+            } else if (name == "Description") {
+                newDef.setDescription(value.toString());
+                changed = true;
+            } else if (name == "Category") {
+                newDef.setCategory(value.toString());
+                changed = true;
+            } else if (name == "Classification") {
+                newDef.setClassification(value.toString());
+                changed = true;
+            } else if (name == "Keywords") {
+                QStringList keywords;
+                for (const QString& token : value.toString().split(',', Qt::SkipEmptyParts)) {
+                    const QString trimmed = token.trimmed();
+                    if (!trimmed.isEmpty()) keywords.append(trimmed);
+                }
+                newDef.setKeywords(keywords);
+                changed = true;
+            } else if (name == "Exclude From BOM") {
+                newDef.setExcludeFromBOM(value.toBool());
+                changed = true;
+            } else if (name == "Exclude From Position Files") {
+                newDef.setExcludeFromPosFiles(value.toBool());
+                changed = true;
+            } else if (name == "DNP") {
+                newDef.setDnp(value.toBool());
+                changed = true;
+            } else if (name == "Net Tie") {
+                newDef.setIsNetTie(value.toBool());
+                changed = true;
+            }
+
+            if (changed && m_undoStack) {
+                m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Update Footprint Properties"));
             }
             return;
         }
@@ -1484,7 +2148,9 @@ void FootprintEditor::createPropertiesPanel() {
         int index = m_drawnItems.indexOf(item);
         if (index == -1 || index >= m_footprint.primitives().size()) return;
         
-        FootprintPrimitive& prim = m_footprint.primitives()[index];
+        FootprintDefinition oldDef = m_footprint;
+        FootprintDefinition newDef = oldDef;
+        FootprintPrimitive& prim = newDef.primitives()[index];
         
         bool changed = false;
         
@@ -1587,13 +2253,7 @@ void FootprintEditor::createPropertiesPanel() {
         }
         
         if (changed) {
-            // Full redraw is simplest way to ensure visualization matches new properties 
-            // (e.g. pad shape change, text resize, etc)
-            // Save selection to restore it? hard with recreation.
-            updateSceneFromDefinition();
-            if (index >= 0 && index < m_drawnItems.size()) {
-                m_drawnItems[index]->setSelected(true);
-            }
+            m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Update Primitive Properties"));
         }
     });
 }
@@ -1622,8 +2282,16 @@ void FootprintEditor::onZoomFit() {
 }
 
 void FootprintEditor::onOpenWizard() {
-    FootprintWizardDialog* wizard = new FootprintWizardDialog(this, this);
-    wizard->exec();
+    if (m_leftNavigatorPanel) m_leftNavigatorPanel->setVisible(true);
+    if (m_leftTabWidget) {
+        const int wizardIndex = 1;
+        if (wizardIndex >= 0 && wizardIndex < m_leftTabWidget->count()) {
+            m_leftTabWidget->setCurrentIndex(wizardIndex);
+        }
+    }
+    if (m_statusLabel) {
+        m_statusLabel->setText("Wizard panel opened on the left.");
+    }
 }
 
 void FootprintEditor::onGridSizeChanged(const QString& size) {
@@ -1635,6 +2303,8 @@ void FootprintEditor::onGridSizeChanged(const QString& size) {
 void FootprintEditor::onMeasure(QPointF p1, QPointF p2) {
     if (QLineF(p1, p2).length() < 1e-6) return;
 
+    FootprintDefinition oldDef = m_footprint;
+    FootprintDefinition newDef = oldDef;
     FootprintPrimitive dim;
     dim.type = FootprintPrimitive::Dimension;
     dim.layer = FootprintPrimitive::Top_Fabrication;
@@ -1642,8 +2312,8 @@ void FootprintEditor::onMeasure(QPointF p1, QPointF p2) {
     dim.data["y1"] = p1.y();
     dim.data["x2"] = p2.x();
     dim.data["y2"] = p2.y();
-    m_footprint.addPrimitive(dim);
-    updateSceneFromDefinition();
+    newDef.addPrimitive(dim);
+    m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Add Dimension"));
 
     if (m_statusLabel) {
         const qreal dx = p2.x() - p1.x();
@@ -1657,8 +2327,10 @@ void FootprintEditor::onMeasure(QPointF p1, QPointF p2) {
 }
 
 void FootprintEditor::onWizardGenerate() {
-    m_footprint.clearPrimitives();
-    
+    FootprintDefinition oldDef = m_footprint;
+    FootprintDefinition newDef = oldDef;
+    newDef.clearPrimitives();
+
     QString type = m_wizType->currentText();
     int pins = m_wizPins->value();
     double pitch = m_wizPitch->value();
@@ -1684,40 +2356,39 @@ void FootprintEditor::onWizardGenerate() {
                 p2.data["drill_size"] = 0.8;
             }
             
-            // Right row
-            m_footprint.addPrimitive(p2);
+            newDef.addPrimitive(p1);
+            newDef.addPrimitive(p2);
         }
 
         // Add Fabrication outline (Gray)
         double yMax = ((pins/2 - 1) / 2.0) * pitch;
         FootprintPrimitive fabRect = FootprintPrimitive::createRect(QRectF(-span/2 + 0.5, -yMax - 0.5, span - 1.0, yMax*2 + 1.0).normalized());
         fabRect.layer = FootprintPrimitive::Top_Fabrication;
-        m_footprint.addPrimitive(fabRect);
+        newDef.addPrimitive(fabRect);
 
         // Add Courtyard boundary (Magenta)
         FootprintPrimitive courtRect = FootprintPrimitive::createRect(QRectF(-span/2 - 1.0, -yMax - 1.0, span + 2.0, yMax*2 + 2.0).normalized());
         courtRect.layer = FootprintPrimitive::Top_Courtyard;
-        m_footprint.addPrimitive(courtRect);
+        newDef.addPrimitive(courtRect);
 
-        if (m_nameEdit->text().isEmpty()) m_nameEdit->setText(QString("%1-%2").arg(type).arg(pins));
+        if (newDef.name().trimmed().isEmpty()) newDef.setName(QString("%1-%2").arg(type).arg(pins));
     } else if (type == "Passive (TH Axial)") {
         auto p1 = FootprintPrimitive::createPad(QPointF(-pitch/2, 0), "1", "Rect", padSize);
         p1.data["drill_size"] = 0.8;
         auto p2 = FootprintPrimitive::createPad(QPointF(pitch/2, 0), "2", "Round", padSize);
         p2.data["drill_size"] = 0.8;
         
-        m_footprint.addPrimitive(p1);
-        m_footprint.addPrimitive(p2);
-        if (m_nameEdit->text().isEmpty()) m_nameEdit->setText("R_Axial_TH");
+        newDef.addPrimitive(p1);
+        newDef.addPrimitive(p2);
+        if (newDef.name().trimmed().isEmpty()) newDef.setName("R_Axial_TH");
     } else if (type.startsWith("Passive")) {
-        m_footprint.addPrimitive(FootprintPrimitive::createPad(QPointF(-pitch/2, 0), "1", "Rect", padSize));
-        m_footprint.addPrimitive(FootprintPrimitive::createPad(QPointF(pitch/2, 0), "2", "Rect", padSize));
-        if (m_nameEdit->text().isEmpty()) m_nameEdit->setText("R_0805");
+        newDef.addPrimitive(FootprintPrimitive::createPad(QPointF(-pitch/2, 0), "1", "Rect", padSize));
+        newDef.addPrimitive(FootprintPrimitive::createPad(QPointF(pitch/2, 0), "2", "Rect", padSize));
+        if (newDef.name().trimmed().isEmpty()) newDef.setName("R_0805");
     }
 
 
-    updateSceneFromDefinition();
-    onSave(); // Automatically save and close/refresh
+    m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Generate Footprint"));
 }
 
 void updatePrimitivePos(FootprintPrimitive& prim, qreal dx, qreal dy) {
@@ -2192,11 +2863,15 @@ void FootprintEditor::updateSceneFromDefinition() {
     m_drawnItems.clear(); 
     
     for (int i = 0; i < m_footprint.primitives().size(); ++i) {
+        if (!isLayerVisible(m_footprint.primitives()[i].layer)) {
+            m_drawnItems.append(nullptr);
+            continue;
+        }
         QGraphicsItem* item = buildVisual(m_footprint.primitives()[i], i);
         if (item) {
             m_scene->addItem(item);
-            m_drawnItems.append(item);
         }
+        m_drawnItems.append(item);
     }
 
     updatePropertiesPanel();
@@ -2303,6 +2978,7 @@ void FootprintEditor::onSelectionChanged() {
     if (m_rightTabWidget && !m_scene->selectedItems().isEmpty() && m_rightTabWidget->currentIndex() != 0) {
         m_rightTabWidget->setCurrentIndex(0);
     }
+    syncPadToolbarFromSelection();
     updateResizeHandles();
     updatePropertiesPanel();
 }
@@ -2406,6 +3082,7 @@ void FootprintEditor::onLoadFootprint(QTreeWidgetItem* item, int column) {
         }
         
         setFootprintDefinition(def);
+        if (m_undoStack) m_undoStack->clear();
         
         // Also update info fields in case they differ from definition
         m_nameEdit->setText(def.name());
@@ -2462,6 +3139,7 @@ bool FootprintEditor::importKicadFootprintFromFile(const QString& path) {
     }
 
     setFootprintDefinition(imported);
+    if (m_undoStack) m_undoStack->clear();
     if (m_statusLabel) {
         m_statusLabel->setText(
             QString("Imported KiCad footprint: %1 (%2 primitives)")
@@ -2732,6 +3410,35 @@ void FootprintEditor::dropEvent(QDropEvent* event) {
 }
 
 void FootprintEditor::closeEvent(QCloseEvent* event) {
+    if (hasUnsavedChanges()) {
+        QMessageBox msg(this);
+        msg.setWindowTitle("Unsaved Changes");
+        msg.setText("You have unsaved changes. Would you like to save them before closing?");
+        QPushButton* saveBtn = msg.addButton("Save All", QMessageBox::AcceptRole);
+        QPushButton* saveLibBtn = msg.addButton("Save to Library", QMessageBox::AcceptRole);
+        QPushButton* discardBtn = msg.addButton("Discard", QMessageBox::DestructiveRole);
+        msg.addButton("Cancel", QMessageBox::RejectRole);
+        msg.setDefaultButton(saveBtn);
+
+        msg.exec();
+        QAbstractButton* clicked = msg.clickedButton();
+        if (clicked == saveBtn) {
+            if (!saveFootprintToCurrentFlow(false)) {
+                event->ignore();
+                return;
+            }
+        } else if (clicked == saveLibBtn) {
+            onSaveToLibrary();
+            if (hasUnsavedChanges()) {
+                event->ignore();
+                return;
+            }
+        } else if (clicked != discardBtn) {
+            event->ignore();
+            return;
+        }
+    }
+
     QJsonObject state;
     state["leftToolbarVisible"] = m_leftToolbar && !m_leftToolbar->isHidden();
     state["leftNavigatorVisible"] = m_leftNavigatorPanel && !m_leftNavigatorPanel->isHidden();
@@ -2755,6 +3462,7 @@ void FootprintEditor::showEvent(QShowEvent* event) {
     QDialog::showEvent(event);
     if (QScreen* screen = window()->screen()) {
         const QRect area = screen->availableGeometry();
+        setMaximumSize(area.size());
         QRect geom = frameGeometry();
         if (geom.height() > area.height() || geom.width() > area.width()) {
             resize(qMin(geom.width(), area.width()), qMin(geom.height(), area.height()));
@@ -2796,11 +3504,8 @@ void FootprintEditor::onDelete() {
 // Helper to perform save
 // Helper to validate and update footprint object
 bool FootprintEditor::prepareFootprint() {
-    QString name = m_nameEdit->text();
-    if (name.isEmpty()) {
-        QMessageBox::warning(this, "Save Footprint", "Please enter a footprint name.");
-        return false;
-    }
+    if (!ensureFootprintName()) return false;
+    QString name = m_nameEdit->text().trimmed();
     
     m_footprint.setName(name);
     m_footprint.setDescription(m_descriptionEdit->text());
@@ -2826,42 +3531,148 @@ bool FootprintEditor::prepareFootprint() {
     return true;
 }
 
+bool FootprintEditor::ensureFootprintName() {
+    if (!m_nameEdit) return false;
+
+    const QString currentName = m_nameEdit->text().trimmed();
+    if (!currentName.isEmpty()) return true;
+
+    if (m_rightPanel) m_rightPanel->setVisible(true);
+    if (m_rightTabWidget) m_rightTabWidget->setCurrentIndex(1);
+    m_nameEdit->setFocus();
+
+    bool ok = false;
+    const QString enteredName = QInputDialog::getText(this,
+                                                      "Footprint Name",
+                                                      "Enter footprint name:",
+                                                      QLineEdit::Normal,
+                                                      currentName,
+                                                      &ok).trimmed();
+    if (!ok || enteredName.isEmpty()) {
+        QMessageBox::warning(this, "Save Footprint", "Please enter a footprint name.");
+        return false;
+    }
+
+    m_nameEdit->setText(enteredName);
+    return true;
+}
+
+bool FootprintEditor::saveFootprintToCurrentFlow(bool closeAfterSave) {
+    if (!prepareFootprint()) return false;
+    if (m_undoStack) m_undoStack->setClean();
+    m_lastSaveTarget = SaveTarget::CurrentFlow;
+    emit footprintSaved(m_footprint);
+    if (closeAfterSave) accept();
+    return true;
+}
+
+bool FootprintEditor::saveFootprintToLibrary() {
+    if (!prepareFootprint()) return false;
+
+    QStringList libNames;
+    for (auto* lib : FootprintLibraryManager::instance().libraries()) {
+        if (!lib || lib->isBuiltIn()) continue;
+        libNames << lib->name();
+    }
+    if (libNames.isEmpty()) libNames << "User Library";
+    libNames.removeDuplicates();
+    libNames.sort(Qt::CaseInsensitive);
+
+    bool ok = false;
+    QString libName = QInputDialog::getItem(this, "Save to Library",
+                                          "Select or create library:",
+                                          libNames, 0, true, &ok);
+    if (!ok || libName.isEmpty()) return false;
+
+    libName = libName.trimmed();
+    if (libName.isEmpty()) return false;
+
+    FootprintLibrary* lib = FootprintLibraryManager::instance().createLibrary(libName);
+    if (!lib) return false;
+
+    if (!lib->saveFootprint(m_footprint)) {
+        QMessageBox::critical(this, "Save Failed",
+                              QString("Failed to write footprint file to:\n%1").arg(lib->path()));
+        return false;
+    }
+
+    if (m_undoStack) m_undoStack->setClean();
+    m_lastSaveTarget = SaveTarget::Library;
+    QMessageBox::information(this, "Footprint Saved",
+        QString("Footprint '%1' saved to library '%2'.").arg(m_footprint.name()).arg(lib->name()));
+    return true;
+}
+
+bool FootprintEditor::promptForSaveTarget() {
+    QMessageBox msg(this);
+    msg.setWindowTitle("Save Footprint");
+    msg.setText("Choose where to save this footprint.");
+    QPushButton* currentBtn = msg.addButton("Save to Project", QMessageBox::AcceptRole);
+    QPushButton* libraryBtn = msg.addButton("Save to Library", QMessageBox::AcceptRole);
+    msg.addButton(QMessageBox::Cancel);
+    msg.setDefaultButton(currentBtn);
+    msg.exec();
+
+    QAbstractButton* clicked = msg.clickedButton();
+    if (clicked == currentBtn) return saveFootprintToCurrentFlow(true);
+    if (clicked == libraryBtn) return saveFootprintToLibrary();
+    return false;
+}
+
+bool FootprintEditor::hasUnsavedChanges() const {
+    auto serializeModels = [](const QList<Footprint3DModel>& models) {
+        QJsonArray arr;
+        for (const Footprint3DModel& model : models) arr.append(model.toJson());
+        return QJsonDocument(arr).toJson(QJsonDocument::Compact);
+    };
+    const QStringList currentKeywords = [this]() {
+        QStringList keywords;
+        if (!m_keywordsEdit) return keywords;
+        for (const QString& token : m_keywordsEdit->text().split(',', Qt::SkipEmptyParts)) {
+            const QString trimmed = token.trimmed();
+            if (!trimmed.isEmpty()) keywords.append(trimmed);
+        }
+        return keywords;
+    }();
+
+    const bool metadataDirty =
+        (m_nameEdit && m_footprint.name() != m_nameEdit->text()) ||
+        (m_descriptionEdit && m_footprint.description() != m_descriptionEdit->text()) ||
+        (m_categoryCombo && m_footprint.category() != m_categoryCombo->currentText()) ||
+        (m_classificationCombo && m_footprint.classification() != m_classificationCombo->currentText()) ||
+        (m_excludeBOMCheck && m_footprint.excludeFromBOM() != m_excludeBOMCheck->isChecked()) ||
+        (m_excludePosCheck && m_footprint.excludeFromPosFiles() != m_excludePosCheck->isChecked()) ||
+        (m_dnpCheck && m_footprint.dnp() != m_dnpCheck->isChecked()) ||
+        (m_netTieCheck && m_footprint.isNetTie() != m_netTieCheck->isChecked()) ||
+        (m_footprint.keywords() != currentKeywords) ||
+        (serializeModels(m_models3D) != serializeModels(m_footprint.models3D()));
+
+    return (m_undoStack && !m_undoStack->isClean()) || metadataDirty;
+}
+
 void FootprintEditor::onSave() {
-    if (prepareFootprint()) {
-        emit footprintSaved(m_footprint);
-        accept();
+    switch (m_lastSaveTarget) {
+    case SaveTarget::CurrentFlow:
+        saveFootprintToCurrentFlow(true);
+        break;
+    case SaveTarget::Library:
+        saveFootprintToLibrary();
+        break;
+    case SaveTarget::None:
+    default:
+        promptForSaveTarget();
+        break;
     }
 }
 
 void FootprintEditor::onSaveToLibrary() {
-    if (!prepareFootprint()) return;
-
-    QStringList libNames;
-    for (auto* lib : FootprintLibraryManager::instance().libraries()) {
-        libNames << lib->name();
-    }
-    if (libNames.isEmpty()) libNames << "User Library";
-
-    bool ok;
-    QString libName = QInputDialog::getItem(this, "Save to Library", 
-                                          "Select or create library:", 
-                                          libNames, 0, true, &ok);
-    if (ok && !libName.isEmpty()) {
-        // Create (or get existing) library
-        FootprintLibrary* lib = FootprintLibraryManager::instance().createLibrary(libName);
-        if (lib) {
-            if (lib->saveFootprint(m_footprint)) {
-                QMessageBox::information(this, "Footprint Saved", 
-                    QString("Footprint '%1' saved to library '%2'.").arg(m_footprint.name()).arg(lib->name()));
-            } else {
-                QMessageBox::critical(this, "Save Failed", "Failed to write footprint file.");
-            }
-        }
-    }
+    saveFootprintToLibrary();
 }
 void FootprintEditor::onClear() {
-    m_footprint.clearPrimitives();
-    updateSceneFromDefinition();
+    FootprintDefinition oldDef = m_footprint;
+    FootprintDefinition newDef = oldDef;
+    newDef.clearPrimitives();
+    m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Clear Footprint"));
 }
 
 void FootprintEditor::onUndo() {
@@ -2938,6 +3749,17 @@ FootprintDefinition FootprintEditor::footprintDefinition() const {
 
 void FootprintEditor::setFootprintDefinition(const FootprintDefinition& def) {
     m_footprint = def;
+    const QSignalBlocker nameBlocker(m_nameEdit);
+    const QSignalBlocker descriptionBlocker(m_descriptionEdit);
+    const QSignalBlocker categoryBlocker(m_categoryCombo);
+    const QSignalBlocker classificationBlocker(m_classificationCombo);
+    const QSignalBlocker keywordsBlocker(m_keywordsEdit);
+    const QSignalBlocker bomBlocker(m_excludeBOMCheck);
+    const QSignalBlocker posBlocker(m_excludePosCheck);
+    const QSignalBlocker dnpBlocker(m_dnpCheck);
+    const QSignalBlocker netTieBlocker(m_netTieCheck);
+    const QSignalBlocker modelSelectorBlocker(m_modelSelector);
+
     // update fields
     m_nameEdit->setText(def.name());
     m_descriptionEdit->setText(def.description());
@@ -2964,23 +3786,17 @@ void FootprintEditor::setFootprintDefinition(const FootprintDefinition& def) {
     loadModelToFields(0);
     
     updateSceneFromDefinition();
+    updatePreview();
 }
     
     void FootprintEditor::onSetAnchor(QPointF pos) {
-        // Shift all primitives by -pos
-        for (int i = 0; i < m_footprint.primitives().size(); ++i) {
-            FootprintPrimitive& prim = m_footprint.primitives()[i];
-            if (prim.type == FootprintPrimitive::Line) {
-                prim.data["x1"] = prim.data["x1"].toDouble() - pos.x();
-                prim.data["y1"] = prim.data["y1"].toDouble() - pos.y();
-                prim.data["x2"] = prim.data["x2"].toDouble() - pos.x();
-                prim.data["y2"] = prim.data["y2"].toDouble() - pos.y();
-            } else {
-                prim.data["x"] = prim.data["x"].toDouble() - pos.x();
-                prim.data["y"] = prim.data["y"].toDouble() - pos.y();
-            }
+        FootprintDefinition oldDef = m_footprint;
+        FootprintDefinition newDef = oldDef;
+        for (int i = 0; i < newDef.primitives().size(); ++i) {
+            FootprintPrimitive& prim = newDef.primitives()[i];
+            updatePrimitivePos(prim, -pos.x(), -pos.y());
         }
-        updateSceneFromDefinition();
+        m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Set Anchor"));
         m_statusLabel->setText(QString("Anchor set at (%1, %2)").arg(pos.x()).arg(pos.y()));
     }
     
@@ -3038,11 +3854,14 @@ void FootprintEditor::setFootprintDefinition(const FootprintDefinition& def) {
         if (dlg.exec() == QDialog::Accepted) {
             int count = countSpin->value();
             bool isLinear = (typeCombo->currentIndex() == 0);
-    
+
+            FootprintDefinition oldDef = m_footprint;
+            FootprintDefinition newDef = oldDef;
+
             for (auto item : selected) {
                 int idx = m_drawnItems.indexOf(item);
                 if (idx == -1) continue;
-                const FootprintPrimitive& basePrim = m_footprint.primitives()[idx];
+                const FootprintPrimitive& basePrim = oldDef.primitives()[idx];
                 
                 for (int i = 1; i < count; ++i) {
                     FootprintPrimitive newPrim = basePrim;
@@ -3102,10 +3921,10 @@ void FootprintEditor::setFootprintDefinition(const FootprintDefinition& def) {
                         if (ok) newPrim.data["number"] = QString::number(n + i);
                     }
                     
-                    m_footprint.addPrimitive(newPrim);
+                    newDef.addPrimitive(newPrim);
                 }
             }
-            updateSceneFromDefinition();
+            m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Create Array"));
         }
     }
 
@@ -3145,19 +3964,19 @@ void FootprintEditor::onPolarGridTool() {
 
     QComboBox* shapeCombo = new QComboBox(&dlg);
     shapeCombo->addItems({"Rect", "Round", "Oblong", "Trapezoid"});
-    shapeCombo->setCurrentText(m_currentPadShape.isEmpty() ? "Rect" : m_currentPadShape);
+    shapeCombo->setCurrentText(m_padShapeCombo ? m_padShapeCombo->currentText() : (m_currentPadShape.isEmpty() ? "Rect" : m_currentPadShape));
     layout.addRow("Pad Shape:", shapeCombo);
 
     QDoubleSpinBox* padW = new QDoubleSpinBox(&dlg);
     padW->setRange(0.1, 50);
     padW->setDecimals(3);
-    padW->setValue(1.5);
+    padW->setValue(m_padWidthSpin ? m_padWidthSpin->value() : 1.5);
     layout.addRow("Pad Width (mm):", padW);
 
     QDoubleSpinBox* padH = new QDoubleSpinBox(&dlg);
     padH->setRange(0.1, 50);
     padH->setDecimals(3);
-    padH->setValue(1.5);
+    padH->setValue(m_padHeightSpin ? m_padHeightSpin->value() : 1.5);
     layout.addRow("Pad Height (mm):", padH);
 
     QCheckBox* rotatePads = new QCheckBox("Rotate pads radially", &dlg);
@@ -3178,20 +3997,27 @@ void FootprintEditor::onPolarGridTool() {
     const QString shape = shapeCombo->currentText();
     const QSizeF size(padW->value(), padH->value());
 
+    FootprintDefinition oldDef = m_footprint;
+    FootprintDefinition newDef = oldDef;
+    int nextPadNumber = getNextPadNumber().toInt();
+
     for (int i = 0; i < count; ++i) {
         const qreal aDeg = start + (360.0 * i / count);
         const qreal aRad = aDeg * M_PI / 180.0;
         const QPointF pos(cx + radius * std::cos(aRad), cy + radius * std::sin(aRad));
 
-        FootprintPrimitive prim = FootprintPrimitive::createPad(pos, getNextPadNumber(), shape, size);
-        prim.layer = FootprintPrimitive::Top_Copper;
-        if (shape == "Trapezoid") prim.data["trapezoid_delta_x"] = 0.6;
+        FootprintPrimitive prim = FootprintPrimitive::createPad(pos, QString::number(nextPadNumber++), shape, size);
+        prim.layer = m_activeLayer;
+        applyPadToolbarDefaults(prim);
+        prim.data["shape"] = shape;
+        prim.data["width"] = size.width();
+        prim.data["height"] = size.height();
         if (rotatePads->isChecked()) prim.data["rotation"] = aDeg;
-        m_footprint.addPrimitive(prim);
+        newDef.addPrimitive(prim);
     }
 
     setPadShape(shape);
-    updateSceneFromDefinition();
+    m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Create Polar Grid"));
 }
 
 void FootprintEditor::onRunDRC() {
@@ -3259,6 +4085,104 @@ void FootprintEditor::onRunDRC() {
     msgBox.exec();
 }
 
+void FootprintEditor::generateOutlineFromSelection(FootprintPrimitive::Layer layer, qreal margin, const QString& commandText) {
+    const QList<QGraphicsItem*> selected = m_scene ? m_scene->selectedItems() : QList<QGraphicsItem*>();
+    if (selected.isEmpty()) {
+        QMessageBox::information(this, "Generate Outline", "Select one or more primitives first.");
+        return;
+    }
+
+    QRectF bounds = selected.first()->sceneBoundingRect();
+    for (QGraphicsItem* item : selected) {
+        if (!item) continue;
+        bounds = bounds.united(item->sceneBoundingRect());
+    }
+    if (!bounds.isValid() || bounds.isNull()) return;
+
+    FootprintDefinition oldDef = m_footprint;
+    FootprintDefinition newDef = oldDef;
+    FootprintPrimitive outline = FootprintPrimitive::createRect(bounds.adjusted(-margin, -margin, margin, margin).normalized(), false, 0.1);
+    outline.layer = layer;
+    newDef.addPrimitive(outline);
+    m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, commandText));
+}
+
+void FootprintEditor::renumberPads(const QString& pattern) {
+    QList<int> padIndices;
+    const QList<QGraphicsItem*> selected = m_scene ? m_scene->selectedItems() : QList<QGraphicsItem*>();
+    if (!selected.isEmpty()) {
+        for (QGraphicsItem* item : selected) {
+            const int index = m_drawnItems.indexOf(item);
+            if (index >= 0 && index < m_footprint.primitives().size() &&
+                m_footprint.primitives().at(index).type == FootprintPrimitive::Pad) {
+                padIndices.append(index);
+            }
+        }
+    } else {
+        for (int i = 0; i < m_footprint.primitives().size(); ++i) {
+            if (m_footprint.primitives().at(i).type == FootprintPrimitive::Pad) padIndices.append(i);
+        }
+    }
+
+    std::sort(padIndices.begin(), padIndices.end());
+    padIndices.erase(std::unique(padIndices.begin(), padIndices.end()), padIndices.end());
+    if (padIndices.isEmpty()) {
+        QMessageBox::information(this, "Renumber Pads", "Select pads or create some pads first.");
+        return;
+    }
+
+    bool ok = false;
+    const int start = QInputDialog::getInt(this, "Renumber Pads", "Start number:", 1, 1, 9999, 1, &ok);
+    if (!ok) return;
+
+    auto padCenter = [this](int index) {
+        const FootprintPrimitive& prim = m_footprint.primitives().at(index);
+        if (prim.data.contains("x") && prim.data.contains("y")) {
+            return QPointF(prim.data["x"].toDouble(), prim.data["y"].toDouble());
+        }
+        if (prim.data.contains("cx") && prim.data.contains("cy")) {
+            return QPointF(prim.data["cx"].toDouble(), prim.data["cy"].toDouble());
+        }
+        return QPointF();
+    };
+
+    if (pattern == "left-right") {
+        std::sort(padIndices.begin(), padIndices.end(), [&](int a, int b) {
+            const QPointF pa = padCenter(a);
+            const QPointF pb = padCenter(b);
+            if (!qFuzzyCompare(pa.x(), pb.x())) return pa.x() < pb.x();
+            return pa.y() < pb.y();
+        });
+    } else if (pattern == "top-bottom") {
+        std::sort(padIndices.begin(), padIndices.end(), [&](int a, int b) {
+            const QPointF pa = padCenter(a);
+            const QPointF pb = padCenter(b);
+            if (!qFuzzyCompare(pa.y(), pb.y())) return pa.y() < pb.y();
+            return pa.x() < pb.x();
+        });
+    } else if (pattern == "clockwise") {
+        QPointF center;
+        for (int index : padIndices) center += padCenter(index);
+        center /= double(padIndices.size());
+        std::sort(padIndices.begin(), padIndices.end(), [&](int a, int b) {
+            const QPointF pa = padCenter(a) - center;
+            const QPointF pb = padCenter(b) - center;
+            const double aa = std::atan2(pa.x(), -pa.y());
+            const double ab = std::atan2(pb.x(), -pb.y());
+            if (!qFuzzyCompare(aa, ab)) return aa < ab;
+            return QLineF(QPointF(), pa).length() < QLineF(QPointF(), pb).length();
+        });
+    }
+
+    FootprintDefinition oldDef = m_footprint;
+    FootprintDefinition newDef = oldDef;
+    int value = start;
+    for (int index : padIndices) {
+        newDef.primitives()[index].data["number"] = QString::number(value++);
+    }
+    m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Renumber Pads"));
+}
+
 QString FootprintEditor::getNextPadNumber() const {
     int maxNum = 0;
     for (const auto& prim : m_footprint.primitives()) {
@@ -3268,7 +4192,8 @@ QString FootprintEditor::getNextPadNumber() const {
             if (ok && n > maxNum) maxNum = n;
         }
     }
-    return QString::number(maxNum + 1);
+    const int step = m_padNumberStepSpin ? qMax(1, m_padNumberStepSpin->value()) : 1;
+    return QString::number(maxNum == 0 ? 1 : (maxNum + step));
 }
 
 void FootprintEditor::onContextMenu(QPoint pos) {
@@ -3289,6 +4214,21 @@ void FootprintEditor::onContextMenu(QPoint pos) {
 
     if (hasConvertiblePrimitives) {
         menu.addAction(QIcon(":/icons/tool_pad.svg"), "Convert to Custom Pad", this, &FootprintEditor::onConvertToPad);
+        menu.addSeparator();
+    }
+
+    if (!selected.isEmpty()) {
+        menu.addAction(QIcon(":/icons/tool_rect.svg"), "Generate Fab From Selection", this, [this]() {
+            generateOutlineFromSelection(FootprintPrimitive::Top_Fabrication, 0.25, "Generate Fab Outline");
+        });
+        menu.addAction(QIcon(":/icons/tool_rect.svg"), "Generate Courtyard From Selection", this, [this]() {
+            generateOutlineFromSelection(FootprintPrimitive::Top_Courtyard, 0.5, "Generate Courtyard");
+        });
+
+        QMenu* renumberMenu = menu.addMenu("Renumber Pads");
+        renumberMenu->addAction("Left to Right", this, [this]() { renumberPads("left-right"); });
+        renumberMenu->addAction("Top to Bottom", this, [this]() { renumberPads("top-bottom"); });
+        renumberMenu->addAction("Clockwise", this, [this]() { renumberPads("clockwise"); });
         menu.addSeparator();
     }
 
@@ -3335,16 +4275,18 @@ void FootprintEditor::onConvertToPad() {
     FootprintPrimitive pad = FootprintPrimitive::createPolygonPad(finalPoints, nextNum);
     pad.layer = FootprintPrimitive::Top_Copper;
 
+    FootprintDefinition oldDef = m_footprint;
+    FootprintDefinition newDef = oldDef;
     const int keepIdx = convertibleIndices.first();
-    m_footprint.primitives()[keepIdx] = pad;
+    newDef.primitives()[keepIdx] = pad;
     for (int i = convertibleIndices.size() - 1; i >= 0; --i) {
         const int idx = convertibleIndices.at(i);
-        if (idx != keepIdx) m_footprint.removePrimitive(idx);
+        if (idx != keepIdx) newDef.removePrimitive(idx);
     }
     anyConverted = true;
 
     if (anyConverted) {
-        updateSceneFromDefinition();
+        m_undoStack->push(new UpdateFootprintCommand(this, oldDef, newDef, "Convert To Custom Pad"));
         if (convertibleIndices.size() > 1) {
             m_statusLabel->setText("Converted selected shapes to one combined custom pad.");
         } else {

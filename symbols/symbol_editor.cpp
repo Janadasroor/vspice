@@ -30,6 +30,7 @@
 #include "pin_table_dialog.h"
 #include "pin_modes_dialog.h"
 #include "ui/ai_datasheet_import_dialog.h"
+#include "../schematic/dialogs/spice_subcircuit_import_dialog.h"
 #include "../schematic/dialogs/subcircuit_picker_dialog.h"
 #include "../core/text_resolver.h"
 #include "../simulator/bridge/model_library_manager.h"
@@ -81,6 +82,67 @@ QString runThemedSaveFileDialog(QWidget* parent, const QString& title, const QSt
     if (dlg.exec() != QDialog::Accepted) return QString();
     return dlg.selectedFiles().value(0);
 }
+static SymbolDefinition buildImportedSubcktSymbolForEditor(const SpiceSubcircuitImportDialog::Result& res) {
+    SymbolDefinition def(res.subcktName);
+    def.setDescription(QString("Auto-generated symbol for .subckt %1").arg(res.subcktName));
+    def.setCategory("Integrated Circuits");
+    def.setReferencePrefix("U");
+    def.setDefaultValue(res.subcktName);
+    def.setModelSource("project");
+    def.setModelPath(res.relativeIncludePath);
+    def.setModelName(res.subcktName);
+    def.setSpiceModelName(res.subcktName);
+
+    QMap<int, QString> mapping;
+    QList<SpiceSubcircuitImportDialog::Result::PinMapping> pinMappings = res.pinMappings;
+    if (pinMappings.isEmpty()) {
+        for (int i = 0; i < res.pins.size(); ++i) {
+            SpiceSubcircuitImportDialog::Result::PinMapping mappingEntry;
+            mappingEntry.subcktPin = res.pins.at(i);
+            mappingEntry.symbolPinName = res.pins.at(i);
+            mappingEntry.symbolPinNumber = i + 1;
+            pinMappings.append(mappingEntry);
+        }
+    }
+
+    std::sort(pinMappings.begin(), pinMappings.end(), [](const auto& a, const auto& b) {
+        return a.symbolPinNumber < b.symbolPinNumber;
+    });
+
+    const int pinCount = pinMappings.size();
+    const int leftCount = (pinCount + 1) / 2;
+    const int rightCount = pinCount - leftCount;
+    const int pinsPerSide = qMax(leftCount, rightCount);
+    const qreal bodyWidth = 120.0;
+    const qreal pinSpacing = 25.0;
+    const qreal pinLength = 20.0;
+    const qreal bodyHalfHeight = qMax<qreal>(40.0, pinsPerSide * pinSpacing * 0.5);
+
+    def.addPrimitive(SymbolPrimitive::createRect(QRectF(-bodyWidth / 2.0, -bodyHalfHeight, bodyWidth, bodyHalfHeight * 2.0), false));
+    def.addPrimitive(SymbolPrimitive::createText(res.subcktName, QPointF(-30.0, -bodyHalfHeight - 18.0), 10));
+
+    for (int i = 0; i < pinCount; ++i) {
+        const auto& pinMapping = pinMappings.at(i);
+        const bool leftSide = (i < leftCount);
+        const int sideIndex = leftSide ? i : (i - leftCount);
+        const int countOnSide = leftSide ? leftCount : (pinCount - leftCount);
+        const int displayIndex = leftSide ? sideIndex : (countOnSide - 1 - sideIndex);
+        const qreal y = ((countOnSide - 1) * pinSpacing * -0.5) + (displayIndex * pinSpacing);
+        const QPointF pos(leftSide ? (-bodyWidth / 2.0 - pinLength) : (bodyWidth / 2.0 + pinLength), y);
+        const QString orientation = leftSide ? "Right" : "Left";
+        const int symbolPinNumber = pinMapping.symbolPinNumber;
+        const QString subcktPinName = pinMapping.subcktPin;
+        const QString symbolPinName = pinMapping.symbolPinName.isEmpty() ? subcktPinName : pinMapping.symbolPinName;
+
+        SymbolPrimitive pin = SymbolPrimitive::createPin(pos, symbolPinNumber, symbolPinName, orientation, pinLength);
+        def.addPrimitive(pin);
+        mapping.insert(symbolPinNumber, subcktPinName);
+    }
+
+    def.setSpiceNodeMapping(mapping);
+    return def;
+}
+
 } // namespace
 
 // --- Helper classes to suppress default selection drawing ---
@@ -896,6 +958,7 @@ void translatePrimitive(SymbolPrimitive& prim, qreal dx, qreal dy) {
 SymbolEditor::SymbolEditor(QWidget* parent)
     : QMainWindow(parent)
     , m_undoStack(new QUndoStack(this)) {
+    setObjectName("SymbolEditor");
     setupUI();
     setProjectKey(QString());
     applyTheme();
@@ -906,6 +969,7 @@ SymbolEditor::SymbolEditor(const SymbolDefinition& symbol, QWidget* parent)
     : QMainWindow(parent)
     , m_symbol(symbol)
     , m_undoStack(new QUndoStack(this)) {
+    setObjectName("SymbolEditor");
     setupUI();
     setProjectKey(QString());
     setSymbolDefinition(symbol);
@@ -2098,6 +2162,20 @@ void SymbolEditor::onAIDatasheetImport() {
     }
 }
 
+void SymbolEditor::onImportSpiceSubcircuit() {
+    SpiceSubcircuitImportDialog dlg(m_projectKey, QString(), this);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    const auto res = dlg.result();
+    SymbolDefinition imported = buildImportedSubcktSymbolForEditor(res);
+    const SymbolDefinition oldDef = m_symbol;
+    applySymbolDefinition(imported);
+    m_undoStack->clear();
+    m_undoStack->setClean();
+    m_lastSaveTarget = SaveTarget::None;
+    statusBar()->showMessage(QString("Imported SPICE subcircuit %1 into Symbol Editor").arg(res.subcktName), 4000);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  SymbolEditor – UI Setup
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2220,6 +2298,10 @@ void SymbolEditor::setupUI() {
     auto* placeBtn = new QPushButton("Place in Schematic");
     connect(placeBtn, &QPushButton::clicked, this, &SymbolEditor::onPlaceInSchematic);
     actionLayout->addWidget(placeBtn);
+
+    auto* importSubcktBtn = new QPushButton("Import SPICE Subcircuit");
+    connect(importSubcktBtn, &QPushButton::clicked, this, &SymbolEditor::onImportSpiceSubcircuit);
+    actionLayout->addWidget(importSubcktBtn);
 
     auto* imgBtn = new QPushButton("Import Image");
     connect(imgBtn, &QPushButton::clicked, this, &SymbolEditor::onImportImage);
@@ -2369,6 +2451,9 @@ void SymbolEditor::setupUI() {
     auto* importLtBtn = new QPushButton("Import LTspice Symbol");
     connect(importLtBtn, &QPushButton::clicked, this, &SymbolEditor::onImportLtspiceSymbol);
     wizLayout->addWidget(importLtBtn);
+    auto* importSubcktBtn2 = new QPushButton("Import SPICE Subcircuit");
+    connect(importSubcktBtn2, &QPushButton::clicked, this, &SymbolEditor::onImportSpiceSubcircuit);
+    wizLayout->addWidget(importSubcktBtn2);
     wizLayout->addStretch();
     wizDock->setWidget(wizContainer);
     addDockWidget(Qt::LeftDockWidgetArea, wizDock);
@@ -2931,7 +3016,7 @@ void SymbolEditor::createMenuBar() {
     // --- File Menu ---
     QMenu* fileMenu = mb->addMenu("&File");
     fileMenu->addAction(getThemeIcon(":/icons/toolbar_new.png"), "&New Symbol", QKeySequence::New, this, &SymbolEditor::onNewSymbol);
-    fileMenu->addAction(getThemeIcon(":/icons/check.svg"), "&Save to Library", QKeySequence::Save, this, &SymbolEditor::onSaveToLibrary);
+    fileMenu->addAction(getThemeIcon(":/icons/check.svg"), "&Save", QKeySequence::Save, this, &SymbolEditor::onSave);
     fileMenu->addAction(getThemeIcon(":/icons/toolbar_file.png"), "Save As...", QKeySequence(), this, &SymbolEditor::onExportVioSym);
     fileMenu->addAction(getThemeIcon(":/icons/tool_gear.svg"), "Save as Wizard Template...", QKeySequence(), this, &SymbolEditor::onWizardSaveTemplate);
     fileMenu->addAction(getThemeIcon(":/icons/toolbar_refresh.png"), "Refresh Libraries", QKeySequence::Refresh, this, &SymbolEditor::onRefreshLibraries);
@@ -2955,6 +3040,7 @@ void SymbolEditor::createMenuBar() {
     // --- AI Menu ---
     QMenu* aiMenu = mb->addMenu("&AI");
     aiMenu->addAction(getThemeIcon(":/icons/tool_gear.svg"), "Generate Pins from Datasheet Text...", QKeySequence(), this, &SymbolEditor::onAIDatasheetImport);
+    aiMenu->addAction(getThemeIcon(":/icons/tool_sheet.svg"), "Import SPICE Subcircuit...", QKeySequence(), this, &SymbolEditor::onImportSpiceSubcircuit);
 
     // --- View Menu (The core request) ---
     QMenu* viewMenu = mb->addMenu("&View");
@@ -3141,7 +3227,9 @@ void SymbolEditor::createToolBar() {
         if (tool == Select) m_selectAction = act;
         if (!shortcut.isEmpty()) {
             act->setShortcut(QKeySequence(shortcut));
+            act->setShortcutContext(Qt::WidgetWithChildrenShortcut);
             act->setToolTip(name + " (" + shortcut + ")");
+            this->addAction(act);
         } else {
             act->setToolTip(name);
         }
@@ -3174,10 +3262,10 @@ void SymbolEditor::createToolBar() {
     newSym->setToolTip("New Symbol (Ctrl+N)");
     connect(newSym, &QAction::triggered, this, &SymbolEditor::onNewSymbol);
 
-    QAction* saveAction = m_toolbar->addAction(getThemeIcon(":/icons/check.svg"), "Save to Library");
+    QAction* saveAction = m_toolbar->addAction(getThemeIcon(":/icons/check.svg"), "Save");
     saveAction->setShortcut(QKeySequence::Save);
-    saveAction->setToolTip("Save to Library (Ctrl+S)");
-    connect(saveAction, &QAction::triggered, this, &SymbolEditor::onSaveToLibrary);
+    saveAction->setToolTip("Save (Ctrl+S)");
+    connect(saveAction, &QAction::triggered, this, &SymbolEditor::onSave);
 
     QAction* exportAction = m_toolbar->addAction(getThemeIcon(":/icons/toolbar_file.png"), "Save As...");
     exportAction->setToolTip("Save symbol to a .viosym file");
@@ -3226,12 +3314,14 @@ void SymbolEditor::createToolBar() {
     m_toolbar->addSeparator();
 
     auto* rotateCWAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_rotate.svg"), "Rotate 90° CW");
-    rotateCWAct->setShortcut(QKeySequence("R"));
+    rotateCWAct->setShortcut(QKeySequence("Ctrl+R"));
+    rotateCWAct->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     connect(rotateCWAct, &QAction::triggered, this, &SymbolEditor::onRotateCW);
     this->addAction(rotateCWAct);
 
     auto* rotateCCWAct = m_toolbar->addAction(getThemeIcon(":/icons/tool_rotate_ccw.svg"), "Rotate 90° CCW");
-    rotateCCWAct->setShortcut(QKeySequence("Shift+R"));
+    rotateCCWAct->setShortcut(QKeySequence("Ctrl+Shift+R"));
+    rotateCCWAct->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     connect(rotateCCWAct, &QAction::triggered, this, &SymbolEditor::onRotateCCW);
     this->addAction(rotateCCWAct);
 
@@ -4203,26 +4293,64 @@ void SymbolEditor::onItemErased(QGraphicsItem* item) {
 //  SymbolEditor – Save
 // ─────────────────────────────────────────────────────────────────────────────
 
-void SymbolEditor::onSave() {
+bool SymbolEditor::saveSymbolToCurrentFlow() {
     QStringList errors;
     QStringList warnings;
     if (!validateCurrentSymbolForSave(&errors, &warnings)) {
-        QMessageBox::warning(this, "Save Symbol", errors.join('\n'));
-        return;
+        QMessageBox::warning(this, "Save Symbol", errors.join("\n"));
+        return false;
     }
     if (!warnings.isEmpty()) {
         const auto choice = QMessageBox::warning(this,
                                                  "Save Symbol",
-                                                 warnings.join('\n') + "\n\nSave anyway?",
+                                                 warnings.join("\n") + "\n\nSave anyway?",
                                                  QMessageBox::Yes | QMessageBox::No,
                                                  QMessageBox::No);
-        if (choice != QMessageBox::Yes) return;
+        if (choice != QMessageBox::Yes) return false;
     }
     m_symbol = symbolDefinition();
+    m_lastSaveTarget = SaveTarget::CurrentFlow;
     Q_EMIT symbolSaved(m_symbol);
+    if (m_undoStack) m_undoStack->setClean();
+    return true;
+}
+
+bool SymbolEditor::promptForSaveTarget() {
+    QMessageBox msg(this);
+    msg.setWindowTitle("Save Symbol");
+    msg.setText("Choose where to save this symbol.");
+    QPushButton* currentBtn = msg.addButton("Save to Project", QMessageBox::AcceptRole);
+    QPushButton* libraryBtn = msg.addButton("Save to Library", QMessageBox::AcceptRole);
+    msg.addButton(QMessageBox::Cancel);
+    msg.setDefaultButton(currentBtn);
+    msg.exec();
+
+    QAbstractButton* clicked = msg.clickedButton();
+    if (clicked == currentBtn) return saveSymbolToCurrentFlow();
+    if (clicked == libraryBtn) return saveSymbolToLibrary();
+    return false;
+}
+
+void SymbolEditor::onSave() {
+    switch (m_lastSaveTarget) {
+    case SaveTarget::CurrentFlow:
+        saveSymbolToCurrentFlow();
+        break;
+    case SaveTarget::Library:
+        saveSymbolToLibrary();
+        break;
+    case SaveTarget::None:
+    default:
+        promptForSaveTarget();
+        break;
+    }
 }
 
 void SymbolEditor::onSaveToLibrary() {
+    saveSymbolToLibrary();
+}
+
+bool SymbolEditor::saveSymbolToLibrary() {
     if (m_nameEdit->text().trimmed().isEmpty()) {
         bool ok = false;
         QString name = QInputDialog::getText(this, "Symbol Name",
@@ -4230,7 +4358,7 @@ void SymbolEditor::onSaveToLibrary() {
                                              "", &ok);
         if (!ok || name.trimmed().isEmpty()) {
             QMessageBox::warning(this, "Error", "Please enter a symbol name.");
-            return;
+            return false;
         }
         m_nameEdit->setText(name.trimmed());
     }
@@ -4238,16 +4366,16 @@ void SymbolEditor::onSaveToLibrary() {
     QStringList errors;
     QStringList warnings;
     if (!validateCurrentSymbolForSave(&errors, &warnings)) {
-        QMessageBox::warning(this, "Save to Library", errors.join('\n'));
-        return;
+        QMessageBox::warning(this, "Save to Library", errors.join("\n"));
+        return false;
     }
     if (!warnings.isEmpty()) {
         const auto choice = QMessageBox::warning(this,
                                                  "Save to Library",
-                                                 warnings.join('\n') + "\n\nSave anyway?",
+                                                 warnings.join("\n") + "\n\nSave anyway?",
                                                  QMessageBox::Yes | QMessageBox::No,
                                                  QMessageBox::No);
-        if (choice != QMessageBox::Yes) return;
+        if (choice != QMessageBox::Yes) return false;
     }
 
     m_symbol = symbolDefinition();
@@ -4257,49 +4385,43 @@ void SymbolEditor::onSaveToLibrary() {
     QDir symDir(symBaseDir);
     if (!symDir.exists()) symDir.mkpath(".");
 
-    // Collect subdirectories (category folders)
     QStringList subDirs;
     for (const QFileInfo& fi : QDir(symBaseDir).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
         subDirs.append(fi.fileName());
     }
     subDirs.sort();
 
-    // Collect existing .sclib libraries
     QStringList sclibNames;
-    for (SymbolLibrary* lib : SymbolLibraryManager::instance().libraries())
+    for (SymbolLibrary* lib : SymbolLibraryManager::instance().libraries()) {
         if (!lib->isBuiltIn()) sclibNames.append(lib->name());
-
-    // Build selection list
-    QStringList options;
-    options << "[ Create New Category... ]";
-    for (const QString& d : subDirs)
-        options << QString("\xF0\x9F\x93\x81  %1").arg(d);  // folder icon
-    if (!sclibNames.isEmpty()) {
-        options << "──── .sclib Libraries ────";
-        for (const QString& n : sclibNames)
-            options << QString("\xF0\x9F\x93\x84  %1").arg(n);  // file icon
     }
 
-    bool ok;
+    QStringList options;
+    options << "[ Create New Category... ]";
+    for (const QString& d : subDirs) options << QString("[Dir] %1").arg(d);
+    if (!sclibNames.isEmpty()) {
+        options << "---- .sclib Libraries ----";
+        for (const QString& n : sclibNames) options << QString("[Lib] %1").arg(n);
+    }
+
+    bool ok = false;
     QString selection = QInputDialog::getItem(this, "Save to Library",
                             "Select category folder:", options, 1, false, &ok);
-    if (!ok || selection.isEmpty()) return;
+    if (!ok || selection.isEmpty()) return false;
 
-    // ── Create new subdirectory ──
     if (selection == "[ Create New Category... ]") {
-        bool ok2;
+        bool ok2 = false;
         QString dirName = QInputDialog::getText(this, "New Category",
                                 "Category name (used as folder):",
                                 QLineEdit::Normal, "", &ok2);
-        if (!ok2 || dirName.trimmed().isEmpty()) return;
+        if (!ok2 || dirName.trimmed().isEmpty()) return false;
         dirName = dirName.trimmed();
         QDir(symBaseDir).mkpath(dirName);
-        selection = QString("\xF0\x9F\x93\x81  %1").arg(dirName);
+        selection = QString("[Dir] %1").arg(dirName);
     }
 
-    // ── Save into subdirectory (.viosym) ──
-    if (selection.startsWith("\xF0\x9F\x93\x81")) {
-        QString dirName = selection.mid(4).trimmed();  // strip folder emoji
+    if (selection.startsWith("[Dir] ")) {
+        QString dirName = selection.mid(QString("[Dir] ").size()).trimmed();
         QString dirPath = symBaseDir + "/" + dirName;
         QDir().mkpath(dirPath);
 
@@ -4311,36 +4433,39 @@ void SymbolEditor::onSaveToLibrary() {
         if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             QMessageBox::warning(this, "Error",
                 QString("Failed to write:\n%1").arg(symFile));
-            return;
+            return false;
         }
         file.write(doc.toJson(QJsonDocument::Indented));
 
         LibraryIndex::instance().addSymbol(m_symbol.name(), dirName, dirName);
         QMessageBox::information(this, "Saved",
-            QString("'%1' \xE2\x86\x92 %2/").arg(m_symbol.name(), dirName));
+            QString("'%1' saved to %2/").arg(m_symbol.name(), dirName));
         Q_EMIT symbolSaved(m_symbol);
         if (m_undoStack) m_undoStack->setClean();
         populateLibraryTree();
-        return;
+        m_lastSaveTarget = SaveTarget::Library;
+        return true;
     }
 
-    // ── Skip separator line ──
-    if (selection.startsWith("────")) return;
+    if (selection.startsWith("----")) return false;
 
-    // ── Save into existing .sclib library (legacy) ──
-    QString libName = selection.mid(4).trimmed();  // strip file emoji
+    QString libName = selection;
+    libName.remove(0, QString("[Lib] ").size());
+    libName = libName.trimmed();
     SymbolLibrary* lib = SymbolLibraryManager::instance().findLibrary(libName);
-    if (!lib) return;
+    if (!lib) return false;
 
     lib->addSymbol(m_symbol);
-    if (lib->save()) {
-        LibraryIndex::instance().addSymbol(m_symbol.name(), lib->name(), m_symbol.category());
-        QMessageBox::information(this, "Saved",
-            QString("Symbol '%1' saved to library '%2'.").arg(m_symbol.name(), libName));
-        Q_EMIT symbolSaved(m_symbol);
-        if (m_undoStack) m_undoStack->setClean();
-        populateLibraryTree();
-    }
+    if (!lib->save()) return false;
+
+    LibraryIndex::instance().addSymbol(m_symbol.name(), lib->name(), m_symbol.category());
+    QMessageBox::information(this, "Saved",
+        QString("Symbol '%1' saved to library '%2'.").arg(m_symbol.name(), libName));
+    Q_EMIT symbolSaved(m_symbol);
+    if (m_undoStack) m_undoStack->setClean();
+    populateLibraryTree();
+    m_lastSaveTarget = SaveTarget::Library;
+    return true;
 }
 
 void SymbolEditor::onExportVioSym() {

@@ -8,7 +8,34 @@
 #include <QTemporaryFile>
 #include <QTextStream>
 #include <QMetaObject>
+#include <QRegularExpression>
 #include <utility>
+
+namespace {
+    /**
+     * Resolves a file path case-insensitively.
+     * This is needed because ngspice lowercases paths, but Linux filesystems are case-sensitive.
+     * If the exact path doesn't exist, we scan the directory for a case-insensitive match.
+     */
+    QString resolveCaseInsensitiveFilePath(const QString& path) {
+        QFileInfo fi(path);
+        // If the file exists exactly as specified, return it immediately.
+        if (fi.exists()) return path;
+        
+        QDir dir(fi.absolutePath());
+        if (!dir.exists()) return path;
+        
+        QString target = fi.fileName().toLower();
+        // Scan directory for a matching filename (case-insensitive)
+        const auto entries = dir.entryList(QDir::Files);
+        for (const QString& entry : entries) {
+            if (entry.toLower() == target) {
+                return dir.absoluteFilePath(entry);
+            }
+        }
+        return path; // Return original if not found
+    }
+}
 
 SimulationManager& SimulationManager::instance() {
     static SimulationManager instance;
@@ -42,6 +69,16 @@ void SimulationManager::initialize() {
     if (m_isInitialized) return;
 
 #ifdef HAVE_NGSPICE
+    // Set environment variables for ngspice to find spinit and code models
+    // This must be done BEFORE ngSpice_Init
+    QString scriptsPath = "/home/jnd/.ngspice";
+    if (qEnvironmentVariableIsEmpty("SPICE_SCRIPTS")) {
+        qputenv("SPICE_SCRIPTS", scriptsPath.toUtf8());
+    }
+    if (qEnvironmentVariableIsEmpty("SPICE_LIB_DIR")) {
+        qputenv("SPICE_LIB_DIR", scriptsPath.toUtf8());
+    }
+
     // Initialize ngspice with our callbacks
     // we pass 'this' as userData to route callbacks back to the instance
     ngSpice_Init(
@@ -78,6 +115,8 @@ void SimulationManager::runSimulation(const QString& netlist, SimControl* contro
     m_vectorMap.clear();
     m_lastLoadFailed = false;
     m_bgRunIssued = false;
+    m_stopRequested = false;
+    m_pauseRequested = false;
 
     {
         std::lock_guard<std::mutex> lock(m_bufferMutex);
@@ -139,6 +178,13 @@ bool SimulationManager::validateNetlist(const QString& netlist, QString* errorOu
 
 bool SimulationManager::loadNetlistInternal(const QString& netlist, bool keepStorage, QString* errorOut) {
 #ifdef HAVE_NGSPICE
+    auto emitNumberedNetlist = [this](const QStringList& numberedLines, const QString& header) {
+        Q_EMIT outputReceived(header);
+        for (int i = 0; i < numberedLines.size(); ++i) {
+            Q_EMIT outputReceived(QString("%1: %2").arg(i + 1, 4).arg(numberedLines.at(i)));
+        }
+    };
+
     ngSpice_Command((char*)"reset");
     {
         std::lock_guard<std::mutex> lock(m_logMutex);
@@ -158,6 +204,26 @@ bool SimulationManager::loadNetlistInternal(const QString& netlist, bool keepSto
 
         if (!lines.isEmpty() && lines.first().startsWith(QChar(0xFEFF))) {
             lines.first().remove(0, 1);
+        }
+
+        // Fix WAV file paths: ngspice lowercases paths which breaks case-sensitive filesystems (Linux).
+        // We find WAVEFILE entries and resolve the correct case from the disk before passing to ngspice.
+        QDir baseDir = QFileInfo(netlist).absoluteDir();
+        QRegularExpression wavRe(R"REGEX(WAVEFILE\s*=?\s*"([^"]+)")REGEX", QRegularExpression::CaseInsensitiveOption);
+
+        for (int i = 0; i < lines.size(); ++i) {
+            auto match = wavRe.match(lines[i]);
+            if (match.hasMatch()) {
+                QString rawPath = match.captured(1);
+                QString fullPath = QFileInfo(rawPath).isAbsolute() ? rawPath : baseDir.absoluteFilePath(rawPath);
+                QString resolved = resolveCaseInsensitiveFilePath(fullPath);
+                
+                // If we found a case-insensitive match that differs from the input, replace it in the line
+                if (resolved != fullPath) {
+                    lines[i].replace(rawPath, resolved);
+                    qInfo() << "[SimulationManager] Auto-corrected WAV path case:" << resolved;
+                }
+            }
         }
 
         int firstNonEmpty = -1;
@@ -208,14 +274,11 @@ bool SimulationManager::loadNetlistInternal(const QString& netlist, bool keepSto
         const int rc = ngSpice_Circ(m_circPtrs.data());
         loaded = (rc == 0 && !m_lastLoadFailed);
         if (!loaded) {
-            Q_EMIT outputReceived(QString("Ngspice: failed to load circuit via ngSpice_Circ (rc=%1), falling back to source.").arg(rc));
-            if (m_lastLoadFailed) {
-                if (errorOut) {
-                    *errorOut = m_lastErrorMessage.isEmpty() ? "Ngspice rejected the netlist during parse/model load." : m_lastErrorMessage;
-                }
-                if (!keepStorage) { m_circStorage.clear(); m_circPtrs.clear(); }
-                return false;
-            }
+            const QString reason = m_lastErrorMessage.isEmpty()
+                ? QString("rc=%1").arg(rc)
+                : QString("rc=%1, last error: %2").arg(rc).arg(m_lastErrorMessage);
+            Q_EMIT outputReceived(QString("Ngspice: failed to load circuit via ngSpice_Circ (%1), falling back to source.").arg(reason));
+            emitNumberedNetlist(lines, "[SIM_DEBUG] Shared-ngspice numbered netlist:");
         }
     }
 
@@ -235,6 +298,7 @@ bool SimulationManager::loadNetlistInternal(const QString& netlist, bool keepSto
         const int rc = ngSpice_Command(cmd.toLatin1().data());
         QFile::remove(sourcePath);
         if (rc != 0) {
+            emitNumberedNetlist(lines, "[SIM_DEBUG] File-source numbered netlist after load failure:");
             if (errorOut) {
                 *errorOut = m_lastErrorMessage.isEmpty() ? "Failed to load netlist into ngspice." : m_lastErrorMessage;
             }
@@ -274,6 +338,8 @@ void SimulationManager::stopSimulation() {
         std::lock_guard<std::mutex> lock(m_controlMutex);
         m_streamingControl = nullptr;
     }
+    m_stopRequested = true;
+    m_pauseRequested = false;
     ngSpice_Command((char*)"bg_halt");
     QMetaObject::invokeMethod(m_bufferTimer, "stop", Qt::QueuedConnection);
     QMetaObject::invokeMethod(this, "processBufferedData", Qt::QueuedConnection);
@@ -331,6 +397,17 @@ void SimulationManager::setParameter(const QString& name, double value) {
 void SimulationManager::sendInternalCommand(const QString& command) {
 #ifdef HAVE_NGSPICE
     if (!m_isInitialized) return;
+    if (command == "bg_halt") {
+        m_pauseRequested = true;
+        m_stopRequested = false;
+        QMetaObject::invokeMethod(m_bufferTimer, "stop", Qt::QueuedConnection);
+    } else if (command == "bg_resume") {
+        m_pauseRequested = false;
+        m_stopRequested = false;
+        if (m_streamingControl) {
+            QMetaObject::invokeMethod(m_bufferTimer, "start", Qt::QueuedConnection);
+        }
+    }
     ngSpice_Command(command.toLatin1().data());
 #endif
 }
@@ -535,6 +612,11 @@ int SimulationManager::cbSendInitData(void* initData, int id, void* userData) {
 int SimulationManager::cbBGThreadRunning(bool finished, int id, void* userData) {
     SimulationManager* self = static_cast<SimulationManager*>(userData);
     if (self && finished && self->m_bgRunIssued) {
+        if (self->m_pauseRequested || self->m_stopRequested) {
+            QMetaObject::invokeMethod(self->m_bufferTimer, "stop", Qt::QueuedConnection);
+            QMetaObject::invokeMethod(self, "processBufferedData", Qt::QueuedConnection);
+            return 0;
+        }
         QFileInfo info(self->m_currentNetlist);
         const QString rawPath = info.absolutePath() + "/" + info.completeBaseName() + ".raw";
         QMetaObject::invokeMethod(self, "handleSimulationFinished", Qt::QueuedConnection, Q_ARG(QString, rawPath));
@@ -554,5 +636,7 @@ void SimulationManager::handleSimulationFinished(const QString& rawPath) {
     }
 #endif
     m_bgRunIssued = false;
+    m_stopRequested = false;
+    m_pauseRequested = false;
     Q_EMIT simulationFinished();
 }

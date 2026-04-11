@@ -19,6 +19,32 @@ using namespace Flux::Model;
 
 namespace {
 constexpr int kFootprintPrimitiveLayerKey = 0x46504C59; // "FPLY"
+
+QColor footprintLayerColor(Flux::Model::FootprintPrimitive::Layer layer, PCBTheme* theme) {
+    if (!theme) return QColor(255, 255, 100);
+
+    switch (layer) {
+    case Flux::Model::FootprintPrimitive::Top_Copper: return theme->topCopper();
+    case Flux::Model::FootprintPrimitive::Bottom_Copper: return theme->bottomCopper();
+    case Flux::Model::FootprintPrimitive::Top_Silkscreen: return theme->topSilkscreen();
+    case Flux::Model::FootprintPrimitive::Bottom_Silkscreen: return theme->bottomSilkscreen();
+    case Flux::Model::FootprintPrimitive::Top_SolderMask: return theme->topSoldermask();
+    case Flux::Model::FootprintPrimitive::Bottom_SolderMask: return theme->bottomSoldermask();
+    case Flux::Model::FootprintPrimitive::Top_Courtyard: return theme->edgeCuts().lighter(115);
+    case Flux::Model::FootprintPrimitive::Bottom_Courtyard: return theme->edgeCuts().darker(110);
+    case Flux::Model::FootprintPrimitive::Top_Fabrication: return theme->componentOutline();
+    case Flux::Model::FootprintPrimitive::Bottom_Fabrication: return theme->componentOutline().darker(120);
+    case Flux::Model::FootprintPrimitive::Top_SolderPaste: return theme->padFill().lighter(125);
+    case Flux::Model::FootprintPrimitive::Bottom_SolderPaste: return theme->padFill().darker(105);
+    case Flux::Model::FootprintPrimitive::Top_Adhesive: return QColor(168, 85, 247);
+    case Flux::Model::FootprintPrimitive::Bottom_Adhesive: return QColor(217, 70, 239);
+    case Flux::Model::FootprintPrimitive::Inner_Copper_1: return theme->topCopper().lighter(120);
+    case Flux::Model::FootprintPrimitive::Inner_Copper_2: return theme->bottomCopper().lighter(120);
+    case Flux::Model::FootprintPrimitive::Inner_Copper_3: return theme->topCopper().darker(115);
+    case Flux::Model::FootprintPrimitive::Inner_Copper_4: return theme->bottomCopper().darker(115);
+    default: return theme->multiLayer();
+    }
+}
 }
 
 ComponentItem::ComponentItem(QPointF pos, QString type, QGraphicsItem *parent)
@@ -222,6 +248,7 @@ void ComponentItem::createPads() {
                 pm->setRotation(prim.data["rotation"].toDouble());
                 pm->setLayer(m_model->layer());
                 pm->setNetName(""); // Default
+                pm->setNumber(prim.data["number"].toString());
                 m_model->addPad(pm);
             }
         }
@@ -242,26 +269,25 @@ void ComponentItem::createPads() {
         if (m_label) m_label->hide();
         
         PCBTheme* theme = ThemeManager::theme();
-        QPen silkPen(theme->componentOutline(), 0.15);
-        silkPen.setCapStyle(Qt::RoundCap);
-        silkPen.setJoinStyle(Qt::RoundJoin);
-
         for (const auto& prim : def.primitives()) {
             if (prim.type == FootprintPrimitive::Pad) continue; // Already handled
             
             QGraphicsItem* item = nullptr;
+            QPen primitivePen(footprintLayerColor(prim.layer, theme), 0.15);
+            primitivePen.setCapStyle(Qt::RoundCap);
+            primitivePen.setJoinStyle(Qt::RoundJoin);
             if (prim.type == FootprintPrimitive::Line) {
                 item = new QGraphicsLineItem(prim.data["x1"].toDouble(), prim.data["y1"].toDouble(),
                                              prim.data["x2"].toDouble(), prim.data["y2"].toDouble(), this);
-                static_cast<QGraphicsLineItem*>(item)->setPen(silkPen);
+                static_cast<QGraphicsLineItem*>(item)->setPen(primitivePen);
             } else if (prim.type == FootprintPrimitive::Rect) {
                 item = new QGraphicsRectItem(prim.data["x"].toDouble(), prim.data["y"].toDouble(),
                                              prim.data["width"].toDouble(), prim.data["height"].toDouble(), this);
-                static_cast<QGraphicsRectItem*>(item)->setPen(silkPen);
+                static_cast<QGraphicsRectItem*>(item)->setPen(primitivePen);
             } else if (prim.type == FootprintPrimitive::Circle) {
                 double r = prim.data["radius"].toDouble();
                 item = new QGraphicsEllipseItem(prim.data["cx"].toDouble()-r, prim.data["cy"].toDouble()-r, r*2, r*2, this);
-                static_cast<QGraphicsEllipseItem*>(item)->setPen(silkPen);
+                static_cast<QGraphicsEllipseItem*>(item)->setPen(primitivePen);
             } else if (prim.type == FootprintPrimitive::Arc) {
                 double r = prim.data["radius"].toDouble();
                 double startAngle = prim.data["startAngle"].toDouble();
@@ -270,7 +296,7 @@ void ComponentItem::createPads() {
                 path.arcMoveTo(prim.data["cx"].toDouble()-r, prim.data["cy"].toDouble()-r, r*2, r*2, startAngle);
                 path.arcTo(prim.data["cx"].toDouble()-r, prim.data["cy"].toDouble()-r, r*2, r*2, startAngle, spanAngle);
                 item = new QGraphicsPathItem(path, this);
-                static_cast<QGraphicsPathItem*>(item)->setPen(silkPen);
+                static_cast<QGraphicsPathItem*>(item)->setPen(primitivePen);
             } else if (prim.type == FootprintPrimitive::Polygon) {
                 QJsonArray points = prim.data["points"].toArray();
                 QPolygonF poly;
@@ -279,7 +305,7 @@ void ComponentItem::createPads() {
                     poly << QPointF(pt["x"].toDouble(), pt["y"].toDouble());
                 }
                 item = new QGraphicsPolygonItem(poly, this);
-                static_cast<QGraphicsPolygonItem*>(item)->setPen(silkPen);
+                static_cast<QGraphicsPolygonItem*>(item)->setPen(primitivePen);
             }
             
             if (item) {

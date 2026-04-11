@@ -54,6 +54,8 @@ set(CORE_SOURCES
     core/design_rule_engine.h
     core/jit_context_manager.cpp
     core/jit_context_manager.h
+    core/ws_server.cpp
+    core/ws_server.h
 )
 
 if(VIOSPICE_ENABLE_PYTHON)

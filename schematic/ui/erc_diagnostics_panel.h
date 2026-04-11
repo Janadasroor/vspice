@@ -6,6 +6,7 @@
 #include <QVBoxLayout>
 #include <QPushButton>
 #include <QComboBox>
+#include <QLabel>
 #include "../analysis/schematic_erc.h"
 
 class ERCDiagnosticsPanel : public QWidget {
@@ -16,6 +17,7 @@ public:
 
     void setViolations(const QList<ERCViolation>& violations);
     void clear();
+    void updateLibraryInfo();
 
 Q_SIGNALS:
     void violationSelected(const ERCViolation& violation);
@@ -35,6 +37,7 @@ private:
 
     QTreeWidget* m_treeWidget;
     QComboBox* m_severityFilter;
+    QLabel* m_libraryInfoLabel;
     QList<ERCViolation> m_violations;
 };
 

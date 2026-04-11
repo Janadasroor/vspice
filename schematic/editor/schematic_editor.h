@@ -23,6 +23,7 @@
 #include "../ui/flux_script_panel.h"
 #include "../ui/image_preview_panel.h"
 #include "flux/core/net_manager.h"
+#include "../../core/ws_server.h"
 #include "schematic_layout_optimizer.h"
 #include "../analysis/schematic_erc_rules.h"
 #include "../items/schematic_page_item.h"
@@ -61,7 +62,10 @@ public:
     void addImageTab(const QString& filePath);
     void openOscilloscopeWindow(class SchematicItem* item);
     void closeTab(int index);
-    
+
+    /** Called when VioCode remotely updates this file's content. */
+    void onRemoteFileUpdated(const QString& filePath, const QString& content);
+
     class SimulationPanel* getSimulationPanel() const { return m_simulationPanel; }
 
     void onClearSimulationOverlays();
@@ -198,6 +202,9 @@ protected:
 
 private:
     bool m_updatingProperties;
+    QToolButton *m_agentStatusBtn;
+
+    void syncWsState();
 
     void setupCanvas();
     void createMenuBar();
@@ -216,6 +223,7 @@ private:
     void clearSimulationOverlays();
     void connectSimulationSignals();
     void updateSimulationUiState(bool running, const QString& statusMessage = QString());
+    void updateAgentStatus();
     void updateSimulationOverlays(const QMap<QString, double>& nodeVoltages, const QMap<QString, double>& currents);
     void refreshOscilloscopeDockContent();
     void runLiveERC(const QList<class SchematicItem*>& items);
@@ -315,6 +323,10 @@ private:
     QLabel *m_netLabel;
     QLabel *m_remoteLabel;
 
+private Q_SLOTS:
+    void onShowAgentList();
+
+private:
     // File state
     QString m_currentFilePath;
     bool m_isModified;

@@ -74,6 +74,7 @@ static SymbolLibrary* ensureDefaultUserSymbolLibrary() {
 // ─── Constructor / Destructor ────────────────────────────────────────────────
 
 #include "../../core/sync_manager.h"
+#include "../../core/ws_server.h"
 #include "schematic_item.h"
 #include "schematic/dialogs/oscilloscope_properties_dialog.h"
 #include "schematic_menu_registry.h"
@@ -139,6 +140,7 @@ SchematicEditor::SchematicEditor(QWidget *parent)
     setWindowTitle("viospice - Schematic Editor");
     setMinimumSize(640, 480);
     resize(1024, 720);
+    setObjectName("SchematicEditor");
     setWindowFlags(windowFlags() | Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint);
 
     // Register all built-in schematic tools and items
@@ -183,6 +185,16 @@ SchematicEditor::SchematicEditor(QWidget *parent)
     connect(&remoteServer, &RemoteDisplayServer::clientConnected, this, [this](const QString& addr) {
         statusBar()->showMessage("Remote Display Connected: " + addr, 3000);
     });
+    connect(&remoteServer, &RemoteDisplayServer::clientDisconnected, this, [this](const QString& addr) {
+        statusBar()->showMessage("Remote Display Disconnected: " + addr, 3000);
+    });
+
+    // Connect to WsServer for remote file updates (VioCode sync)
+    if (auto* ws = WsServer::instance()) {
+        connect(ws, &WsServer::remoteFileUpdated, this, &SchematicEditor::onRemoteFileUpdated);
+        connect(ws, &WsServer::clientConnected, this, &SchematicEditor::updateAgentStatus, Qt::QueuedConnection);
+        connect(ws, &WsServer::clientDisconnected, this, &SchematicEditor::updateAgentStatus, Qt::QueuedConnection);
+    }
 #endif
 
     // Initial Mini-map state (hidden by default)

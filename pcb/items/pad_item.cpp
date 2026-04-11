@@ -93,6 +93,7 @@ QPainterPath PadItem::shape() const {
     QPainterPath path;
     QSizeF size = m_model->size();
     QString shape = m_model->shape().toLower();
+    const QString padNumber = m_model->number().trimmed();
     
     if (shape == "rect" || shape == "rectangle" || shape == "square") {
         path.addRect(-size.width()/2, -size.height()/2, size.width(), size.height());
@@ -143,6 +144,7 @@ void PadItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, Q
 
     QSizeF size = m_model->size();
     QString shape = m_model->shape().toLower();
+    const QString padNumber = m_model->number().trimmed();
     QRectF rect(-size.width()/2, -size.height()/2, size.width(), size.height());
     
     if (shape == "rect" || shape == "rectangle" || shape == "square") {
@@ -193,6 +195,12 @@ void PadItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, Q
     double crossSize = std::min(size.width(), size.height()) * 0.2;
     painter->drawLine(QLineF(-crossSize, 0, crossSize, 0));
     painter->drawLine(QLineF(0, -crossSize, 0, crossSize));
+
+    if (!padNumber.isEmpty()) {
+        painter->setPen(baseColor.lightness() < 140 ? Qt::white : Qt::black);
+        painter->setFont(QFont("Monospace", 1));
+        painter->drawText(rect, Qt::AlignCenter, padNumber);
+    }
 
     drawSelectionGlow(painter);
 }

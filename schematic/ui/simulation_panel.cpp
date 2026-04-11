@@ -1021,6 +1021,7 @@ void SimulationPanel::addProbe(const QString& signalName) {
     }
     
     const QString matchedName = (targetItem) ? targetItem->text() : signalName;
+    qDebug() << "[PROBE_RT] addProbe requested=" << signalName << "matched=" << matchedName;
 
     auto syncExclusiveProbeSelection = [this, &matchedName]() {
         if (!m_signalList) return;
@@ -1040,6 +1041,27 @@ void SimulationPanel::addProbe(const QString& signalName) {
 
             if (m_waveformViewer) {
                 m_waveformViewer->setSignalChecked(item->text(), shouldCheck);
+            }
+        }
+
+        if (m_chart) {
+            const auto seriesList = m_chart->series();
+            for (auto* chartSeries : seriesList) {
+                if (!chartSeries) continue;
+                const bool keep = signalMatches(chartSeries->name(), matchedName);
+                chartSeries->setVisible(keep);
+            }
+
+            auto axesY = m_chart->axes(Qt::Vertical);
+            if (!axesY.isEmpty()) {
+                auto* ay = qobject_cast<QValueAxis*>(axesY[0]);
+                if (ay) {
+                    const QString lower = matchedName.toLower();
+                    if (lower.startsWith("v(")) ay->setTitleText("Voltage (V)");
+                    else if (lower.startsWith("i(") || lower.contains("#branch")) ay->setTitleText("Current (A)");
+                    else if (lower.startsWith("p(")) ay->setTitleText("Power (W)");
+                    else ay->setTitleText("Value");
+                }
             }
         }
 
@@ -1199,23 +1221,70 @@ void SimulationPanel::addProbe(const QString& signalName) {
 
         syncExclusiveProbeSelection();
         m_waveformViewer->updatePlot(true);
+
+        // Probing can arrive while the dock/view layout is still settling, which
+        // leaves the trace list updated but the visible plot stale until a manual
+        // Fit triggers a second autoscale pass. Queue the same refresh here.
+        QPointer<WaveformViewer> viewer = m_waveformViewer;
+        QMetaObject::invokeMethod(this, [viewer]() {
+            if (viewer) viewer->zoomFit();
+        }, Qt::QueuedConnection);
     } else {
         syncExclusiveProbeSelection();
     }
     
-    // If a transient simulation is running, add to real-time series
-    if (m_analysisType->currentIndex() == 0 && m_chart && !m_realTimeSeries.contains(signalName)) {
+    // If a transient simulation is running, rebuild the live preview chart for the selected signal.
+    const QString liveSeriesName = matchedName;
+    if (m_analysisType->currentIndex() == 0 && m_chart) {
+        m_chart->removeAllSeries();
+        m_realTimeSeries.clear();
+
         auto axesX = m_chart->axes(Qt::Horizontal);
         auto axesY = m_chart->axes(Qt::Vertical);
         if (!axesX.isEmpty() && !axesY.isEmpty()) {
+            auto* ay = qobject_cast<QValueAxis*>(axesY[0]);
+            if (ay) {
+                const QString lower = liveSeriesName.toLower();
+                if (lower.startsWith("v(")) ay->setTitleText("Voltage (V)");
+                else if (lower.startsWith("i(") || lower.contains("#branch")) ay->setTitleText("Current (A)");
+                else if (lower.startsWith("p(")) ay->setTitleText("Power (W)");
+                else ay->setTitleText("Value");
+            }
+
             const QList<QColor> colors = {Qt::red, Qt::blue, QColor("#00aa00"), Qt::magenta, Qt::darkCyan};
             QLineSeries* series = new QLineSeries();
-            series->setName(signalName);
-            series->setPen(QPen(colors[m_realTimeSeries.size() % colors.size()], 1.5));
+            series->setName(liveSeriesName);
+            series->setPen(QPen(colors[0], 1.5));
             m_chart->addSeries(series);
             series->attachAxis(axesX[0]);
             series->attachAxis(axesY[0]);
-            m_realTimeSeries[signalName] = series;
+            m_realTimeSeries[liveSeriesName] = series;
+
+            if (m_waveformViewer) {
+                QVector<double> liveTime;
+                QVector<double> liveValues;
+                if (m_waveformViewer->getSignalData(matchedName, liveTime, liveValues) ||
+                    (matchedName.compare(signalName, Qt::CaseInsensitive) != 0 &&
+                     m_waveformViewer->getSignalData(signalName, liveTime, liveValues))) {
+                    QList<QPointF> points;
+                    points.reserve(std::min(liveTime.size(), liveValues.size()));
+                    for (int i = 0; i < liveTime.size() && i < liveValues.size(); ++i) {
+                        points.append(QPointF(liveTime[i], liveValues[i]));
+                    }
+                    if (!points.isEmpty()) {
+                        series->append(points);
+                        axesX[0]->setRange(points.first().x(), points.last().x());
+                        double minY = points.first().y();
+                        double maxY = points.first().y();
+                        for (const QPointF& p : points) {
+                            minY = std::min(minY, p.y());
+                            maxY = std::max(maxY, p.y());
+                        }
+                        double pad = (std::abs(maxY - minY) < 1e-15) ? 0.5 : (maxY - minY) * 0.1;
+                        axesY[0]->setRange(minY - pad, maxY + pad);
+                    }
+                }
+            }
         }
     }
     
@@ -1744,6 +1813,24 @@ SimulationPanel::TabOscilloscopeState SimulationPanel::saveCurrentTabState() con
 
     if (m_waveformViewer) {
         state.waveformSignals = m_waveformViewer->exportSignals();
+        state.selectedSignalName = m_waveformViewer->currentSignalName();
+        int compactPaneCount = 0;
+        for (const auto& sig : state.waveformSignals) {
+            if (sig.paneIndex >= 0) {
+                compactPaneCount = std::max(compactPaneCount, sig.paneIndex + 1);
+            }
+            if (state.waveformFocusedPaneIndex < 0 && sig.selected) {
+                state.waveformFocusedPaneIndex = sig.paneIndex;
+            }
+        }
+        state.waveformPaneCount = compactPaneCount;
+        if (state.waveformFocusedPaneIndex < 0) {
+            state.waveformFocusedPaneIndex = 0;
+        }
+    }
+
+    if (state.selectedSignalName.isEmpty() && m_signalList && m_signalList->currentItem()) {
+        state.selectedSignalName = m_signalList->currentItem()->text();
     }
 
     if (m_signalList) {
@@ -1797,7 +1884,12 @@ void SimulationPanel::restoreTabState(const TabOscilloscopeState& state) {
 
     if (m_waveformViewer && !state.waveformSignals.isEmpty()) {
         m_waveformViewer->beginBatchUpdate();
+        m_waveformViewer->ensurePaneCount(state.waveformPaneCount);
         m_waveformViewer->importSignals(state.waveformSignals);
+        m_waveformViewer->setFocusedPaneIndex(state.waveformFocusedPaneIndex);
+        if (!state.selectedSignalName.isEmpty()) {
+            m_waveformViewer->setCurrentSignal(state.selectedSignalName);
+        }
         m_waveformViewer->endBatchUpdate();
     }
 
@@ -1809,6 +1901,15 @@ void SimulationPanel::restoreTabState(const TabOscilloscopeState& state) {
             item->setCheckState(si.checked ? Qt::Checked : Qt::Unchecked);
             item->setForeground(si.color);
             m_signalList->addItem(item);
+        }
+        if (!state.selectedSignalName.isEmpty()) {
+            for (int i = 0; i < m_signalList->count(); ++i) {
+                QListWidgetItem* item = m_signalList->item(i);
+                if (item && item->text().compare(state.selectedSignalName, Qt::CaseInsensitive) == 0) {
+                    m_signalList->setCurrentItem(item);
+                    break;
+                }
+            }
         }
     }
 
@@ -2947,6 +3048,20 @@ bool SimulationPanel::isRealTimeMode() const {
     return m_analysisType && m_analysisType->currentIndex() == 7;
 }
 
+void SimulationPanel::cancelPendingRun() {
+    ++m_runRequestSerial;
+    if (m_buildInProgress) {
+        m_buildInProgress = false;
+        if (m_logOutput) {
+            m_logOutput->append("Simulation start canceled.");
+        }
+    }
+    m_acceptRealTimeStream = false;
+    m_isSimInitiator = false;
+    if (g_liveStreamOwner == this) {
+        g_liveStreamOwner.clear();
+    }
+}
 
 void SimulationPanel::onRunSimulation() {
     m_logOutput->clear();
@@ -3003,10 +3118,17 @@ void SimulationPanel::onRunSimulation() {
     const QString projectDir = m_projectDir;
     const QJsonObject snapshot = SchematicFileIO::serializeSceneToJson(m_scene, "A4");
 
+    const quint64 runRequestSerial = ++m_runRequestSerial;
     auto* watcher = new QFutureWatcher<SimBuildResult>(this);
-    connect(watcher, &QFutureWatcher<SimBuildResult>::finished, this, [this, watcher, idx, tStop, tStep, fStart, fStop, pts, steadyEnabled, steadyTolText, steadyDelayText, rfPort1Text, rfPort2Text, rfZ0]() {
+    connect(watcher, &QFutureWatcher<SimBuildResult>::finished, this, [this, watcher, runRequestSerial, idx, tStop, tStep, fStart, fStop, pts, steadyEnabled, steadyTolText, steadyDelayText, rfPort1Text, rfPort2Text, rfZ0]() {
         const SimBuildResult result = watcher->result();
         watcher->deleteLater();
+
+        if (runRequestSerial != m_runRequestSerial) {
+            m_buildInProgress = false;
+            return;
+        }
+
         m_buildInProgress = false;
 
         if (!result.ok) {
@@ -3617,6 +3739,7 @@ void SimulationPanel::onRealTimeDataBatchReceived(const std::vector<double>& tim
         
         const QString rawName = names[i];
         const QString name = resolveLiveSignalName(m_signalList, rawName);
+        if (i < 8) qDebug() << "[PROBE_RT] batch raw=" << rawName << "resolved=" << name << "hasSeries=" << m_realTimeSeries.contains(name) << "hasRawSeries=" << m_realTimeSeries.contains(rawName);
         std::vector<double> signalValues;
         signalValues.reserve(times.size());
         for (const auto& row : values) {
@@ -3625,20 +3748,37 @@ void SimulationPanel::onRealTimeDataBatchReceived(const std::vector<double>& tim
         }
 
         m_waveformViewer->appendPoints(name, times, signalValues);
+        bool signalChecked = false;
         if (m_waveformViewer && m_signalList) {
             for (int row = 0; row < m_signalList->count(); ++row) {
                 QListWidgetItem* item = m_signalList->item(row);
                 if (!item) continue;
                 if (signalMatches(item->text(), rawName) || signalMatches(item->text(), name)) {
-                    m_waveformViewer->setSignalChecked(name, item->checkState() == Qt::Checked);
+                    signalChecked = item->checkState() == Qt::Checked;
+                    m_waveformViewer->setSignalChecked(name, signalChecked);
                     break;
                 }
             }
         }
 
         // Update preview chart
-        if (m_chart && !m_realTimeSeries.isEmpty()) {
+        if (m_chart && signalChecked && name.compare("time", Qt::CaseInsensitive) != 0) {
             QLineSeries* series = m_realTimeSeries.value(name, nullptr);
+            if (!series) {
+                auto axesX = m_chart->axes(Qt::Horizontal);
+                auto axesY = m_chart->axes(Qt::Vertical);
+                if (!axesX.isEmpty() && !axesY.isEmpty()) {
+                    const QList<QColor> colors = {Qt::red, Qt::blue, QColor("#00aa00"), Qt::magenta, Qt::darkCyan};
+                    series = new QLineSeries();
+                    series->setName(name);
+                    series->setPen(QPen(colors[m_realTimeSeries.size() % colors.size()], 1.5));
+                    m_chart->addSeries(series);
+                    series->attachAxis(axesX[0]);
+                    series->attachAxis(axesY[0]);
+                    m_realTimeSeries[name] = series;
+                    qDebug() << "[PROBE_RT] created live preview series for" << name;
+                }
+            }
             if (series) {
                 // High-performance check: only append to the preview chart if it's currently visible
                 // and has a reasonable number of points. In a future update, we should replace 
@@ -3715,6 +3855,47 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
     const bool buildSpectrumChart = shouldBuildSpectrumChart();
     const int currentAnalysisIndex = m_analysisType ? m_analysisType->currentIndex() : -1;
     const bool restoreRealTimeStream = m_isSimInitiator && (currentAnalysisIndex == 0 || currentAnalysisIndex == 7);
+    const QList<WaveformViewer::SignalExport> previousWaveformSignals =
+        m_waveformViewer ? m_waveformViewer->exportSignals() : QList<WaveformViewer::SignalExport>();
+    int previousPaneCount = 0;
+    int previousFocusedPaneIndex = -1;
+    for (const auto& sig : previousWaveformSignals) {
+        if (sig.paneIndex >= 0) {
+            previousPaneCount = std::max(previousPaneCount, sig.paneIndex + 1);
+        }
+        if (previousFocusedPaneIndex < 0 && sig.selected) {
+            previousFocusedPaneIndex = sig.paneIndex;
+        }
+    }
+    const QString previousSelectedSignal = m_waveformViewer ? m_waveformViewer->currentSignalName() : QString();
+
+    auto findPreviousSignalState = [&](const QString& waveName) -> const WaveformViewer::SignalExport* {
+        auto matches = [&](const QString& lhs, const QString& rhs) {
+            return lhs.compare(rhs, Qt::CaseInsensitive) == 0;
+        };
+        auto normalizedCore = [](const QString& name) {
+            if ((name.startsWith("V(", Qt::CaseInsensitive) || name.startsWith("I(", Qt::CaseInsensitive))
+                    && name.endsWith(')')) {
+                return name.mid(2, name.length() - 3);
+            }
+            return name;
+        };
+
+        for (const auto& state : previousWaveformSignals) {
+            if (matches(state.name, waveName)) {
+                return &state;
+            }
+        }
+
+        const QString waveCore = normalizedCore(waveName);
+        for (const auto& state : previousWaveformSignals) {
+            if (matches(normalizedCore(state.name), waveCore)) {
+                return &state;
+            }
+        }
+
+        return nullptr;
+    };
 
     // Disable real-time data while clearing to avoid race conditions
     m_acceptRealTimeStream = false;
@@ -3734,6 +3915,8 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
     if (m_waveformViewer) {
         m_waveformViewer->beginBatchUpdate();
         m_waveformViewer->clear();
+        m_waveformViewer->ensurePaneCount(previousPaneCount);
+        m_waveformViewer->setFocusedPaneIndex(previousFocusedPaneIndex);
     }
     if (m_logicAnalyzer) m_logicAnalyzer->clear();
     if (m_voltmeter) m_voltmeter->clear();
@@ -3981,23 +4164,17 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
                                             QVector<double>(wave.xData.begin(), wave.xData.end()),
                                             QVector<double>(wave.yData.begin(), wave.yData.end()));
             }
-            
-            // Restore checked state
-            bool shouldCheck = m_persistentCheckedSignals.contains(waveName);
-            
-            // Try normalized matching
-            if (!shouldCheck) {
-                QString norm = waveName.toUpper();
-                for (const QString& s : m_persistentCheckedSignals) {
-                    if (s.toUpper() == norm) { shouldCheck = true; break; }
-                }
-            }
 
-            // Robust check: if Net2 is checked, V(Net2) should also be checked
-            if (!shouldCheck && (waveName.startsWith("V(", Qt::CaseInsensitive) || waveName.startsWith("v(")) && waveName.endsWith(")")) {
-                QString core = waveName.mid(2, waveName.length() - 3);
-                for (const QString& s : m_persistentCheckedSignals) {
-                    if (s.compare(core, Qt::CaseInsensitive) == 0) { shouldCheck = true; break; }
+            if (const auto* previousState = findPreviousSignalState(waveName)) {
+                m_waveformViewer->setSignalPaneIndex(waveName, previousState->paneIndex);
+            }
+            
+            // Restore checked state using the same canonical matching used by probing/live data.
+            bool shouldCheck = false;
+            for (const QString& s : m_persistentCheckedSignals) {
+                if (signalMatches(s, waveName) || signalMatches(waveName, s)) {
+                    shouldCheck = true;
+                    break;
                 }
             }
 
@@ -4006,8 +4183,10 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
                 shouldCheck = true;
             }
             
-            if (shouldCheck && series) {
-                series->show();
+            if (shouldCheck) {
+                if (series) {
+                    series->show();
+                }
                 m_waveformViewer->setSignalChecked(waveName, true);
             }
 
@@ -4017,6 +4196,11 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
             item->setCheckState(shouldCheck ? Qt::Checked : Qt::Unchecked);
             item->setForeground(waveColor);
             m_signalList->addItem(item);
+
+            if (!previousSelectedSignal.isEmpty()
+                    && item->text().compare(previousSelectedSignal, Qt::CaseInsensitive) == 0) {
+                m_signalList->setCurrentItem(item);
+            }
         }
         
         if (m_logicAnalyzer && logicCh < 8) {
@@ -4113,7 +4297,13 @@ void SimulationPanel::plotBuiltinResults(const SimResults& results) {
     }
 
     // Finalize the waveform viewer AFTER all waves have been added
-    if (m_waveformViewer) m_waveformViewer->endBatchUpdate();
+    if (m_waveformViewer) {
+        if (!previousSelectedSignal.isEmpty()) {
+            m_waveformViewer->setCurrentSignal(previousSelectedSignal);
+        }
+        m_waveformViewer->setFocusedPaneIndex(previousFocusedPaneIndex);
+        m_waveformViewer->endBatchUpdate();
+    }
 
     if (buildStandardChart && m_overlayPreviousRun && m_overlayPreviousRun->isChecked() && m_hasPreviousResults) {
         for (const auto& wave : m_previousResults.waveforms) {

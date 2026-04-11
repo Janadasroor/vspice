@@ -82,6 +82,9 @@ public:
         bool hasLastResults = false;
         bool hasPreviousResults = false;
         QList<WaveformViewer::SignalExport> waveformSignals;
+        int waveformPaneCount = 0;
+        int waveformFocusedPaneIndex = -1;
+        QString selectedSignalName;
         struct SignalListItem {
             QString name;
             bool checked;
@@ -114,6 +117,7 @@ Q_SIGNALS:
 public:
     void updateSchematicDirective();
     void updateSchematicDirectiveFromCommand(const QString& commandText);
+    void cancelPendingRun();
 
 private Q_SLOTS:
     void onAnalysisChanged(int index);
@@ -281,6 +285,7 @@ private:
     SimResults m_previousResults;
     bool m_hasLastResults = false;
     bool m_buildInProgress = false;
+    quint64 m_runRequestSerial = 0;
     bool m_hasPreviousResults = false;
     QDateTime m_lastRunTimestampUtc;
     SimNetlist m_currentNetlist;

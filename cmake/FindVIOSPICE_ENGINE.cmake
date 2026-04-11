@@ -1,16 +1,30 @@
 # FindVIOSPICE_ENGINE.cmake
 # Find the ngspice shared library and headers
 
-set(VIOSPICE_ENGINE_ROOT "/home/jnd/cpp_projects/ngspice" CACHE PATH "Path to ngspice root")
+set(VIOSPICE_ENGINE_ROOT "/home/jnd/cpp_projects/VioMATRIXC" CACHE PATH "Path to VioMATRIXC root")
 
 # Check for library
-set(VIOSPICE_ENGINE_LIBRARY "${VIOSPICE_ENGINE_ROOT}/release/src/.libs/libngspice.so")
+set(VIOSPICE_ENGINE_LIBRARY "${VIOSPICE_ENGINE_ROOT}/releasesh/src/.libs/libngspice.so")
 if(NOT EXISTS "${VIOSPICE_ENGINE_LIBRARY}")
-    set(VIOSPICE_ENGINE_LIBRARY "${VIOSPICE_ENGINE_ROOT}/release/src/.libs/libngspice.a")
+    set(VIOSPICE_ENGINE_LIBRARY "${VIOSPICE_ENGINE_ROOT}/release/src/.libs/libngspice.so")
+endif()
+if(NOT EXISTS "${VIOSPICE_ENGINE_LIBRARY}")
+    unset(VIOSPICE_ENGINE_LIBRARY)
+endif()
+if(NOT EXISTS "${VIOSPICE_ENGINE_LIBRARY}")
+    find_library(VIOSPICE_ENGINE_LIBRARY NAMES ngspice libngspice.so
+        PATHS /usr/local/lib /usr/lib /usr/lib64
+        NO_DEFAULT_PATH)
 endif()
 
 # Check for include directory
 set(VIOSPICE_ENGINE_INCLUDE_DIR "${VIOSPICE_ENGINE_ROOT}/src/include")
+if(NOT EXISTS "${VIOSPICE_ENGINE_INCLUDE_DIR}/ngspice/sharedspice.h")
+    unset(VIOSPICE_ENGINE_INCLUDE_DIR)
+    find_path(VIOSPICE_ENGINE_INCLUDE_DIR ngspice/sharedspice.h
+        PATHS /usr/local/include /usr/include
+        NO_DEFAULT_PATH)
+endif()
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(VIOSPICE_ENGINE DEFAULT_MSG VIOSPICE_ENGINE_LIBRARY VIOSPICE_ENGINE_INCLUDE_DIR)
