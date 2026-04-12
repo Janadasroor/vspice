@@ -9,6 +9,7 @@
 #include <QDebug>
 #include <QVector2D>
 #include <QtMath>
+#include <QTransform>
 
 SchematicComponentTool::SchematicComponentTool(const QString& componentType, QObject* parent)
     : SchematicTool(componentType, parent)
@@ -123,6 +124,17 @@ void SchematicComponentTool::mousePressEvent(QMouseEvent* event) {
     
     if (component) {
         component->setRotation(m_currentRotation); // Apply rotation
+        // Apply flip state
+        if (m_flippedH || m_flippedV) {
+            QRectF rect = component->boundingRect();
+            QPointF center = rect.center();
+            QTransform t;
+            t.translate(center.x(), center.y());
+            if (m_flippedH) t.scale(-1, 1);
+            if (m_flippedV) t.scale(1, -1);
+            t.translate(-center.x(), -center.y());
+            component->setTransform(t, false);
+        }
         if (view()) {
             QString ref = view()->getNextReference(component->referencePrefix());
             component->setReference(ref);
@@ -152,7 +164,7 @@ void SchematicComponentTool::mousePressEvent(QMouseEvent* event) {
 void SchematicComponentTool::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_R) {
         bool isShift = (event->modifiers() & Qt::ShiftModifier);
-        
+
         if (isShift) {
             m_currentRotation = fmod(m_currentRotation - 90.0, 360.0);
             if (m_currentRotation < 0) m_currentRotation += 360.0;
@@ -160,11 +172,44 @@ void SchematicComponentTool::keyPressEvent(QKeyEvent* event) {
             m_currentRotation = fmod(m_currentRotation + 90.0, 360.0);
         }
 
-        if (m_previewItem) {
-            m_previewItem->setRotation(m_currentRotation);
-        }
+        applyPreviewTransforms();
         event->accept();
         return;
     }
+
+    if (event->key() == Qt::Key_H && !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+        m_flippedH = !m_flippedH;
+        applyPreviewTransforms();
+        event->accept();
+        return;
+    }
+
+    if (event->key() == Qt::Key_V &&
+        (event->modifiers() & Qt::ShiftModifier) &&
+        !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+        m_flippedV = !m_flippedV;
+        applyPreviewTransforms();
+        event->accept();
+        return;
+    }
+
     SchematicTool::keyPressEvent(event);
+}
+
+void SchematicComponentTool::applyPreviewTransforms() {
+    if (!m_previewItem) return;
+
+    // Get item center for transform origin
+    QRectF rect = m_previewItem->boundingRect();
+    QPointF center = rect.center();
+
+    // Build complete transform around item center: rotation + flip
+    QTransform t;
+    t.translate(center.x(), center.y());
+    t.rotate(m_currentRotation);
+    if (m_flippedH) t.scale(-1, 1);
+    if (m_flippedV) t.scale(1, -1);
+    t.translate(-center.x(), -center.y());
+    
+    m_previewItem->setTransform(t, false);
 }

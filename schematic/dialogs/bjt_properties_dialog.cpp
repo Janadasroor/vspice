@@ -5,6 +5,7 @@
 #include "../../core/theme_manager.h"
 #include "../../simulator/bridge/model_library_manager.h"
 
+#include <QCompleter>
 #include <QDialogButtonBox>
 #include <QComboBox>
 #include <QFormLayout>
@@ -37,6 +38,25 @@ void BjtPropertiesDialog::setupUI() {
     m_modelNameEdit = new QLineEdit();
     m_modelNameEdit->setPlaceholderText("e.g. 2N2222 / 2N3906");
     form->addRow("Model Name:", m_modelNameEdit);
+
+    // Add autocomplete completer for BJT models
+    {
+        QStringList bjtModels;
+        for (const auto& info : ModelLibraryManager::instance().allModels()) {
+            if (info.type == "NPN" || info.type == "PNP") {
+                bjtModels.append(info.name);
+            }
+        }
+        bjtModels.sort(Qt::CaseInsensitive);
+        bjtModels.removeDuplicates();
+        auto* modelCompleter = new QCompleter(bjtModels, this);
+        modelCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+        modelCompleter->setFilterMode(Qt::MatchContains);
+        modelCompleter->setCompletionMode(QCompleter::PopupCompletion);
+        m_modelNameEdit->setCompleter(modelCompleter);
+        connect(modelCompleter, QOverload<const QString&>::of(&QCompleter::activated),
+                this, &BjtPropertiesDialog::fillFromModel);
+    }
 
     m_typeCombo = new QComboBox();
     m_typeCombo->addItem("NPN");

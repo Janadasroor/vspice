@@ -280,6 +280,7 @@ private:
 
     class SimulationPanel* m_simulationPanel = nullptr;
     SimulationSetupDialog::Config m_simConfig;
+    bool m_simConfigured = false; // Tracks whether user has explicitly configured simulation
     bool m_mouseFollowPlacementActive = false;
     QList<SchematicItem*> m_mouseFollowItems;
     QList<QPointF> m_mouseFollowOriginalPositions;

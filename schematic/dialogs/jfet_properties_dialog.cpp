@@ -5,6 +5,7 @@
 #include "../../core/theme_manager.h"
 #include "../../simulator/bridge/model_library_manager.h"
 
+#include <QCompleter>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -36,6 +37,25 @@ void JfetPropertiesDialog::setupUI() {
     m_modelNameEdit = new QLineEdit();
     m_modelNameEdit->setPlaceholderText("e.g. J2N5457 / J2N5460");
     form->addRow("Model Name:", m_modelNameEdit);
+
+    // Add autocomplete completer for JFET models
+    {
+        QStringList jfetModels;
+        for (const auto& info : ModelLibraryManager::instance().allModels()) {
+            if (info.type == "JFET_NJFET" || info.type == "JFET_PJFET") {
+                jfetModels.append(info.name);
+            }
+        }
+        jfetModels.sort(Qt::CaseInsensitive);
+        jfetModels.removeDuplicates();
+        auto* modelCompleter = new QCompleter(jfetModels, this);
+        modelCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+        modelCompleter->setFilterMode(Qt::MatchContains);
+        modelCompleter->setCompletionMode(QCompleter::PopupCompletion);
+        m_modelNameEdit->setCompleter(modelCompleter);
+        connect(modelCompleter, QOverload<const QString&>::of(&QCompleter::activated),
+                this, &JfetPropertiesDialog::fillFromModel);
+    }
 
     auto* pickLayout = new QHBoxLayout();
     auto* pickBtn = new QPushButton(isPChannel() ? "Pick PJF Model" : "Pick NJF Model");

@@ -2,6 +2,7 @@
 #include "../../core/config_manager.h"
 #include "schematic_tool_registry.h"
 #include "schematic_editor.h"
+#include "../tools/schematic_component_tool.h"
 #include "theme_manager.h"
 #include "schematic_item.h"
 #include "../items/generic_component_item.h"
@@ -1017,6 +1018,16 @@ void SchematicView::mouseDoubleClickEvent(QMouseEvent *event) {
 }
 
 void SchematicView::keyPressEvent(QKeyEvent *event) {
+    // Forward H/Shift+V/Ctrl+R to component tool BEFORE global shortcuts consume them
+    if (m_currentTool && dynamic_cast<SchematicComponentTool*>(m_currentTool)) {
+        if ((event->key() == Qt::Key_H && !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) ||
+            (event->key() == Qt::Key_V && (event->modifiers() & Qt::ShiftModifier) && !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) ||
+            (event->key() == Qt::Key_R && (event->modifiers() & Qt::ControlModifier))) {
+            m_currentTool->keyPressEvent(event);
+            if (event->isAccepted()) return;
+        }
+    }
+
     if (event->key() == Qt::Key_H && !event->isAutoRepeat()) {
         setHandToolActive(!m_handToolActive);
         event->accept();
@@ -1032,6 +1043,7 @@ void SchematicView::keyPressEvent(QKeyEvent *event) {
     }
 
     if (m_currentTool) m_currentTool->ensureView(this);
+
     // Smart Context-Aware Delete: Hover takes precedence
     if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
         // 1. Check if we are hovering over a specific item

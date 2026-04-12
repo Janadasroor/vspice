@@ -492,6 +492,9 @@ void SchematicEditor::addSchematicTab(const QString& name) {
     int idx = m_workspaceTabs->addTab(view, getThemeIcon(":/icons/comp_ic.svg"), name);
     m_workspaceTabs->setCurrentIndex(idx);
 
+    // Reset simulation config for new schematics
+    m_simConfigured = false;
+
     // Initial page frame for this new sheet
     m_view = view;
     m_scene = scene;
@@ -543,7 +546,7 @@ void SchematicEditor::onTabChanged(int index) {
 
         if (m_simulationPanel) {
             m_simulationPanel->setTargetScene(m_scene, m_netManager, m_projectDir, true);
-            
+
             // Sync editor config with the newly restored tab state
             const auto panelCfg = m_simulationPanel->getAnalysisConfig();
             m_simConfig.type = panelCfg.type;
@@ -559,6 +562,10 @@ void SchematicEditor::onTabChanged(int index) {
             m_simConfig.rfPort2Node = panelCfg.rfPort2Node;
             m_simConfig.rfZ0 = panelCfg.rfZ0;
             m_simConfig.commandText = panelCfg.commandText;
+            // If the tab has a saved file path, consider it configured; otherwise keep the flag as-is
+            if (!m_currentFilePath.isEmpty()) {
+                m_simConfigured = true;
+            }
         }
         if (m_geminiPanel) {
             m_geminiPanel->setScene(m_scene);
@@ -984,20 +991,20 @@ void SchematicEditor::applyPlacementTransforms() {
         SchematicItem* item = m_mouseFollowItems[i];
         if (!item || item->scene() != m_scene) continue;
 
-        // Reset transform completely, then apply rotation + flip
-        item->resetTransform();
+        // Get item center for transform origin
+        QRectF rect = item->boundingRect();
+        QPointF center = rect.center();
+
+        // Build complete transform around item center: original rotation + placement rotation + flip
+        qreal baseRotation = m_mouseFollowOriginalRotations.value(i, 0);
+        QTransform t;
+        t.translate(center.x(), center.y());
+        t.rotate(baseRotation + m_mouseFollowRotation);
+        if (m_mouseFollowFlippedH) t.scale(-1, 1);
+        if (m_mouseFollowFlippedV) t.scale(1, -1);
+        t.translate(-center.x(), -center.y());
         
-        // Apply rotation
-        item->setRotation(m_mouseFollowRotation);
-        
-        // Apply flip via additional transform
-        if (m_mouseFollowFlippedH || m_mouseFollowFlippedV) {
-            QTransform flipT;
-            qreal sx = m_mouseFollowFlippedH ? -1.0 : 1.0;
-            qreal sy = m_mouseFollowFlippedV ? -1.0 : 1.0;
-            flipT.scale(sx, sy);
-            item->setTransform(flipT, true);
-        }
+        item->setTransform(t, false); // Apply combined transform
     }
 }
 

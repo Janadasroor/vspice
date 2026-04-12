@@ -1979,6 +1979,7 @@ void SchematicEditor::onOpenSimulationSetup() {
     dlg.setConfig(m_simConfig);
     if (dlg.exec() == QDialog::Accepted) {
         m_simConfig = dlg.getConfig();
+        m_simConfigured = true;
 
         if (m_simulationPanel) {
             SimulationPanel::AnalysisConfig pCfg;
@@ -2053,6 +2054,7 @@ bool SchematicEditor::editDirectiveWithSimulationSetup(const QString& currentCom
     }
 
     m_simConfig = dlg.getConfig();
+    m_simConfigured = true;
 
     if (m_simulationPanel) {
         SimulationPanel::AnalysisConfig pCfg;
@@ -2132,6 +2134,7 @@ bool SchematicEditor::editDirectiveWithGenericDialog(const QString& currentComma
     dlg.setConfig(m_simConfig);
     if (dlg.exec() == QDialog::Accepted) {
         m_simConfig = dlg.getConfig();
+        m_simConfigured = true;
         if (!m_simConfig.commandText.isEmpty() && m_simulationPanel) {
             m_simulationPanel->updateSchematicDirectiveFromCommand(m_simConfig.commandText);
         }
@@ -2180,6 +2183,40 @@ void SchematicEditor::onRunSimulation() {
     if (m_simulationRunning) {
         onPauseSimulation(); // Toggle pause/resume if already running
         return;
+    }
+
+    // Show analysis setup dialog if the user hasn't configured the simulation yet
+    if (!m_simConfigured) {
+        SimulationSetupDialog dlg(this);
+        dlg.setConfig(m_simConfig);
+        if (dlg.exec() != QDialog::Accepted) {
+            return; // User cancelled
+        }
+        m_simConfig = dlg.getConfig();
+        m_simConfigured = true;
+
+        // Propagate config to simulation panel
+        if (m_simulationPanel) {
+            SimulationPanel::AnalysisConfig pCfg;
+            pCfg.type = m_simConfig.type;
+            pCfg.stop = m_simConfig.stop;
+            pCfg.step = m_simConfig.step;
+            pCfg.transientSteady = m_simConfig.transientSteady;
+            pCfg.steadyStateTol = m_simConfig.steadyStateTol;
+            pCfg.steadyStateDelay = m_simConfig.steadyStateDelay;
+            pCfg.fStart = m_simConfig.fStart;
+            pCfg.fStop = m_simConfig.fStop;
+            pCfg.pts = m_simConfig.pts;
+            pCfg.rfPort1Source = m_simConfig.rfPort1Source;
+            pCfg.rfPort2Node = m_simConfig.rfPort2Node;
+            pCfg.rfZ0 = m_simConfig.rfZ0;
+            pCfg.commandText = m_simConfig.commandText;
+            m_simulationPanel->setAnalysisConfig(pCfg);
+
+            if (!m_simConfig.commandText.isEmpty()) {
+                m_simulationPanel->updateSchematicDirectiveFromCommand(m_simConfig.commandText);
+            }
+        }
     }
 
     // Auto-save pending Smart Signal code edits before building simulator netlist.

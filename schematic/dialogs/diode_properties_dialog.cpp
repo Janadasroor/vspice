@@ -3,6 +3,7 @@
 #include "../items/schematic_item.h"
 #include "../../core/theme_manager.h"
 #include "../../simulator/bridge/model_library_manager.h"
+#include <QCompleter>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -71,6 +72,25 @@ void DiodePropertiesDialog::setupUI() {
     m_modelNameEdit = new QLineEdit();
     m_modelNameEdit->setPlaceholderText("e.g. 1N4148, 1N5819");
     form->addRow("Model Name:", m_modelNameEdit);
+
+    // Add autocomplete completer for diode models
+    {
+        QStringList diodeModels;
+        for (const auto& info : ModelLibraryManager::instance().allModels()) {
+            if (info.type == "Diode") {
+                diodeModels.append(info.name);
+            }
+        }
+        diodeModels.sort(Qt::CaseInsensitive);
+        diodeModels.removeDuplicates();
+        auto* modelCompleter = new QCompleter(diodeModels, this);
+        modelCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+        modelCompleter->setFilterMode(Qt::MatchContains);
+        modelCompleter->setCompletionMode(QCompleter::PopupCompletion);
+        m_modelNameEdit->setCompleter(modelCompleter);
+        connect(modelCompleter, QOverload<const QString&>::of(&QCompleter::activated),
+                this, &DiodePropertiesDialog::fillFromModel);
+    }
 
     // Pick model buttons
     auto* pickLayout = new QHBoxLayout();

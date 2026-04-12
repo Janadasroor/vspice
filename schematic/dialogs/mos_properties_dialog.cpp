@@ -5,6 +5,7 @@
 #include "../../core/theme_manager.h"
 #include "../../simulator/bridge/model_library_manager.h"
 
+#include <QCompleter>
 #include <QDialogButtonBox>
 #include <QComboBox>
 #include <QFormLayout>
@@ -37,6 +38,25 @@ void MosPropertiesDialog::setupUI() {
     m_modelNameEdit = new QLineEdit();
     m_modelNameEdit->setPlaceholderText("e.g. 2N7000 / BS250");
     form->addRow("Model Name:", m_modelNameEdit);
+
+    // Add autocomplete completer for MOS models
+    {
+        QStringList mosModels;
+        for (const auto& info : ModelLibraryManager::instance().allModels()) {
+            if (info.type == "NMOS" || info.type == "PMOS") {
+                mosModels.append(info.name);
+            }
+        }
+        mosModels.sort(Qt::CaseInsensitive);
+        mosModels.removeDuplicates();
+        auto* modelCompleter = new QCompleter(mosModels, this);
+        modelCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+        modelCompleter->setFilterMode(Qt::MatchContains);
+        modelCompleter->setCompletionMode(QCompleter::PopupCompletion);
+        m_modelNameEdit->setCompleter(modelCompleter);
+        connect(modelCompleter, QOverload<const QString&>::of(&QCompleter::activated),
+                this, &MosPropertiesDialog::fillFromModel);
+    }
 
     m_typeCombo = new QComboBox();
     m_typeCombo->addItem("NMOS");

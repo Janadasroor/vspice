@@ -727,6 +727,7 @@ bool SchematicEditor::openFile(const QString& filePath) {
 
         if (!loadedSimulationSetup.isEmpty()) {
             m_simConfig = SimulationSetupDialog::Config::fromJson(loadedSimulationSetup);
+            m_simConfigured = true;
             qDebug() << "[SchematicEditor] Loaded sim config: type=" << static_cast<int>(m_simConfig.type) << "rfPort1Source=" << m_simConfig.rfPort1Source;
         }
         if (m_simulationPanel) {

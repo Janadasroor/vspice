@@ -30,7 +30,10 @@ private:
     class SchematicItem* m_previewItem = nullptr;
     QList<WireItem*> m_previewWires;
     qreal m_currentRotation = 0;
+    bool m_flippedH = false;
+    bool m_flippedV = false;
     void clearPreviewWires();
+    void applyPreviewTransforms();
 };
 
 #endif // SCHEMATICCOMPONENTTOOL_H
