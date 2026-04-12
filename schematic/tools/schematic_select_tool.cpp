@@ -73,6 +73,15 @@ SchematicItem* preferredPickItem(SchematicView* view, const QPointF& scenePos, c
         }
     }
 
+    // 1c) Net labels and hierarchical ports should be draggable even when connected to wires.
+    for (QGraphicsItem* hit : hits) {
+        SchematicItem* sItem = nearestSchematicItem(hit);
+        if (sItem && (sItem->itemType() == SchematicItem::NetLabelType ||
+                      sItem->itemType() == SchematicItem::HierarchicalPortType)) {
+            return sItem;
+        }
+    }
+
     // 2) If we're near a wire segment, prefer the wire (helps selection near components).
     WireItem* bestWire = nullptr;
     qreal bestDist = std::numeric_limits<qreal>::max();

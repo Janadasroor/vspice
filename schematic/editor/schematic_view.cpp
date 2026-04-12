@@ -1061,6 +1061,17 @@ void SchematicView::keyPressEvent(QKeyEvent *event) {
     }
 
     if (event->key() == Qt::Key_Escape) {
+        // Cancel placement mode (after paste/duplicate)
+        if (SchematicEditor* editor = qobject_cast<SchematicEditor*>(window())) {
+            if (editor->isPlacementModeActive()) {
+                editor->cancelPlacementMode();
+                event->accept();
+                return;
+            }
+        }
+    }
+
+    if (event->key() == Qt::Key_Escape) {
         // Cancel armed differential probe mode
         if (!m_probeStartNet.isEmpty()) {
             m_probeStartNet.clear();

@@ -53,6 +53,10 @@ public:
     void showSimulationResults(const class SimResults& results);
     class NetManager* netManager() const { return m_netManager; }
 
+    // Placement mode (after paste/duplicate)
+    bool isPlacementModeActive() const { return m_mouseFollowPlacementActive; }
+    void cancelPlacementMode();
+
     // Workspace Tab Management
     void addSchematicTab(const QString& name = "Untitled.sch");
     void openSymbolEditorWindow(const QString& name = "New Symbol",
@@ -279,7 +283,12 @@ private:
     bool m_mouseFollowPlacementActive = false;
     QList<SchematicItem*> m_mouseFollowItems;
     QList<QPointF> m_mouseFollowOriginalPositions;
+    QList<qreal> m_mouseFollowOriginalRotations;
     QPointF m_mouseFollowAnchor;
+    bool m_mouseFollowFlippedH = false;
+    bool m_mouseFollowFlippedV = false;
+    qreal m_mouseFollowRotation = 0;
+    void applyPlacementTransforms();
     QAction *m_toggleHeatmapAction = nullptr;
     QString m_mouseFollowActionLabel;
     QMap<QString, class LogicAnalyzerWindow*> m_laWindows;
@@ -307,7 +316,12 @@ private:
 
     // Toolbar actions
     QMap<QString, QAction*> m_toolActions;
+    QList<QAction*> m_manipActions;
     QMap<QString, QAction*> m_editActions;
+
+    // Saved shortcuts during placement mode
+    QMap<QAction*, QKeySequence> m_savedToolShortcuts;
+    QMap<QAction*, QKeySequence> m_savedManipShortcuts;
     QAction* m_runSimMenuAction;
     QAction* m_stopSimMenuAction;
     QAction* m_runSimToolbarAction;

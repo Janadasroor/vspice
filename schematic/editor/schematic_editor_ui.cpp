@@ -1807,6 +1807,7 @@ void SchematicEditor::createDrawingToolbar() {
     auto addManipAction = [&](const QString& iconName, const QString& tooltip, auto slot) {
         QAction* action = drawToolbar->addAction(createComponentIcon(iconName), tooltip);
         connect(action, &QAction::triggered, this, slot);
+        m_manipActions.append(action);
         return action;
     };
 
