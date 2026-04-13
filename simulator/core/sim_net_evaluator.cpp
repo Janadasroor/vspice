@@ -3,33 +3,61 @@
 #include "sim_expression.h"
 #include "sim_value_parser.h"
 
-#include <QRegularExpression>
-#include <QString>
-
 #include <algorithm>
+#include <cctype>
 #include <complex>
 #include <cmath>
+#include <regex>
+#include <sstream>
 
 namespace {
 
-QString qFromStd(const std::string& s) { return QString::fromStdString(s); }
-
-std::string lowerCopy(const std::string& s) {
-    std::string out = s;
-    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+std::string toLower(std::string_view s) {
+    std::string out(s.size(), '\0');
+    std::transform(s.begin(), s.end(), out.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return out;
 }
 
+std::string toUpper(std::string_view s) {
+    std::string out(s.size(), '\0');
+    std::transform(s.begin(), s.end(), out.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return out;
+}
+
+std::string trim(const std::string& s) {
+    auto start = s.begin();
+    while (start != s.end() && std::isspace(static_cast<unsigned char>(*start))) ++start;
+    auto end = s.end();
+    while (end != start && std::isspace(static_cast<unsigned char>(*(end - 1)))) --end;
+    return std::string(start, end);
+}
+
+bool startsWithIgnoreCase(std::string_view s, std::string_view prefix) {
+    if (s.size() < prefix.size()) return false;
+    return toLower(s.substr(0, prefix.size())) == toLower(prefix);
+}
+
 const SimWaveform* findWaveform(const SimResults& results, const std::string& signal) {
-    const QString raw = qFromStd(signal).trimmed();
-    if (raw.isEmpty()) return nullptr;
-    QStringList candidates;
-    candidates << raw.toUpper();
-    const QRegularExpression bareNodeRe("^[A-Za-z0-9_.$:+-]+$");
-    if (bareNodeRe.match(raw).hasMatch()) candidates << QString("V(%1)").arg(raw.toUpper());
+    std::string sig = trim(signal);
+    if (sig.empty()) return nullptr;
+
+    std::string upper = toUpper(sig);
+    std::vector<std::string> candidates;
+    candidates.push_back(upper);
+
+    // If it looks like a bare node name, also try V(NODENAME)
+    static const std::regex bareNodeRe("^[A-Za-z0-9_.$:+-]+$");
+    if (std::regex_match(upper, bareNodeRe)) {
+        candidates.push_back("V(" + upper + ")");
+    }
+
     for (const auto& w : results.waveforms) {
-        const QString name = QString::fromStdString(w.name).trimmed().toUpper();
-        if (candidates.contains(name)) return &w;
+        std::string wName = toUpper(trim(w.name));
+        for (const auto& c : candidates) {
+            if (wName == c) return &w;
+        }
     }
     return nullptr;
 }
@@ -47,24 +75,24 @@ std::string netBaseName(const NetStatement& stmt) {
 }
 
 bool parseVoltageOutputSpec(const std::string& spec, std::string& posNode, std::string& negNode) {
-    const QRegularExpression re("^V\\(\\s*([^,()]+)\\s*(?:,\\s*([^()]+)\\s*)?\\)$", QRegularExpression::CaseInsensitiveOption);
-    const auto m = re.match(qFromStd(spec).trimmed());
-    if (!m.hasMatch()) return false;
-    posNode = m.captured(1).trimmed().toUpper().toStdString();
-    negNode = m.captured(2).trimmed().toUpper().toStdString();
+    static const std::regex re(
+        "^[Vv]\\(\\s*([^,()]+)\\s*(?:,\\s*([^()]+)\\s*)?\\)$");
+    std::smatch m;
+    std::string trimmed = trim(spec);
+    if (!std::regex_match(trimmed, m, re)) return false;
+    posNode = toUpper(trim(m[1].str()));
+    negNode = m[2].matched ? toUpper(trim(m[2].str())) : std::string();
     return true;
 }
 
 bool parseCurrentOutputSpec(const std::string& spec, std::string& currentSignal) {
-    const QRegularExpression re("^I\\(\\s*([^()]+)\\s*\\)$", QRegularExpression::CaseInsensitiveOption);
-    const auto m = re.match(qFromStd(spec).trimmed());
-    if (!m.hasMatch()) return false;
-    currentSignal = QString("I(%1)").arg(m.captured(1).trimmed().toUpper()).toStdString();
+    static const std::regex re(
+        "^[Ii]\\(\\s*([^()]+)\\s*\\)$");
+    std::smatch m;
+    std::string trimmed = trim(spec);
+    if (!std::regex_match(trimmed, m, re)) return false;
+    currentSignal = "I(" + toUpper(trim(m[1].str())) + ")";
     return true;
-}
-
-std::complex<double> complexFromMagPhase(double mag, double phaseDeg) {
-    return std::polar(mag, phaseDeg * std::acos(-1.0) / 180.0);
 }
 
 void appendComplexSample(SimWaveform& w, const std::complex<double>& value) {
@@ -75,37 +103,41 @@ void appendComplexSample(SimWaveform& w, const std::complex<double>& value) {
 } // namespace
 
 bool SimNetEvaluator::parse(const std::string& line, int lineNumber, const std::string& sourceName, NetStatement& out) {
-    const QString qline = qFromStd(line).trimmed();
-    if (!qline.startsWith(".net", Qt::CaseInsensitive)) return false;
+    std::string trimmed = trim(line);
+    if (!startsWithIgnoreCase(trimmed, ".net")) return false;
 
-    QStringList tokens = qline.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+    // Tokenize
+    std::istringstream iss(trimmed);
+    std::string token;
+    std::vector<std::string> tokens;
+    while (iss >> token) tokens.push_back(token);
     if (tokens.size() < 2) return false;
 
     out = NetStatement();
     out.lineNumber = lineNumber;
     out.sourceName = sourceName;
 
-    int idx = 1;
-    const QString first = tokens.value(idx);
-    if (first.startsWith("V(", Qt::CaseInsensitive) || first.startsWith("I(", Qt::CaseInsensitive)) {
+    size_t idx = 1;
+    const std::string& first = tokens[idx];
+    if (startsWithIgnoreCase(first, "V(") || startsWithIgnoreCase(first, "I(")) {
         out.hasOutput = true;
-        out.outputSpec = first.toStdString();
+        out.outputSpec = first;
         ++idx;
     }
     if (idx >= tokens.size()) return false;
-    out.inputSource = tokens.value(idx).toUpper().toStdString();
+    out.inputSource = toUpper(tokens[idx]);
     ++idx;
 
     for (; idx < tokens.size(); ++idx) {
-        const QString tok = tokens.value(idx);
-        if (tok.startsWith("Rin=", Qt::CaseInsensitive)) {
+        const std::string& tok = tokens[idx];
+        if (startsWithIgnoreCase(tok, "Rin=")) {
             double value = 0.0;
-            if (!SimValueParser::parseSpiceNumber(tok.mid(4).trimmed(), value)) return false;
+            if (!SimValueParser::parseSpiceNumber(tok.substr(4), value)) return false;
             out.hasRin = true;
             out.rin = value;
-        } else if (tok.startsWith("Rout=", Qt::CaseInsensitive)) {
+        } else if (startsWithIgnoreCase(tok, "Rout=")) {
             double value = 0.0;
-            if (!SimValueParser::parseSpiceNumber(tok.mid(5).trimmed(), value)) return false;
+            if (!SimValueParser::parseSpiceNumber(tok.substr(5), value)) return false;
             out.hasRout = true;
             out.rout = value;
         }
@@ -119,7 +151,7 @@ NetEvaluation SimNetEvaluator::evaluate(const std::vector<NetStatement>& stateme
                                         const SimResults& results,
                                         const std::string& analysisType) {
     NetEvaluation eval;
-    if (lowerCopy(analysisType) != "ac") return eval;
+    if (toLower(analysisType) != "ac") return eval;
 
     for (const NetStatement& stmt : statements) {
         const auto sourceIt = sources.find(stmt.inputSource);
@@ -153,8 +185,8 @@ NetEvaluation SimNetEvaluator::evaluate(const std::vector<NetStatement>& stateme
         SimWaveform s21;
         const bool hasOutput = stmt.hasOutput;
         const bool canComputeS = hasOutput && stmt.rin > 0.0 && stmt.rout > 0.0;
-        const bool outputIsVoltage = hasOutput && qFromStd(stmt.outputSpec).trimmed().startsWith("V(", Qt::CaseInsensitive);
-        const bool outputIsCurrent = hasOutput && qFromStd(stmt.outputSpec).trimmed().startsWith("I(", Qt::CaseInsensitive);
+        const bool outputIsVoltage = hasOutput && startsWithIgnoreCase(trim(stmt.outputSpec), "V(");
+        const bool outputIsCurrent = hasOutput && startsWithIgnoreCase(trim(stmt.outputSpec), "I(");
         const std::string outputLabel = stmt.outputSpec;
         if (hasOutput) {
             transfer.name = (outputIsVoltage ? "Vtransfer(" : "Itransfer(") + base + "->" + outputLabel + ")";

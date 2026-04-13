@@ -2,6 +2,8 @@
 #include "sim_value_parser.h"
 #include "sim_expression.h"
 
+#include <QString>
+
 #include <algorithm>
 #include <cmath>
 #include <sstream>
