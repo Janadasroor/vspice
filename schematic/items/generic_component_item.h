@@ -40,6 +40,7 @@ public:
     
     virtual QRectF boundingRect() const override;
     virtual void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) override;
+    QVariant itemChange(GraphicsItemChange change, const QVariant& value) override;
 
     // Pin Mode Overrides (Per-instance)
     void setPinMode(int pinNumber, int modeIndex);
@@ -47,6 +48,7 @@ public:
 
 protected:
     QList<SymbolPrimitive> resolvedPrimitives() const;
+    void syncReadablePrimitiveText();
 
     SymbolDefinition m_symbol;
     QMap<int, int> m_pinModeOverrides; // pinNumber -> modeIndex (-1 = default)

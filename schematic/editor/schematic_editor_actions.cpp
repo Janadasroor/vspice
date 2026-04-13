@@ -67,6 +67,7 @@
 #include "../dialogs/mos_properties_dialog.h"
 #include "../dialogs/mesfet_properties_dialog.h"
 #include "../items/generic_component_item.h"
+#include "../dialogs/component_label_properties_dialog.h"
 #include "../items/voltage_controlled_switch_item.h"
 #include "../dialogs/oscilloscope_properties_dialog.h"
 #include "../dialogs/erc_rules_dialog.h"
@@ -935,6 +936,12 @@ void SchematicEditor::onItemDoubleClicked(SchematicItem* item) {
             dlg.exec();
             return;
         }
+    } else if (item->itemType() == SchematicItem::ComponentType) {
+        if (auto* comp = dynamic_cast<GenericComponentItem*>(item)) {
+            ComponentLabelPropertiesDialog dlg(comp, ComponentLabelPropertiesDialog::Reference, this);
+            dlg.exec();
+            return;
+        }
     } else if (item->itemTypeName() == "OscilloscopeInstrument") {
         // Support both specialized OscilloscopeItem and InstrumentProbeItem(Oscilloscope)
         openOscilloscopeWindow(item);
@@ -1371,6 +1378,15 @@ void SchematicEditor::onItemDoubleClicked(SchematicItem* item) {
     }
 }
 
+void SchematicEditor::onComponentLabelDoubleClicked(GenericComponentItem* component, bool isReferenceLabel) {
+    if (!component) return;
+    ComponentLabelPropertiesDialog::LabelType type = isReferenceLabel
+        ? ComponentLabelPropertiesDialog::Reference
+        : ComponentLabelPropertiesDialog::Value;
+    ComponentLabelPropertiesDialog dlg(component, type, this);
+    dlg.exec();
+}
+
 void SchematicEditor::onItemPlaced(SchematicItem* item) {
     if (!item) return;
 
@@ -1734,13 +1750,8 @@ void SchematicEditor::onPropertyChanged(const QString& name, const QVariant& val
 // ─── Manipulation Handlers ──────────────────────────────────────────────────
 // Helper to get selected schematic items
 QList<SchematicItem*> getSelectedSchematicItems(QGraphicsScene* scene) {
-    QList<SchematicItem*> schematicItems;
-    for (QGraphicsItem* item : scene->selectedItems()) {
-        if (auto* sItem = dynamic_cast<SchematicItem*>(item)) {
-            schematicItems.append(sItem);
-        }
-    }
-    return schematicItems;
+    if (!scene) return {};
+    return uniqueTopLevelSchematicItems(scene->selectedItems());
 }
 
 void SchematicEditor::onRotateCW() {
@@ -1775,18 +1786,58 @@ void SchematicEditor::onRotateCCW() {
 }
 
 void SchematicEditor::onFlipHorizontal() {
+    // 1. Placement mode (paste/duplicate/library mouse-follow): flip preview items.
+    if (m_mouseFollowPlacementActive) {
+        m_mouseFollowFlippedH = !m_mouseFollowFlippedH;
+        applyPlacementTransforms();
+        statusBar()->showMessage(m_mouseFollowFlippedH ? "Flipped Horizontally" : "Unflipped Horizontally", 2000);
+        return;
+    }
+
+    // 2. If placed items are selected, mirror the real selection before consulting the active tool.
     QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
     if (!items.isEmpty()) {
         m_undoStack->push(new FlipItemCommand(m_scene, items));
         statusBar()->showMessage("Flipped Horizontally", 2000);
+        return;
+    }
+
+    // 3. Component placement tool preview: forward to tool handler.
+    if (m_view && m_view->currentTool()) {
+        QKeyEvent fakeEvent(QEvent::KeyPress, Qt::Key_H, Qt::NoModifier);
+        m_view->currentTool()->keyPressEvent(&fakeEvent);
+        if (fakeEvent.isAccepted()) {
+            statusBar()->showMessage("Flipped Horizontally", 2000);
+            return;
+        }
     }
 }
 
 void SchematicEditor::onFlipVertical() {
+    // 1. Placement mode (paste/duplicate/library mouse-follow): flip preview items.
+    if (m_mouseFollowPlacementActive) {
+        m_mouseFollowFlippedV = !m_mouseFollowFlippedV;
+        applyPlacementTransforms();
+        statusBar()->showMessage(m_mouseFollowFlippedV ? "Flipped Vertically" : "Unflipped Vertically", 2000);
+        return;
+    }
+
+    // 2. If placed items are selected, mirror the real selection before consulting the active tool.
     QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
     if (!items.isEmpty()) {
         m_undoStack->push(new FlipItemCommand(m_scene, items, true));
         statusBar()->showMessage("Flipped Vertically", 2000);
+        return;
+    }
+
+    // 3. Component placement tool preview: forward to tool handler.
+    if (m_view && m_view->currentTool()) {
+        QKeyEvent fakeEvent(QEvent::KeyPress, Qt::Key_V, Qt::ShiftModifier);
+        m_view->currentTool()->keyPressEvent(&fakeEvent);
+        if (fakeEvent.isAccepted()) {
+            statusBar()->showMessage("Flipped Vertically", 2000);
+            return;
+        }
     }
 }
 

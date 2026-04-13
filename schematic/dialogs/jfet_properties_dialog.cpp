@@ -42,7 +42,8 @@ void JfetPropertiesDialog::setupUI() {
     {
         QStringList jfetModels;
         for (const auto& info : ModelLibraryManager::instance().allModels()) {
-            if (info.type == "JFET_NJFET" || info.type == "JFET_PJFET") {
+            QString t = info.type.toUpper();
+            if (t == "NJF" || t == "PJF") {
                 jfetModels.append(info.name);
             }
         }
@@ -119,6 +120,7 @@ void JfetPropertiesDialog::setupUI() {
     };
 
     connectPreview(m_modelNameEdit);
+    connect(m_modelNameEdit, &QLineEdit::editingFinished, this, &JfetPropertiesDialog::autoMatchModel);
     connectPreview(m_betaEdit);
     connectPreview(m_vtoEdit);
     connectPreview(m_lambdaEdit);
@@ -184,6 +186,40 @@ void JfetPropertiesDialog::fillFromModel(const QString& modelName) {
     m_cgsEdit->setText(getParam("Cgs", "2p"));
     m_cgdEdit->setText(getParam("Cgd", "1p"));
     m_isEdit->setText(getParam("Is", "1e-14"));
+
+    updateCommandPreview();
+}
+
+void JfetPropertiesDialog::autoMatchModel() {
+    const QString name = m_modelNameEdit->text().trimmed();
+    if (name.isEmpty()) return;
+
+    const SimModel* mdl = ModelLibraryManager::instance().findModel(name);
+    if (!mdl) return;
+
+    auto getParam = [&](const std::string& key, const QString& fallback) {
+        auto it = mdl->params.find(key);
+        if (it != mdl->params.end()) {
+            return QString::number(it->second, 'g', 12);
+        }
+        return fallback;
+    };
+
+    auto setIfDefault = [&](QLineEdit* edit, const std::string& key, const QString& defaultVal) {
+        const QString current = edit->text().trimmed();
+        if (current == defaultVal || current.isEmpty()) {
+            edit->setText(getParam(key, defaultVal));
+        }
+    };
+
+    setIfDefault(m_betaEdit, "Beta", "1m");
+    setIfDefault(m_vtoEdit, "Vto", isPChannel() ? "2" : "-2");
+    setIfDefault(m_lambdaEdit, "Lambda", "0.02");
+    setIfDefault(m_rdEdit, "Rd", "1");
+    setIfDefault(m_rsEdit, "Rs", "1");
+    setIfDefault(m_cgsEdit, "Cgs", "2p");
+    setIfDefault(m_cgdEdit, "Cgd", "1p");
+    setIfDefault(m_isEdit, "Is", "1e-14");
 
     updateCommandPreview();
 }

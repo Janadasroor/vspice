@@ -149,6 +149,8 @@ set(SCHEMATIC_SOURCES
     schematic/dialogs/passive_model_properties_dialog.h
     schematic/dialogs/passive_model_picker_dialog.cpp
     schematic/dialogs/passive_model_picker_dialog.h
+    schematic/dialogs/component_label_properties_dialog.cpp
+    schematic/dialogs/component_label_properties_dialog.h
     schematic/dialogs/schematic_text_properties_dialog.cpp
     schematic/dialogs/schematic_text_properties_dialog.h
     schematic/dialogs/schematic_diff_dialog.cpp
@@ -225,6 +227,8 @@ set(SCHEMATIC_SOURCES
     schematic/dialogs/spice_step_dialog.h
     schematic/dialogs/simulation_debugger_dialog.cpp
     schematic/dialogs/simulation_debugger_dialog.h
+    schematic/dialogs/pre_simulation_validation_dialog.cpp
+    schematic/dialogs/pre_simulation_validation_dialog.h
     schematic/dialogs/power_nets_manager_dialog.cpp
     schematic/dialogs/power_nets_manager_dialog.h
     schematic/dialogs/visual_pin_pad_mapper_dialog.cpp

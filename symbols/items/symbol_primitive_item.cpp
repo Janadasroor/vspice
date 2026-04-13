@@ -314,17 +314,6 @@ void SymbolTextItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
     int fs = m_model.data.value("fontSize").toInt(10);
     if (fs <= 0) fs = 10;
 
-    // Keep text upright even if the parent symbol is rotated.
-    painter->save();
-    if (QGraphicsItem* p = parentItem()) {
-        const qreal rot = p->rotation();
-        if (rot != 0.0) {
-            painter->translate(anchorX, anchorY);
-            painter->rotate(-rot);
-            painter->translate(-anchorX, -anchorY);
-        }
-    }
-
     QFont font("SansSerif", fs);
     painter->setFont(font);
     
@@ -358,7 +347,6 @@ void SymbolTextItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
     else if (vAlign == "top") py += fm.ascent();
     
     painter->drawText(QPointF(anchorX + dx, py), resolved);
-    painter->restore();
 
     paintSelectionBorder(painter, option);
 }
@@ -368,6 +356,21 @@ void SymbolTextItem::setSymbolContext(const QString& name, const QString& ref, c
     m_symbolRef = ref;
     m_symbolVal = val;
     update();
+}
+
+void SymbolTextItem::syncUprightTransform() {
+    if (!m_keepUpright || !parentItem()) {
+        setTransform(QTransform(), false);
+        return;
+    }
+
+    const QTransform parentScene = parentItem()->sceneTransform();
+    const QTransform parentLinear(parentScene.m11(), parentScene.m12(), 0.0,
+                                  parentScene.m21(), parentScene.m22(), 0.0,
+                                  0.0, 0.0, 1.0);
+    bool invertible = false;
+    const QTransform invLinear = parentLinear.inverted(&invertible);
+    setTransform(invertible ? invLinear : QTransform(), false);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -442,6 +445,27 @@ void SymbolPinItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* opt
 
     QColor textColor = color;
     if (ThemeManager::theme()) textColor = ThemeManager::theme()->accentColor().lighter(120);
+    QTransform parentLinear;
+    bool hasParentLinear = false;
+    if (parentItem()) {
+        const QTransform parentScene = parentItem()->sceneTransform();
+        parentLinear = QTransform(parentScene.m11(), parentScene.m12(), 0.0,
+                                  parentScene.m21(), parentScene.m22(), 0.0,
+                                  0.0, 0.0, 1.0);
+        hasParentLinear = true;
+    }
+    auto readablePoint = [&](const QPointF& localPoint) {
+        return hasParentLinear ? parentLinear.map(localPoint) : localPoint;
+    };
+
+    painter->save();
+    if (hasParentLinear) {
+        bool invertible = false;
+        const QTransform invLinear = parentLinear.inverted(&invertible);
+        if (invertible) {
+            painter->setTransform(invLinear, true);
+        }
+    }
 
     QJsonValue numVal = m_model.data["number"];
     if (numVal.isUndefined()) numVal = m_model.data["num"];
@@ -453,16 +477,8 @@ void SymbolPinItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* opt
         int nsz = m_model.data.value("numSize").toInt(7);
         painter->setFont(QFont("Monospace", nsz > 0 ? nsz : 7));
         painter->setPen(textColor);
-        QRectF numRect;
-        if (orient == "Left" || orient == "Right") {
-            const qreal left = qMin<qreal>(px, endPt.x());
-            const qreal width = qAbs(endPt.x() - px);
-            numRect = QRectF(left, py - 8.0, width, 16.0);
-        } else {
-            const qreal top = qMin<qreal>(py, endPt.y());
-            const qreal height = qAbs(endPt.y() - py);
-            numRect = QRectF(px - 12.0, top, 24.0, height);
-        }
+        const QPointF numCenter = readablePoint((QPointF(px, py) + endPt) * 0.5);
+        QRectF numRect(numCenter.x() - 12.0, numCenter.y() - 8.0, 24.0, 16.0);
         painter->drawText(numRect, Qt::AlignCenter, numStr);
     }
 
@@ -471,21 +487,30 @@ void SymbolPinItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* opt
         int asz = m_model.data.value("nameSize").toInt(7);
         painter->setFont(QFont("SansSerif", asz > 0 ? asz : 7));
         painter->setPen(textColor);
+        QPointF nameAnchor;
+        Qt::Alignment nameAlign = Qt::AlignLeft | Qt::AlignVCenter;
         QRectF nameRect;
         if (orient == "Right") {
-            nameRect = QRectF(endPt.x() + 4.0, py - 8.0, 80.0, 16.0);
-            painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter, nameStr);
+            nameAnchor = readablePoint(QPointF(endPt.x() + 4.0, py));
+            nameAlign = Qt::AlignLeft | Qt::AlignVCenter;
+            nameRect = QRectF(nameAnchor.x(), nameAnchor.y() - 8.0, 80.0, 16.0);
         } else if (orient == "Left") {
-            nameRect = QRectF(endPt.x() - 84.0, py - 8.0, 80.0, 16.0);
-            painter->drawText(nameRect, Qt::AlignRight | Qt::AlignVCenter, nameStr);
+            nameAnchor = readablePoint(QPointF(endPt.x() - 4.0, py));
+            nameAlign = Qt::AlignRight | Qt::AlignVCenter;
+            nameRect = QRectF(nameAnchor.x() - 80.0, nameAnchor.y() - 8.0, 80.0, 16.0);
         } else if (orient == "Up") {
-            nameRect = QRectF(px - 40.0, endPt.y() - 20.0, 80.0, 16.0);
-            painter->drawText(nameRect, Qt::AlignHCenter | Qt::AlignBottom, nameStr);
+            nameAnchor = readablePoint(QPointF(px, endPt.y() - 4.0));
+            nameAlign = Qt::AlignHCenter | Qt::AlignBottom;
+            nameRect = QRectF(nameAnchor.x() - 40.0, nameAnchor.y() - 16.0, 80.0, 16.0);
         } else {
-            nameRect = QRectF(px - 40.0, endPt.y() + 4.0, 80.0, 16.0);
-            painter->drawText(nameRect, Qt::AlignHCenter | Qt::AlignTop, nameStr);
+            nameAnchor = readablePoint(QPointF(px, endPt.y() + 4.0));
+            nameAlign = Qt::AlignHCenter | Qt::AlignTop;
+            nameRect = QRectF(nameAnchor.x() - 40.0, nameAnchor.y(), 80.0, 16.0);
         }
+        painter->drawText(nameRect, nameAlign, nameStr);
     }
+
+    painter->restore();
 
     paintSelectionBorder(painter, option);
 }

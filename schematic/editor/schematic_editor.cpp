@@ -19,6 +19,7 @@
 #include "schematic_commands.h"
 #include "schematic_tool_registry_builtin.h"
 #include "schematic_item_registry.h"
+#include "../tools/schematic_component_tool.h"
 #include "../items/schematic_spice_directive_item.h"
 #include "../ui/simulation_setup_dialog.h"
 #include "../ui/simulation_panel.h"
@@ -451,6 +452,7 @@ void SchematicEditor::addSchematicTab(const QString& name) {
         }
     });
     connect(view, &SchematicView::itemDoubleClicked, this, &SchematicEditor::onItemDoubleClicked);
+    connect(view, &SchematicView::componentLabelDoubleClicked, this, &SchematicEditor::onComponentLabelDoubleClicked);
     connect(view, &SchematicView::itemPlaced, this, &SchematicEditor::onItemPlaced);
     connect(view, &SchematicView::itemSelectionDoubleClicked, this, &SchematicEditor::onSelectionDoubleClicked);
     connect(view, &SchematicView::editSimulationDirective, this, &SchematicEditor::onEditSimulationFromDirective);
@@ -465,6 +467,37 @@ void SchematicEditor::addSchematicTab(const QString& name) {
     connect(view, &SchematicView::toolChanged, this, [this](const QString& toolName) {
         if (m_toolActions.contains(toolName)) {
             m_toolActions[toolName]->setChecked(true);
+        }
+        // When a component placement tool is active, disable H/Shift+V QAction shortcuts
+        // so they reach the component tool's keyPressEvent instead of being consumed by
+        // the flip actions (which require a selection and do nothing for preview items).
+        bool isComponentTool = m_view && dynamic_cast<SchematicComponentTool*>(m_view->currentTool()) != nullptr;
+        if (isComponentTool && m_componentToolManipShortcuts.isEmpty()) {
+            for (QAction* action : m_manipActions) {
+                if (action && !action->shortcut().isEmpty()) {
+                    m_componentToolManipShortcuts[action] = action->shortcut();
+                    action->setShortcut(QKeySequence());
+                }
+            }
+            // Also disable tool shortcuts that conflict with placement keys (e.g. H).
+            for (auto it = m_toolActions.begin(); it != m_toolActions.end(); ++it) {
+                QAction* action = it.value();
+                if (!action || action->shortcut().isEmpty()) continue;
+                if (action->shortcut() == QKeySequence("H")) {
+                    m_componentToolToolShortcuts[action] = action->shortcut();
+                    action->setShortcut(QKeySequence());
+                }
+            }
+        } else if (!isComponentTool &&
+                   (!m_componentToolManipShortcuts.isEmpty() || !m_componentToolToolShortcuts.isEmpty())) {
+            for (auto it = m_componentToolManipShortcuts.begin(); it != m_componentToolManipShortcuts.end(); ++it) {
+                if (it.key()) it.key()->setShortcut(it.value());
+            }
+            m_componentToolManipShortcuts.clear();
+            for (auto it = m_componentToolToolShortcuts.begin(); it != m_componentToolToolShortcuts.end(); ++it) {
+                if (it.key()) it.key()->setShortcut(it.value());
+            }
+            m_componentToolToolShortcuts.clear();
         }
     });
 
@@ -1023,6 +1056,17 @@ void SchematicEditor::endMouseFollowPlacement(bool cancel) {
     }
     m_savedManipShortcuts.clear();
 
+    // If a component tool is still active, re-disable the manip shortcuts
+    // (they may have been saved as empty by beginMouseFollowPlacement)
+    if (m_view && dynamic_cast<SchematicComponentTool*>(m_view->currentTool()) != nullptr) {
+        for (auto it = m_componentToolManipShortcuts.begin(); it != m_componentToolManipShortcuts.end(); ++it) {
+            if (it.key()) it.key()->setShortcut(QKeySequence());
+        }
+        for (auto it = m_componentToolToolShortcuts.begin(); it != m_componentToolToolShortcuts.end(); ++it) {
+            if (it.key()) it.key()->setShortcut(QKeySequence());
+        }
+    }
+
     if (m_view) {
         m_view->removeEventFilter(this);
         m_view->viewport()->removeEventFilter(this);
@@ -1072,6 +1116,14 @@ void SchematicEditor::onToolSelected() {
     }
 
     m_view->setCurrentTool(toolName);
+    if (m_view) {
+        m_view->setFocusPolicy(Qt::StrongFocus);
+        if (m_view->viewport()) {
+            m_view->viewport()->setFocusPolicy(Qt::StrongFocus);
+            m_view->viewport()->setFocus(Qt::OtherFocusReason);
+        }
+        m_view->setFocus(Qt::OtherFocusReason);
+    }
 
     if (qobject_cast<SchematicProbeTool*>(m_view->currentTool()) ||
         toolName == "Oscilloscope Instrument" ||

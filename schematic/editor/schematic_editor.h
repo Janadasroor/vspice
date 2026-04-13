@@ -115,6 +115,7 @@ private Q_SLOTS:
     void updateCoordinates(QPointF pos);
     void onSelectionChanged();
     void onItemDoubleClicked(SchematicItem* item);
+    void onComponentLabelDoubleClicked(class GenericComponentItem* component, bool isReferenceLabel);
     void onItemPlaced(SchematicItem* item);
     void onSelectionDoubleClicked(const QList<SchematicItem*>& items);
     void openItemProperties(SchematicItem* item);
@@ -323,6 +324,9 @@ private:
     // Saved shortcuts during placement mode
     QMap<QAction*, QKeySequence> m_savedToolShortcuts;
     QMap<QAction*, QKeySequence> m_savedManipShortcuts;
+    // Saved shortcuts disabled during component tool (H/Shift+V) to prevent QAction interception
+    QMap<QAction*, QKeySequence> m_componentToolManipShortcuts;
+    QMap<QAction*, QKeySequence> m_componentToolToolShortcuts;
     QAction* m_runSimMenuAction;
     QAction* m_stopSimMenuAction;
     QAction* m_runSimToolbarAction;

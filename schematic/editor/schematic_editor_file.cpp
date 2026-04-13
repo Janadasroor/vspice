@@ -1578,7 +1578,7 @@ void SchematicEditor::onPlaceSymbolInSchematic(const SymbolDefinition& symbol) {
 
     // Calculate center of current view
     QPointF center = m_view->mapToScene(m_view->viewport()->rect().center());
-    
+
     // Create the item
     auto* item = new GenericComponentItem(symbol);
     const QString fallbackRef = m_view->getNextReference(symbol.referencePrefix());
@@ -1586,18 +1586,18 @@ void SchematicEditor::onPlaceSymbolInSchematic(const SymbolDefinition& symbol) {
     item->setReference(placement.baseRef);
     item->setUnit(placement.unit);
     item->setPos(center);
-    
+
     // Use undo stack for the addition
     m_undoStack->push(new AddItemCommand(m_scene, item));
-    
+
     // Select the new item and focus back to schematic
     m_scene->clearSelection();
     item->setSelected(true);
-    
+
     this->activateWindow();
     this->raise();
     m_view->setFocus();
-    
+
     QString placedRef = placement.baseRef;
     if (symbol.unitCount() > 1) {
         placedRef += ":" + unitSuffixForStatus(placement.unit);

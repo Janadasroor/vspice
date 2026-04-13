@@ -8,6 +8,7 @@
 #include "../items/generic_component_item.h"
 #include "../items/schematic_sheet_item.h"
 #include "schematic_commands.h"
+#include "../../symbols/items/symbol_primitive_item.h"
 #include "../dialogs/voltage_source_ltspice_dialog.h"
 #include "../dialogs/spice_directive_dialog.h"
 #include "../dialogs/current_source_ltspice_dialog.h"
@@ -970,6 +971,22 @@ void SchematicView::mouseDoubleClickEvent(QMouseEvent *event) {
                 return;
             }
 
+            // Check if we clicked on a SymbolTextItem (component label like "M1" or "NMOS")
+            using namespace Flux::Item;
+            if (auto* symbolText = dynamic_cast<SymbolTextItem*>(item)) {
+                // Find the parent GenericComponentItem
+                if (auto* parentComp = dynamic_cast<GenericComponentItem*>(symbolText->parentItem())) {
+                    // Determine if this is the reference label or value label.
+                    // SymbolTextItem is not a QObject, so use model text tokens as heuristic.
+                    const QString textToken = symbolText->model().data.value("text").toString();
+                    const QString upper = textToken.toUpper();
+                    const bool isReference = upper.contains("REFERENCE") || upper.contains("REF");
+                    Q_EMIT componentLabelDoubleClicked(parentComp, isReference);
+                    event->accept();
+                    return;
+                }
+            }
+
             // Find the appropriate SchematicItem to handle the click
             SchematicItem* target = nullptr;
             QGraphicsItem* curr = item;
@@ -1018,20 +1035,39 @@ void SchematicView::mouseDoubleClickEvent(QMouseEvent *event) {
 }
 
 void SchematicView::keyPressEvent(QKeyEvent *event) {
-    // Forward H/Shift+V/Ctrl+R to component tool BEFORE global shortcuts consume them
+    // Reserve placement transform keys for component placement tools.
+    // Always consume H/Shift+V/Ctrl+R here so they never fall through to global shortcuts.
     if (m_currentTool && dynamic_cast<SchematicComponentTool*>(m_currentTool)) {
-        if ((event->key() == Qt::Key_H && !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) ||
-            (event->key() == Qt::Key_V && (event->modifiers() & Qt::ShiftModifier) && !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) ||
-            (event->key() == Qt::Key_R && (event->modifiers() & Qt::ControlModifier))) {
+        const bool isBareH = (event->key() == Qt::Key_H &&
+                              !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)));
+        const bool isShiftV = (event->key() == Qt::Key_V &&
+                               (event->modifiers() & Qt::ShiftModifier) &&
+                               !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)));
+        const bool isCtrlR = (event->key() == Qt::Key_R && (event->modifiers() & Qt::ControlModifier));
+        if (isBareH || isShiftV || isCtrlR) {
             m_currentTool->keyPressEvent(event);
-            if (event->isAccepted()) return;
+            event->accept();
+            return;
         }
     }
 
     if (event->key() == Qt::Key_H && !event->isAutoRepeat()) {
-        setHandToolActive(!m_handToolActive);
-        event->accept();
-        return;
+        // Do not let the global Hand toggle steal `H` while placing parts.
+        if (SchematicEditor* editor = qobject_cast<SchematicEditor*>(window())) {
+            if (editor->isPlacementModeActive()) {
+                // Placement mode key handling is owned by SchematicEditor::eventFilter.
+                // Consume here as a safety net so it never toggles Hand/cancels placement.
+                event->accept();
+                return;
+            } else {
+                setHandToolActive(!m_handToolActive);
+                event->accept();
+            }
+        } else {
+            setHandToolActive(!m_handToolActive);
+            event->accept();
+        }
+        if (event->isAccepted()) return;
     }
 
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {

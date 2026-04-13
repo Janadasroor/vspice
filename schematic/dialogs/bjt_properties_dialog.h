@@ -25,6 +25,7 @@ private Q_SLOTS:
     void updateCommandPreview();
     void applyChanges();
     void pickFootprint();
+    void autoMatchModel();
 
 private:
     void setupUI();

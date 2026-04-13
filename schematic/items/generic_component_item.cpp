@@ -202,6 +202,7 @@ void GenericComponentItem::rebuildPrimitives() {
             case SymbolPrimitive::Text: {
                 auto* t = new SymbolTextItem(prim, this);
                 t->setSymbolContext(name(), reference(), value());
+                t->setKeepUpright(true);
                 visual = t;
                 break;
             }
@@ -217,6 +218,7 @@ void GenericComponentItem::rebuildPrimitives() {
             m_primitiveItems.append(visual);
         }
     }
+    syncReadablePrimitiveText();
     update();
 }
 
@@ -280,6 +282,23 @@ void GenericComponentItem::paint(QPainter *painter, const QStyleOptionGraphicsIt
 
     // Highlight pins if requested (e.g. for connectivity)
     drawConnectionPointHighlights(painter);
+}
+
+QVariant GenericComponentItem::itemChange(GraphicsItemChange change, const QVariant& value) {
+    const QVariant result = SchematicItem::itemChange(change, value);
+    if (change == QGraphicsItem::ItemRotationHasChanged ||
+        change == QGraphicsItem::ItemTransformHasChanged) {
+        syncReadablePrimitiveText();
+    }
+    return result;
+}
+
+void GenericComponentItem::syncReadablePrimitiveText() {
+    for (auto* item : m_primitiveItems) {
+        if (auto* textItem = dynamic_cast<SymbolTextItem*>(item)) {
+            textItem->syncUprightTransform();
+        }
+    }
 }
 
 void GenericComponentItem::setPinMode(int pinNumber, int modeIndex) {

@@ -21,6 +21,7 @@
 #include "../ui/schematic_minimap.h"
 #include "../../symbols/symbol_library.h"
 #include "../dialogs/simulation_debugger_dialog.h"
+#include "../dialogs/pre_simulation_validation_dialog.h"
 #include "../dialogs/circuit_template_gallery.h"
 #include <QTreeWidget>
 #include <QHeaderView>
@@ -1038,7 +1039,7 @@ void SchematicEditor::createToolBar() {
     };
 
     // Wiring Tools
-    addSchTool("Hand", "Pan (Hand Tool) [H]", "tool_select", "H"); // Using tool_select icon until hand icon is added
+    addSchTool("Hand", "Pan (Hand Tool)", "tool_select"); // Hand tool toggle via H key handled in SchematicView::keyPressEvent
     addSchTool("Select", "Select", "tool_select", "Esc");
     addSchTool("Probe", "Probe Signal", "tool_probe", "K");
     addSchTool("Voltage Probe", "Voltage Probe", "tool_voltage_probe", "Shift+K");
@@ -1053,7 +1054,7 @@ void SchematicEditor::createToolBar() {
     addSchTool("Bus Entry", "Place Bus Entry", "tool_bus_entry", "");
     addSchTool("Net Label", "Place Net Label (Local)", "tool_net_label", "N");
     addSchTool("Global Label", "Place Global Label", "tool_global_label", "Ctrl+L");
-    addSchTool("Hierarchical Port", "Place Hierarchical Port", "tool_hierarchical_port", "H");
+    addSchTool("Hierarchical Port", "Place Hierarchical Port", "tool_hierarchical_port");
     addSchTool("Sheet", "Place Hierarchical Sheet", "tool_sheet", "Shift+S");
     addSchTool("No-Connect", "No-Connect Flag", "tool_no_connect", "X");
     addSchTool("GND", "Place Power GND", "comp_gnd", "G");
@@ -1262,6 +1263,14 @@ void SchematicEditor::createDockWidgets() {
     connect(m_componentsPanel, &SchematicComponentsWidget::toolSelected, [this](const QString& toolName) {
         if (!toolName.isEmpty()) {
             m_view->setCurrentTool(toolName);
+            if (m_view) {
+                m_view->setFocusPolicy(Qt::StrongFocus);
+                if (m_view->viewport()) {
+                    m_view->viewport()->setFocusPolicy(Qt::StrongFocus);
+                    m_view->viewport()->setFocus(Qt::OtherFocusReason);
+                }
+                m_view->setFocus(Qt::OtherFocusReason);
+            }
             statusBar()->showMessage("" + toolName + " tool selected", 2000);
         }
     });
@@ -1275,7 +1284,8 @@ void SchematicEditor::createDockWidgets() {
         auto* item = new GenericComponentItem(symbol);
         item->setPos(center);
         m_undoStack->push(new AddItemCommand(m_scene, item));
-        statusBar()->showMessage("Placed symbol: " + symbol.name(), 3000);
+        // Enter mouse-follow placement mode so user can rotate/flip before finalizing
+        beginMouseFollowPlacement({item}, "Place " + symbol.name());
     });
 
     connect(m_componentsPanel, &SchematicComponentsWidget::modelAssignmentRequested, this, &SchematicEditor::onAssignModel);
@@ -2224,9 +2234,12 @@ void SchematicEditor::onRunSimulation() {
         m_logicEditorPanel->flushEdits();
     }
 
-    // Auto-annotate if duplicate references exist (prevents netlist collisions like V1/V1/V1).
+    // Auto-annotate if duplicate references exist OR unannotated components found (prevents netlist collisions).
     {
         QMap<QString, QList<SchematicItem*>> refs;
+        int unannotatedCount = 0;
+        int emptyRefCount = 0;
+
         for (auto* gi : m_scene->items()) {
             auto* si = dynamic_cast<SchematicItem*>(gi);
             if (!si) continue;
@@ -2242,9 +2255,48 @@ void SchematicEditor::onRunSimulation() {
                 continue;
             }
             const QString ref = si->reference().trimmed();
-            if (ref.isEmpty()) continue;
-            refs[ref.toUpper()].append(si);
+            if (ref.isEmpty()) {
+                emptyRefCount++;
+                continue;
+            }
+            if (ref.contains("?")) {
+                // Exclude special items that don't need annotation
+                QString typeName = si->itemTypeName().toLower();
+                if (typeName.contains("ground") || 
+                    typeName.contains("gnd") || 
+                    typeName.contains("spice directive") ||
+                    typeName.contains("power") ||
+                    typeName.contains("vcc") ||
+                    typeName.contains("vdd")) {
+                    continue; // Don't count these as unannotated
+                }
+                unannotatedCount++;
+            } else {
+                refs[ref.toUpper()].append(si);
+            }
         }
+
+        qDebug() << "[SchematicEditor] Pre-sim annotation check: unannotated=" << unannotatedCount << "empty_ref=" << emptyRefCount;
+
+        // Debug: Show what types are unannotated
+        QMap<QString, int> unannotatedByType;
+        for (auto* gi : m_scene->items()) {
+            auto* si = dynamic_cast<SchematicItem*>(gi);
+            if (!si) continue;
+            const int t = si->itemType();
+            if (t == SchematicItem::WireType || t == SchematicItem::LabelType || t == SchematicItem::NetLabelType ||
+                t == SchematicItem::JunctionType || t == SchematicItem::NoConnectType || t == SchematicItem::BusType ||
+                t == SchematicItem::SheetType || t == SchematicItem::HierarchicalPortType) {
+                continue;
+            }
+            const QString ref = si->reference().trimmed();
+            if (!ref.isEmpty() && ref.contains("?")) {
+                QString typeName = si->itemTypeName();
+                if (typeName.isEmpty()) typeName = QString("Type_%1").arg(t);
+                unannotatedByType[typeName]++;
+            }
+        }
+        qDebug() << "[SchematicEditor] Unannotated by type:" << unannotatedByType;
 
         auto isValidMultiUnitPack = [](const QList<SchematicItem*>& items) -> bool {
             if (items.size() <= 1) return false;
@@ -2281,7 +2333,13 @@ void SchematicEditor::onRunSimulation() {
             hasDup = true;
             break;
         }
-        if (hasDup) {
+        
+        // Auto-annotate if duplicates found OR unannotated components exist
+        if (hasDup || unannotatedCount > 0) {
+            if (unannotatedCount > 0) {
+                statusBar()->showMessage(QString("Auto-annotating %1 unannotated component(s)...").arg(unannotatedCount), 2000);
+            }
+            qDebug() << "[SchematicEditor] Calling onAnnotate() - hasDup=" << hasDup << "unannotated=" << unannotatedCount;
             onAnnotate();
         }
     }
@@ -2356,13 +2414,166 @@ void SchematicEditor::onRunSimulation() {
             }
         }
     }
-    
-    // 1. Preflight check and Debugger (TODO: Move this to a background thread)
-    // We'll skip the heavy preflightCheck on the UI thread to prevent the freeze.
-    /*
-    SimNetlist netlist;
-    QStringList diagnostics = SimManager::instance().preflightCheck(m_scene, m_netManager, netlist);
-    */
+
+    // Pre-simulation validation: Lightweight checks for current tab only
+    {
+        // Helper lambda to create ERC exclusion keys
+        auto ercViolationKey = [](const ERCViolation& v) -> QString {
+            const int px = int(std::round(v.position.x()));
+            const int py = int(std::round(v.position.y()));
+            return QString("%1|%2|%3|%4|%5")
+                .arg(int(v.severity))
+                .arg(int(v.category))
+                .arg(v.netName.trimmed())
+                .arg(px)
+                .arg(py) + "|" + v.message.trimmed();
+        };
+
+        QList<ValidationIssue> validationIssues;
+
+        // 1. Lightweight local ERC check (current scene only, no recursive sub-sheet loading)
+        {
+            QList<ERCViolation> localViolations;
+            
+            // Run targeted checks on current scene only
+            NetManager* localNM = m_netManager;
+            bool ownNM = false;
+            if (!localNM) {
+                localNM = new NetManager();
+                ownNM = true;
+            }
+            localNM->updateNets(m_scene);
+
+            // Check duplicate references in current tab only
+            QMap<QString, int> refCounts;
+            for (QGraphicsItem* item : m_scene->items()) {
+                if (SchematicItem* si = dynamic_cast<SchematicItem*>(item)) {
+                    const int t = si->itemType();
+                    if (t == SchematicItem::WireType || t == SchematicItem::BusType ||
+                        t == SchematicItem::JunctionType || t == SchematicItem::LabelType ||
+                        t == SchematicItem::HierarchicalPortType || t == SchematicItem::NoConnectType) {
+                        continue;
+                    }
+                    QString ref = si->reference().trimmed();
+                    if (ref.isEmpty() || ref.contains("?")) continue;
+                    refCounts[ref.toUpper()]++;
+                }
+            }
+            
+            for (auto it = refCounts.constBegin(); it != refCounts.constEnd(); ++it) {
+                if (it.value() > 1) {
+                    ERCViolation v;
+                    v.severity = ERCViolation::Error;
+                    v.category = ERCViolation::Annotation;
+                    v.message = QString("Duplicate reference designator: '%1' appears %2 times").arg(it.key()).arg(it.value());
+                    v.position = QPointF(0, 0);
+                    v.item = nullptr;
+                    localViolations.append(v);
+                }
+            }
+
+            // Check for unannotated components (with ? in reference)
+            // Exclude special items that don't need annotation like GND, directives, etc.
+            int unannotatedCount = 0;
+            for (QGraphicsItem* item : m_scene->items()) {
+                if (SchematicItem* si = dynamic_cast<SchematicItem*>(item)) {
+                    const int t = si->itemType();
+                    if (t == SchematicItem::WireType || t == SchematicItem::BusType ||
+                        t == SchematicItem::JunctionType || t == SchematicItem::LabelType ||
+                        t == SchematicItem::HierarchicalPortType || t == SchematicItem::NoConnectType ||
+                        t == SchematicItem::SheetType) {
+                        continue;
+                    }
+                    
+                    // Skip special items that don't need numeric annotation
+                    QString typeName = si->itemTypeName().toLower();
+                    if (typeName.contains("ground") || 
+                        typeName.contains("gnd") || 
+                        typeName.contains("spice directive") ||
+                        typeName.contains("power") ||
+                        typeName.contains("vcc") ||
+                        typeName.contains("vdd")) {
+                        continue;
+                    }
+                    
+                    QString ref = si->reference().trimmed();
+                    if (ref.contains("?")) {
+                        unannotatedCount++;
+                    }
+                }
+            }
+
+            qDebug() << "[SchematicEditor] Validation check: unannotated=" << unannotatedCount;
+
+            if (unannotatedCount > 0) {
+                ERCViolation v;
+                v.severity = ERCViolation::Warning;
+                v.category = ERCViolation::Annotation;
+                v.message = QString("%1 unannotated component(s) found").arg(unannotatedCount);
+                v.position = QPointF(0, 0);
+                v.item = nullptr;
+                localViolations.append(v);
+            }
+
+            // Convert to validation issues
+            for (const auto& v : localViolations) {
+                const QString key = ercViolationKey(v);
+                if (m_ercExclusions.contains(key)) {
+                    continue; // Skip excluded violations
+                }
+
+                ValidationIssue issue;
+                issue.category = "ERC";
+                issue.message = v.message;
+                if (!v.netName.isEmpty()) {
+                    issue.message += QString(" (Net: %1)").arg(v.netName);
+                }
+
+                switch (v.severity) {
+                    case ERCViolation::Critical:
+                        issue.severity = ValidationIssue::Error;
+                        issue.message = "[CRITICAL] " + issue.message;
+                        break;
+                    case ERCViolation::Error:
+                        issue.severity = ValidationIssue::Error;
+                        break;
+                    case ERCViolation::Warning:
+                    default:
+                        issue.severity = ValidationIssue::Warning;
+                        break;
+                }
+
+                validationIssues.append(issue);
+            }
+
+            if (ownNM) {
+                delete localNM;
+            }
+        }
+
+        // Note: Preflight bridge check removed - it loads all model libraries and is slow
+        // The SimulationPanel background task already runs this check and collects diagnostics
+
+        // Show validation dialog if there are any issues
+        if (!validationIssues.isEmpty()) {
+            PreSimulationValidationDialog dlg(this);
+            dlg.addIssues(validationIssues);
+
+            // If there are errors, user cannot proceed
+            if (dlg.hasErrors()) {
+                dlg.exec();
+                updateSimulationUiState(false, "Simulation aborted due to errors");
+                return;
+            }
+
+            // If only warnings, show dialog but allow proceeding
+            dlg.exec();
+            if (!dlg.shouldProceed()) {
+                updateSimulationUiState(false, "Simulation aborted by user");
+                return;
+            }
+        }
+    }
 
     if (m_simulationPanel) {
         const auto cfg = m_simulationPanel->getAnalysisConfig();

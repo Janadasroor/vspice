@@ -31,6 +31,8 @@ void SchematicItem::createLabels(const QPointF& refOffset, const QPointF& valOff
         m_refLabelItem->setSubItem(true);
         m_refLabelItem->setPos(refOffset);
         m_refLabelItem->setFont(QFont("Inter", 10, QFont::Bold));
+        m_refLabelItem->setKeepUpright(true);
+        m_refLabelItem->syncUprightTransform();
         m_refLabelItem->setName("RefLabel");
     }
     if (!m_valueLabelItem) {
@@ -41,6 +43,8 @@ void SchematicItem::createLabels(const QPointF& refOffset, const QPointF& valOff
         m_valueLabelItem->setSubItem(true);
         m_valueLabelItem->setPos(valOffset);
         m_valueLabelItem->setFont(QFont("Inter", 9));
+        m_valueLabelItem->setKeepUpright(true);
+        m_valueLabelItem->syncUprightTransform();
         m_valueLabelItem->setName("ValueLabel");
     }
     updateLabelRotation();
@@ -49,11 +53,13 @@ void SchematicItem::createLabels(const QPointF& refOffset, const QPointF& valOff
 void SchematicItem::resetLabels() {
     if (m_refLabelItem) {
         m_refLabelItem->setPos(m_defaultRefOffset);
-        m_refLabelItem->setRotation(-rotation());
+        m_refLabelItem->setRotation(m_refLabelItem->keepUpright() ? 0.0 : -rotation());
+        m_refLabelItem->syncUprightTransform();
     }
     if (m_valueLabelItem) {
         m_valueLabelItem->setPos(m_defaultValOffset);
-        m_valueLabelItem->setRotation(-rotation());
+        m_valueLabelItem->setRotation(m_valueLabelItem->keepUpright() ? 0.0 : -rotation());
+        m_valueLabelItem->syncUprightTransform();
     }
     update();
 }
@@ -94,7 +100,11 @@ void SchematicItem::setValueLabelPos(const QPointF& p) {
 }
 
 QVariant SchematicItem::itemChange(GraphicsItemChange change, const QVariant& value) {
-    if (!m_isSubItem && change == QGraphicsItem::ItemRotationHasChanged) {
+    if (!m_isSubItem &&
+        (change == QGraphicsItem::ItemRotationHasChanged ||
+         change == QGraphicsItem::ItemTransformHasChanged)) {
+        updateLabelRotation();
+    } else if (!m_isSubItem && change == QGraphicsItem::ItemPositionHasChanged) {
         updateLabelRotation();
     }
     return QGraphicsItem::itemChange(change, value);
@@ -103,8 +113,27 @@ QVariant SchematicItem::itemChange(GraphicsItemChange change, const QVariant& va
 void SchematicItem::updateLabelRotation() {
     if (m_isSubItem) return;
     const qreal rot = rotation();
-    if (m_refLabelItem) m_refLabelItem->setRotation(-rot);
-    if (m_valueLabelItem) m_valueLabelItem->setRotation(-rot);
+    if (m_refLabelItem) {
+        m_refLabelItem->setRotation(m_refLabelItem->keepUpright() ? 0.0 : -rot);
+        m_refLabelItem->syncUprightTransform();
+    }
+    if (m_valueLabelItem) {
+        m_valueLabelItem->setRotation(m_valueLabelItem->keepUpright() ? 0.0 : -rot);
+        m_valueLabelItem->syncUprightTransform();
+    }
+}
+
+void SchematicItem::updateMirrorTransform() {
+    if (m_isSubItem) return;
+
+    const QRectF bounds = boundingRect();
+    if (bounds.isValid() && !bounds.isEmpty()) {
+        setTransformOriginPoint(bounds.center());
+    }
+
+    QTransform mirror;
+    mirror.scale(m_isMirroredX ? -1.0 : 1.0, m_isMirroredY ? -1.0 : 1.0);
+    setTransform(mirror, false);
 }
 
 void SchematicItem::drawConnectionPointHighlights(QPainter* painter) const {

@@ -43,7 +43,8 @@ void BjtPropertiesDialog::setupUI() {
     {
         QStringList bjtModels;
         for (const auto& info : ModelLibraryManager::instance().allModels()) {
-            if (info.type == "NPN" || info.type == "PNP") {
+            QString t = info.type.toUpper();
+            if (t == "NPN" || t == "PNP") {
                 bjtModels.append(info.name);
             }
         }
@@ -131,6 +132,7 @@ void BjtPropertiesDialog::setupUI() {
     };
 
     connectPreview(m_modelNameEdit);
+    connect(m_modelNameEdit, &QLineEdit::editingFinished, this, &BjtPropertiesDialog::autoMatchModel);
     connect(m_typeCombo, &QComboBox::currentTextChanged, this, [this]() {
         if (m_pickModelButton) {
             m_pickModelButton->setText(isPnpSelected() ? "Pick PNP Model" : "Pick NPN Model");
@@ -176,9 +178,12 @@ void BjtPropertiesDialog::loadValues() {
         m_typeCombo->setCurrentText(pnp ? "PNP" : "NPN");
     }
 
-    QString modelName = m_item->value().trimmed();
-    if (modelName.isEmpty() || modelName.compare("NPN", Qt::CaseInsensitive) == 0 || modelName.compare("PNP", Qt::CaseInsensitive) == 0) {
-        modelName = defaultModel;
+    QString modelName = m_item->spiceModel().trimmed();
+    if (modelName.isEmpty()) {
+        modelName = m_item->value().trimmed();
+        if (modelName.isEmpty() || modelName.compare("NPN", Qt::CaseInsensitive) == 0 || modelName.compare("PNP", Qt::CaseInsensitive) == 0) {
+            modelName = defaultModel;
+        }
     }
     m_modelNameEdit->setText(modelName);
 
@@ -252,6 +257,45 @@ void BjtPropertiesDialog::updateCommandPreview() {
 
     const QString bjtType = isPnpSelected() ? "PNP" : "NPN";
     m_commandPreview->setText(QString(".model %1 %2(%3)").arg(model, bjtType, params.join(" ")));
+}
+
+void BjtPropertiesDialog::autoMatchModel() {
+    const QString name = m_modelNameEdit->text().trimmed();
+    if (name.isEmpty()) return;
+
+    const SimModel* mdl = ModelLibraryManager::instance().findModel(name);
+    if (!mdl) return;
+
+    bool typeMatch = false;
+    if (mdl->type == SimComponentType::BJT_NPN && m_typeCombo->currentText() == "NPN") typeMatch = true;
+    if (mdl->type == SimComponentType::BJT_PNP && m_typeCombo->currentText() == "PNP") typeMatch = true;
+    if (!typeMatch) return;
+
+    auto getParam = [&](const QString& key, const QString& fallback) {
+        for (const auto& kv : mdl->params) {
+            if (QString::fromStdString(kv.first).compare(key, Qt::CaseInsensitive) == 0) {
+                return QString::number(kv.second, 'g', 12);
+            }
+        }
+        return fallback;
+    };
+
+    auto setIfDefault = [&](QLineEdit* edit, const QString& key, const QString& defaultVal) {
+        const QString current = edit->text().trimmed();
+        if (current == defaultVal || current.isEmpty()) {
+            edit->setText(getParam(key, defaultVal));
+        }
+    };
+
+    setIfDefault(m_isEdit, "Is", "1e-14");
+    setIfDefault(m_bfEdit, "Bf", "100");
+    setIfDefault(m_vafEdit, "Vaf", "100");
+    setIfDefault(m_cjeEdit, "Cje", "8p");
+    setIfDefault(m_cjcEdit, "Cjc", "3p");
+    setIfDefault(m_tfEdit, "Tf", "400p");
+    setIfDefault(m_trEdit, "Tr", "100n");
+
+    updateCommandPreview();
 }
 
 void BjtPropertiesDialog::applyChanges() {

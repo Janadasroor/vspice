@@ -165,6 +165,7 @@ public:
     void setMirroredX(bool mirrored) { 
         m_isMirroredX = mirrored; 
         rebuildPrimitives();
+        updateMirrorTransform();
         update(); 
     }
 
@@ -172,6 +173,7 @@ public:
     void setMirroredY(bool mirrored) { 
         m_isMirroredY = mirrored; 
         rebuildPrimitives();
+        updateMirrorTransform();
         update(); 
     }
 
@@ -270,6 +272,7 @@ protected:
 
 private:
     void updateLabelRotation();
+    void updateMirrorTransform();
 
 protected:
     QUuid m_id;

@@ -77,7 +77,7 @@ void DiodePropertiesDialog::setupUI() {
     {
         QStringList diodeModels;
         for (const auto& info : ModelLibraryManager::instance().allModels()) {
-            if (info.type == "Diode") {
+            if (info.type.toUpper() == "DIODE") {
                 diodeModels.append(info.name);
             }
         }
@@ -203,6 +203,7 @@ void DiodePropertiesDialog::setupUI() {
 
     // Connect all fields to preview update
     connect(m_modelNameEdit, &QLineEdit::textChanged, this, &DiodePropertiesDialog::updateCommandPreview);
+    connect(m_modelNameEdit, &QLineEdit::editingFinished, this, &DiodePropertiesDialog::autoMatchModel);
     connect(m_isEdit, &QLineEdit::textChanged, this, &DiodePropertiesDialog::updateCommandPreview);
     connect(m_nEdit, &QLineEdit::textChanged, this, &DiodePropertiesDialog::updateCommandPreview);
     connect(m_rsEdit, &QLineEdit::textChanged, this, &DiodePropertiesDialog::updateCommandPreview);
@@ -287,6 +288,39 @@ void DiodePropertiesDialog::fillFromModel(const QString& modelName) {
     m_ttEdit->setText(getParam("tt", "0"));
     m_bvEdit->setText(getParam("BV", ""));
     m_ibvEdit->setText(getParam("IBV", ""));
+
+    updateCommandPreview();
+}
+
+void DiodePropertiesDialog::autoMatchModel() {
+    const QString name = m_modelNameEdit->text().trimmed();
+    if (name.isEmpty()) return;
+
+    const SimModel* mdl = ModelLibraryManager::instance().findModel(name);
+    if (!mdl) return;
+
+    auto getParam = [&](const std::string& key, const QString& defaultVal) {
+        auto it = mdl->params.find(key);
+        if (it != mdl->params.end()) {
+            return QString::number(it->second, 'g', 12);
+        }
+        return defaultVal;
+    };
+
+    auto setIfDefault = [&](QLineEdit* edit, const std::string& key, const QString& defaultVal) {
+        const QString current = edit->text().trimmed();
+        if (current == defaultVal || current.isEmpty()) {
+            edit->setText(getParam(key, defaultVal));
+        }
+    };
+
+    setIfDefault(m_isEdit, "Is", "1e-14");
+    setIfDefault(m_nEdit, "N", "1.0");
+    setIfDefault(m_rsEdit, "Rs", "0");
+    setIfDefault(m_vjEdit, "Vj", "0.7");
+    setIfDefault(m_cjoEdit, "Cjo", "0");
+    setIfDefault(m_mEdit, "M", "0.5");
+    setIfDefault(m_ttEdit, "tt", "0");
 
     updateCommandPreview();
 }

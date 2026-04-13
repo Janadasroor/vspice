@@ -62,6 +62,7 @@ bool SchematicTextItem::fromJson(const QJsonObject& json) {
     if (json.contains("rotation")) setRotation(json["rotation"].toDouble());
     applyThemeColor();
     recalcBounds();
+    syncUprightTransform();
     return true;
 }
 
@@ -119,4 +120,19 @@ void SchematicTextItem::applyThemeColor() {
     } else {
         m_color = Qt::white;
     }
+}
+
+void SchematicTextItem::syncUprightTransform() {
+    if (!m_keepUpright || !parentItem()) {
+        setTransform(QTransform(), false);
+        return;
+    }
+
+    const QTransform parentScene = parentItem()->sceneTransform();
+    const QTransform parentLinear(parentScene.m11(), parentScene.m12(), 0.0,
+                                  parentScene.m21(), parentScene.m22(), 0.0,
+                                  0.0, 0.0, 1.0);
+    bool invertible = false;
+    const QTransform invLinear = parentLinear.inverted(&invertible);
+    setTransform(invertible ? invLinear : QTransform(), false);
 }

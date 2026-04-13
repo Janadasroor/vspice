@@ -1701,6 +1701,16 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
                             for (const QPointF& p : orig) moved.append(p + totalMove);
                             wire->setPoints(moved);
                         }
+                    } else if (sItem->itemType() == SchematicItem::LabelType ||
+                               sItem->itemType() == SchematicItem::NetLabelType) {
+                        if (QGraphicsItem* parent = sItem->parentItem()) {
+                            const QPointF initialScene = parent->mapToScene(m_initialPositions[sItem]);
+                            const QPointF targetScene = initialScene + totalMove;
+                            sItem->setPos(parent->mapFromScene(targetScene));
+                        } else {
+                            QPointF initialPos = m_initialPositions[sItem];
+                            sItem->setPos(initialPos + totalMove);
+                        }
                     } else {
                         QPointF initialPos = m_initialPositions[sItem];
                         QPointF targetPos = initialPos + totalMove;
@@ -1723,6 +1733,16 @@ void SchematicSelectTool::mouseMoveEvent(QMouseEvent* event) {
                             QList<QPointF> moved;
                             for (const QPointF& p : orig) moved.append(p + totalMove);
                             wire->setPoints(moved);
+                        }
+                    } else if (sItem->itemType() == SchematicItem::LabelType ||
+                               sItem->itemType() == SchematicItem::NetLabelType) {
+                        if (QGraphicsItem* parent = sItem->parentItem()) {
+                            const QPointF initialScene = parent->mapToScene(m_initialPositions[sItem]);
+                            const QPointF targetScene = initialScene + totalMove;
+                            sItem->setPos(parent->mapFromScene(targetScene));
+                        } else {
+                            QPointF initialPos = m_initialPositions[sItem];
+                            sItem->setPos(initialPos + totalMove);
                         }
                     } else {
                         QPointF initialPos = m_initialPositions[sItem];

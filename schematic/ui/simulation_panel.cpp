@@ -21,6 +21,7 @@
 #include "../analysis/net_manager.h"
 #include "../editor/schematic_editor.h"
 #include "../dialogs/spice_step_dialog.h"
+#include "../dialogs/pre_simulation_validation_dialog.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -3207,6 +3208,44 @@ void SimulationPanel::onRunSimulation() {
             config.tStop = tStop;
             config.tStep = tStep;
             break;
+        }
+
+        // Pre-simulation validation: Show dialog if there are diagnostics
+        if (!result.diagnostics.isEmpty()) {
+            QList<ValidationIssue> issues;
+            for (const auto& diag : result.diagnostics) {
+                ValidationIssue issue;
+                issue.message = diag;
+                issue.category = "Preflight";
+
+                if (diag.contains("[error]") || diag.contains("Error", Qt::CaseInsensitive)) {
+                    issue.severity = ValidationIssue::Error;
+                } else if (diag.contains("[warn]") || diag.contains("Warn", Qt::CaseInsensitive)) {
+                    issue.severity = ValidationIssue::Warning;
+                } else {
+                    issue.severity = ValidationIssue::Info;
+                }
+
+                issues.append(issue);
+            }
+
+            PreSimulationValidationDialog dlg(this);
+            dlg.addIssues(issues);
+
+            // Block and show dialog
+            if (dlg.hasErrors()) {
+                // Has errors - user cannot proceed
+                dlg.exec();
+                m_logOutput->append("Simulation aborted due to preflight errors");
+                return;
+            }
+
+            // Has warnings/info - allow user to proceed or abort
+            dlg.exec();
+            if (!dlg.shouldProceed()) {
+                m_logOutput->append("Simulation aborted by user");
+                return;
+            }
         }
 
         SimManager::instance().runNgspiceSimulation(result.netlistText, config);

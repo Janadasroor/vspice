@@ -35,6 +35,10 @@ public:
     
     void setAlignment(Qt::Alignment align) { m_alignment = align; update(); }
     Qt::Alignment alignment() const { return m_alignment; }
+
+    void setKeepUpright(bool keep) { m_keepUpright = keep; update(); }
+    bool keepUpright() const { return m_keepUpright; }
+    void syncUprightTransform();
     
 private:
     void recalcBounds();
@@ -44,6 +48,7 @@ private:
     QFont m_font;
     QColor m_color;
     bool m_useThemeColor = true;
+    bool m_keepUpright = false;
     Qt::Alignment m_alignment;
     QRectF m_cachedBounds;
 };

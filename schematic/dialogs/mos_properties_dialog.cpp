@@ -43,7 +43,8 @@ void MosPropertiesDialog::setupUI() {
     {
         QStringList mosModels;
         for (const auto& info : ModelLibraryManager::instance().allModels()) {
-            if (info.type == "NMOS" || info.type == "PMOS") {
+            QString t = info.type.toUpper();
+            if (t == "NMOS" || t == "PMOS" || t == "VDMOS" || t == "NMF" || t == "PMF") {
                 mosModels.append(info.name);
             }
         }
@@ -131,6 +132,7 @@ void MosPropertiesDialog::setupUI() {
     };
 
     connectPreview(m_modelNameEdit);
+    connect(m_modelNameEdit, &QLineEdit::editingFinished, this, &MosPropertiesDialog::autoMatchModel);
     connect(m_typeCombo, &QComboBox::currentTextChanged, this, [this]() {
         if (m_pickModelButton) {
             m_pickModelButton->setText(isPmosSelected() ? "Pick PMOS Model" : "Pick NMOS Model");
@@ -174,9 +176,12 @@ void MosPropertiesDialog::loadValues() {
         m_typeCombo->setCurrentText(pmos ? "PMOS" : "NMOS");
     }
 
-    QString modelName = m_item->value().trimmed();
-    if (modelName.isEmpty() || modelName.compare("NMOS", Qt::CaseInsensitive) == 0 || modelName.compare("PMOS", Qt::CaseInsensitive) == 0) {
-        modelName = defaultModel;
+    QString modelName = m_item->spiceModel().trimmed();
+    if (modelName.isEmpty()) {
+        modelName = m_item->value().trimmed();
+        if (modelName.isEmpty() || modelName.compare("NMOS", Qt::CaseInsensitive) == 0 || modelName.compare("PMOS", Qt::CaseInsensitive) == 0) {
+            modelName = defaultModel;
+        }
     }
     m_modelNameEdit->setText(modelName);
 
@@ -225,6 +230,48 @@ void MosPropertiesDialog::fillFromModel(const QString& modelName) {
     m_rsEdit->setText(getParam("Rs", "1"));
     m_cgsoEdit->setText(getParam("Cgso", "50p"));
     m_cgdoEdit->setText(getParam("Cgdo", "50p"));
+
+    updateCommandPreview();
+}
+
+void MosPropertiesDialog::autoMatchModel() {
+    const QString name = m_modelNameEdit->text().trimmed();
+    if (name.isEmpty()) return;
+
+    const SimModel* mdl = ModelLibraryManager::instance().findModel(name);
+    if (!mdl) return;
+
+    // Only auto-fill if the model matches the selected type
+    bool typeMatch = false;
+    if (mdl->type == SimComponentType::MOSFET_NMOS && m_typeCombo->currentText() == "NMOS") typeMatch = true;
+    if (mdl->type == SimComponentType::MOSFET_PMOS && m_typeCombo->currentText() == "PMOS") typeMatch = true;
+    if (!typeMatch) return;
+
+    auto getParam = [&](const QString& key, const QString& fallback) {
+        for (const auto& kv : mdl->params) {
+            if (QString::fromStdString(kv.first).compare(key, Qt::CaseInsensitive) == 0) {
+                return QString::number(kv.second, 'g', 12);
+            }
+        }
+        return fallback;
+    };
+
+    // Only overwrite fields that are still at default values
+    auto setIfDefault = [&](QLineEdit* edit, const QString& key, const QString& defaultVal) {
+        const QString current = edit->text().trimmed();
+        if (current == defaultVal || current.isEmpty()) {
+            edit->setText(getParam(key, defaultVal));
+        }
+    };
+
+    const QString defVto = isPmosSelected() ? "-2" : "2";
+    setIfDefault(m_vtoEdit, "Vto", defVto);
+    setIfDefault(m_kpEdit, "Kp", "100u");
+    setIfDefault(m_lambdaEdit, "Lambda", "0.02");
+    setIfDefault(m_rdEdit, "Rd", "1");
+    setIfDefault(m_rsEdit, "Rs", "1");
+    setIfDefault(m_cgsoEdit, "Cgso", "50p");
+    setIfDefault(m_cgdoEdit, "Cgdo", "50p");
 
     updateCommandPreview();
 }

@@ -20,6 +20,7 @@ public:
 private Q_SLOTS:
     void updateCommandPreview();
     void applyChanges();
+    void autoMatchModel();
 
 private:
     void setupUI();

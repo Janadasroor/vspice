@@ -76,6 +76,7 @@ Q_SIGNALS:
     void selectionChanged();
     void itemRightClicked(class SchematicItem* item);
     void itemDoubleClicked(class SchematicItem* item);
+    void componentLabelDoubleClicked(class GenericComponentItem* component, bool isReferenceLabel);
     void itemPlaced(class SchematicItem* item);
     void itemSelectionDoubleClicked(const QList<SchematicItem*>& items);
     void pageTitleBlockDoubleClicked();

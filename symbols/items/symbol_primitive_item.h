@@ -107,11 +107,15 @@ public:
     void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) override;
     
     void setSymbolContext(const QString& name, const QString& ref, const QString& val);
+    void setKeepUpright(bool keep) { m_keepUpright = keep; update(); }
+    bool keepUpright() const { return m_keepUpright; }
+    void syncUprightTransform();
 
 private:
     QString m_symbolName;
     QString m_symbolRef;
     QString m_symbolVal;
+    bool m_keepUpright = false;
 };
 
 /**
