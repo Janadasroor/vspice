@@ -113,6 +113,7 @@ public:
     const std::map<std::string, SimModel>& models() const { return m_models; }
     std::map<std::string, SimModel>& mutableModels() { return m_models; }
     const std::map<std::string, SimSubcircuit>& subcircuits() const { return m_subcircuits; }
+    std::map<std::string, SimSubcircuit>& mutableSubcircuits() { return m_subcircuits; }
 
     void addDiagnostic(const std::string& msg) { m_diagnostics.push_back(msg); }
     const std::vector<std::string>& diagnostics() const { return m_diagnostics; }

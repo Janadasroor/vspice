@@ -117,6 +117,34 @@ QString canonicalWaveformNetName(const QString& rawName) {
     return trimmed;
 }
 
+QStringList waveformNetAliases(const QString& netName) {
+    const QString trimmed = netName.trimmed();
+    if (trimmed.isEmpty()) return {};
+
+    QStringList aliases{trimmed, QString("V(%1)").arg(trimmed)};
+    const QString upper = trimmed.toUpper();
+    if (upper == "GND" || trimmed == "0") {
+        aliases << "0" << "GND" << "V(0)" << "V(GND)";
+    }
+    aliases.removeDuplicates();
+    return aliases;
+}
+
+const SimWaveform* findWaveByNetAliases(const std::vector<SimWaveform>& waveforms, const QString& netName) {
+    const QStringList aliases = waveformNetAliases(netName);
+    for (const auto& wave : waveforms) {
+        const QString waveName = QString::fromStdString(wave.name).trimmed();
+        const QString canonicalWaveName = canonicalWaveformNetName(waveName);
+        for (const QString& alias : aliases) {
+            if (waveName.compare(alias, Qt::CaseInsensitive) == 0 ||
+                canonicalWaveName.compare(alias, Qt::CaseInsensitive) == 0) {
+                return &wave;
+            }
+        }
+    }
+    return nullptr;
+}
+
 WaveformStats computeWaveformStats(const SimWaveform& wave) {
     WaveformStats stats;
     if (wave.yData.empty()) return stats;
@@ -573,8 +601,6 @@ bool SimulationPanel::buildDerivedPowerWaveform(const QString& signalName, QVect
     if (nets.size() < 2) { qWarning() << "buildDerivedPowerWaveform:" << ref << "has" << nets.size() << "nets, need >= 2"; return false; }
 
     const SimWaveform* currentWave = nullptr;
-    const SimWaveform* posWave = nullptr;
-    const SimWaveform* negWave = nullptr;
     const QString currentName = QString("I(%1)").arg(ref);
     const QString posName = QString("V(%1)").arg(nets.value(0));
     const QString negName = QString("V(%1)").arg(nets.value(1));
@@ -582,9 +608,9 @@ bool SimulationPanel::buildDerivedPowerWaveform(const QString& signalName, QVect
     for (const auto& w : m_lastResults.waveforms) {
         const QString wName = QString::fromStdString(w.name);
         if (!currentWave && wName.compare(currentName, Qt::CaseInsensitive) == 0) currentWave = &w;
-        if (!posWave && (wName.compare(posName, Qt::CaseInsensitive) == 0 || wName.compare(nets.value(0), Qt::CaseInsensitive) == 0)) posWave = &w;
-        if (!negWave && (wName.compare(negName, Qt::CaseInsensitive) == 0 || wName.compare(nets.value(1), Qt::CaseInsensitive) == 0)) negWave = &w;
     }
+    const SimWaveform* posWave = findWaveByNetAliases(m_lastResults.waveforms, nets.value(0));
+    const SimWaveform* negWave = findWaveByNetAliases(m_lastResults.waveforms, nets.value(1));
     if (!currentWave || !posWave || !negWave) {
         qWarning() << "buildDerivedPowerWaveform:" << ref
                    << "current=" << (currentWave ? "OK" : "MISSING")
@@ -638,8 +664,8 @@ void SimulationPanel::appendDerivedPowerWaveforms(SimResults& results) const {
         if (nets.size() < 2) continue;
 
         const SimWaveform* currentWave = findWave(QString("I(%1)").arg(ref));
-        const SimWaveform* posWave = findWave(QString("V(%1)").arg(nets[0]), nets[0]);
-        const SimWaveform* negWave = findWave(QString("V(%1)").arg(nets[1]), nets[1]);
+        const SimWaveform* posWave = findWaveByNetAliases(results.waveforms, nets[0]);
+        const SimWaveform* negWave = findWaveByNetAliases(results.waveforms, nets[1]);
         if (!currentWave || !posWave || !negWave) continue;
 
         const size_t count = std::min({currentWave->xData.size(), currentWave->yData.size(), posWave->yData.size(), negWave->yData.size()});

@@ -40,6 +40,53 @@ else()
 endif()
 # -----------------------
 
+# --- nanobind Python Bindings ---
+option(VIOSPICE_ENABLE_NANOBIND "Build Python bindings via nanobind" ON)
+if(VIOSPICE_ENABLE_NANOBIND)
+    find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
+    add_subdirectory(ext/nanobind)
+
+    # Headless solver library (zero Qt, shared by simulator and Python bindings)
+    add_library(FluxSolverCore STATIC
+        simulator/core/sim_value_parser.cpp
+        simulator/core/sim_results.h
+        simulator/core/sim_netlist.h
+        simulator/core/sim_netlist.cpp
+        simulator/core/sim_math.h
+        simulator/core/sim_expression.h
+        simulator/core/sim_meas_evaluator.h
+    )
+    target_include_directories(FluxSolverCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/simulator)
+    set_target_properties(FluxSolverCore PROPERTIES
+        CXX_STANDARD 17
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        POSITION_INDEPENDENT_CODE ON
+    )
+    target_compile_definitions(FluxSolverCore PRIVATE FLUX_SOLVER_HEADLESS)
+
+    # Python binding module
+    nanobind_add_module(vspice MODULE LTO NOMINSIZE
+        bindings/bindings_core.cpp
+    )
+    target_include_directories(vspice PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/simulator
+        ${CMAKE_CURRENT_SOURCE_DIR}/simulator/core
+        ${CMAKE_CURRENT_SOURCE_DIR}/bindings
+    )
+    target_link_libraries(vspice PRIVATE FluxSolverCore)
+    set_target_properties(vspice PROPERTIES
+        OUTPUT_NAME "vspice"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python"
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+    )
+    message(STATUS "nanobind Python bindings enabled: output → ${CMAKE_BINARY_DIR}/python/vspice")
+endif()
+# -----------------------
+
 # --- FluxScript Support ---
 set(FLUX_BUILD_EDITOR ON CACHE BOOL "Build the FluxEditor GUI module" FORCE)
 set(VIOSPICE_ENABLE_PYTHON ON CACHE BOOL "Enable Python-backed editor features" FORCE)

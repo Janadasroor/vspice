@@ -3,9 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <string>
-#include <string_view>
-
-#include <QString>
 
 namespace {
 
@@ -73,10 +70,12 @@ bool splitSuffix(std::string_view suffixRaw, double& factor, std::string& unit) 
     // SPICE standard prefixes. Order matters: 'meg' before 'm'.
     if (suffix.rfind("meg", 0) == 0) {
         factor = 1e6;
+        unit = suffix.size() > 3 ? suffix.substr(3) : std::string();
         return true;
     }
     if (suffix.rfind("mil", 0) == 0) {
         factor = 25.4e-6; // 0.001 inch
+        unit = suffix.size() > 3 ? suffix.substr(3) : std::string();
         return true;
     }
 
@@ -91,6 +90,8 @@ bool splitSuffix(std::string_view suffixRaw, double& factor, std::string& unit) 
     for (const auto& p : prefixes) {
         if (!suffix.empty() && suffix[0] == p.key) {
             factor = p.factor;
+            // Remaining part after prefix is the unit (e.g., "kohm" -> "ohm")
+            unit = suffix.size() > 1 ? suffix.substr(1) : std::string();
             return true;
         }
     }
@@ -102,7 +103,7 @@ bool splitSuffix(std::string_view suffixRaw, double& factor, std::string& unit) 
 
 namespace SimValueParser {
 
-bool parseSpiceNumber(std::string_view text, double& outValue) {
+bool parseSpiceNumber(const std::string& text, double& outValue) {
     // Normalize Unicode micro/omega variants.
     std::string normalized;
     normalized.reserve(text.size());
@@ -193,11 +194,6 @@ bool parseSpiceNumber(std::string_view text, double& outValue) {
 
     outValue = base * factor;
     return true;
-}
-
-// Qt convenience overload
-bool parseSpiceNumber(const QString& text, double& outValue) {
-    return parseSpiceNumber(text.toStdString(), outValue);
 }
 
 } // namespace SimValueParser
