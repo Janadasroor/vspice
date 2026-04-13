@@ -2206,7 +2206,10 @@ void SchematicSelectTool::keyPressEvent(QKeyEvent* event) {
         }
         
         if (!selectedItems.isEmpty() && view()->undoStack()) {
-            view()->undoStack()->push(new RotateItemCommand(view()->scene(), selectedItems, 90));
+            if (QUndoCommand* command = createItemTransformCommand(
+                    view()->scene(), selectedItems, SchematicItem::TransformAction::RotateCW)) {
+                view()->undoStack()->push(command);
+            }
         }
         event->accept();
         return;

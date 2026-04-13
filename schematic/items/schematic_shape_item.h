@@ -17,6 +17,7 @@ public:
     
     QJsonObject toJson() const override;
     bool fromJson(const QJsonObject& json) override;
+    bool supportsTransformAction(TransformAction action) const override { Q_UNUSED(action) return true; }
     
     SchematicItem* clone() const override;
     

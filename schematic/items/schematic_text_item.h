@@ -39,6 +39,9 @@ public:
     void setKeepUpright(bool keep) { m_keepUpright = keep; update(); }
     bool keepUpright() const { return m_keepUpright; }
     void syncUprightTransform();
+    bool supportsTransformAction(TransformAction action) const override {
+        return action == TransformAction::RotateCW || action == TransformAction::RotateCCW;
+    }
     
 private:
     void recalcBounds();

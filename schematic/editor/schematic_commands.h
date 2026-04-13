@@ -267,4 +267,9 @@ private:
     OscilloscopeItem::Config m_newCfg;
 };
 
+QUndoCommand* createItemTransformCommand(QGraphicsScene* scene,
+                                         const QList<SchematicItem*>& items,
+                                         SchematicItem::TransformAction action,
+                                         QUndoCommand* parent = nullptr);
+
 #endif // SCHEMATIC_COMMANDS_H

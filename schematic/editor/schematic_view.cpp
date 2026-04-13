@@ -1177,8 +1177,10 @@ void SchematicView::keyPressEvent(QKeyEvent *event) {
             
             if (!itemsToRotate.isEmpty()) {
                 if (m_undoStack) {
-                    RotateItemCommand* cmd = new RotateItemCommand(scene(), itemsToRotate, 90.0);
-                    m_undoStack->push(cmd);
+                    if (QUndoCommand* command = createItemTransformCommand(
+                            scene(), itemsToRotate, SchematicItem::TransformAction::RotateCW)) {
+                        m_undoStack->push(command);
+                    }
                 } else {
                     for (auto item : itemsToRotate) {
                         item->setRotation(item->rotation() + 90);

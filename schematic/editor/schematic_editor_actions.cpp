@@ -1748,101 +1748,25 @@ void SchematicEditor::onPropertyChanged(const QString& name, const QVariant& val
     m_undoStack->endMacro();
 }
 // ─── Manipulation Handlers ──────────────────────────────────────────────────
-// Helper to get selected schematic items
-QList<SchematicItem*> getSelectedSchematicItems(QGraphicsScene* scene) {
-    if (!scene) return {};
-    return uniqueTopLevelSchematicItems(scene->selectedItems());
-}
 
 void SchematicEditor::onRotateCW() {
-    // 1. If a tool is active, let it handle rotation first (e.g. during placement)
-    if (m_view && m_view->currentTool()) {
-        QKeyEvent fakeEvent(QEvent::KeyPress, Qt::Key_R, Qt::ControlModifier);
-        m_view->currentTool()->keyPressEvent(&fakeEvent);
-        if (fakeEvent.isAccepted()) return;
-    }
-
-    // 2. Otherwise rotate selection
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
-    if (!items.isEmpty()) {
-        m_undoStack->push(new RotateItemCommand(m_scene, items, 90));
-        statusBar()->showMessage("Rotated 90° CW", 2000);
-    }
+    handleTransformAction(SchematicTool::TransformAction::RotateCW);
 }
 
 void SchematicEditor::onRotateCCW() {
-    // 1. If a tool is active, let it handle rotation first
-    if (m_view && m_view->currentTool()) {
-        QKeyEvent fakeEvent(QEvent::KeyPress, Qt::Key_R, Qt::ControlModifier | Qt::ShiftModifier);
-        m_view->currentTool()->keyPressEvent(&fakeEvent);
-        if (fakeEvent.isAccepted()) return;
-    }
-
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
-    if (!items.isEmpty()) {
-        m_undoStack->push(new RotateItemCommand(m_scene, items, -90));
-        statusBar()->showMessage("Rotated 90° CCW", 2000);
-    }
+    handleTransformAction(SchematicTool::TransformAction::RotateCCW);
 }
 
 void SchematicEditor::onFlipHorizontal() {
-    // 1. Placement mode (paste/duplicate/library mouse-follow): flip preview items.
-    if (m_mouseFollowPlacementActive) {
-        m_mouseFollowFlippedH = !m_mouseFollowFlippedH;
-        applyPlacementTransforms();
-        statusBar()->showMessage(m_mouseFollowFlippedH ? "Flipped Horizontally" : "Unflipped Horizontally", 2000);
-        return;
-    }
-
-    // 2. If placed items are selected, mirror the real selection before consulting the active tool.
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
-    if (!items.isEmpty()) {
-        m_undoStack->push(new FlipItemCommand(m_scene, items));
-        statusBar()->showMessage("Flipped Horizontally", 2000);
-        return;
-    }
-
-    // 3. Component placement tool preview: forward to tool handler.
-    if (m_view && m_view->currentTool()) {
-        QKeyEvent fakeEvent(QEvent::KeyPress, Qt::Key_H, Qt::NoModifier);
-        m_view->currentTool()->keyPressEvent(&fakeEvent);
-        if (fakeEvent.isAccepted()) {
-            statusBar()->showMessage("Flipped Horizontally", 2000);
-            return;
-        }
-    }
+    handleTransformAction(SchematicTool::TransformAction::FlipHorizontal);
 }
 
 void SchematicEditor::onFlipVertical() {
-    // 1. Placement mode (paste/duplicate/library mouse-follow): flip preview items.
-    if (m_mouseFollowPlacementActive) {
-        m_mouseFollowFlippedV = !m_mouseFollowFlippedV;
-        applyPlacementTransforms();
-        statusBar()->showMessage(m_mouseFollowFlippedV ? "Flipped Vertically" : "Unflipped Vertically", 2000);
-        return;
-    }
-
-    // 2. If placed items are selected, mirror the real selection before consulting the active tool.
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
-    if (!items.isEmpty()) {
-        m_undoStack->push(new FlipItemCommand(m_scene, items, true));
-        statusBar()->showMessage("Flipped Vertically", 2000);
-        return;
-    }
-
-    // 3. Component placement tool preview: forward to tool handler.
-    if (m_view && m_view->currentTool()) {
-        QKeyEvent fakeEvent(QEvent::KeyPress, Qt::Key_V, Qt::ShiftModifier);
-        m_view->currentTool()->keyPressEvent(&fakeEvent);
-        if (fakeEvent.isAccepted()) {
-            statusBar()->showMessage("Flipped Vertically", 2000);
-            return;
-        }
-    }
+    handleTransformAction(SchematicTool::TransformAction::FlipVertical);
 }
 
 void SchematicEditor::onBringToFront() {
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
+    QList<SchematicItem*> items = selectedSchematicItems();
     if (!items.isEmpty()) {
         m_undoStack->push(new ZValueItemCommand(m_scene, items, true));
         statusBar()->showMessage("Brought to Front", 2000);
@@ -1850,7 +1774,7 @@ void SchematicEditor::onBringToFront() {
 }
 
 void SchematicEditor::onSendToBack() {
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
+    QList<SchematicItem*> items = selectedSchematicItems();
     if (!items.isEmpty()) {
         m_undoStack->push(new ZValueItemCommand(m_scene, items, false));
         statusBar()->showMessage("Sent to Back", 2000);
@@ -1858,7 +1782,7 @@ void SchematicEditor::onSendToBack() {
 }
 
 void SchematicEditor::onAlignLeft() {
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
+    QList<SchematicItem*> items = selectedSchematicItems();
     if (items.size() > 1) {
         m_undoStack->push(new AlignItemCommand(m_scene, items, AlignItemCommand::AlignLeft));
         statusBar()->showMessage("Aligned Left", 2000);
@@ -1866,7 +1790,7 @@ void SchematicEditor::onAlignLeft() {
 }
 
 void SchematicEditor::onAlignRight() {
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
+    QList<SchematicItem*> items = selectedSchematicItems();
     if (items.size() > 1) {
         m_undoStack->push(new AlignItemCommand(m_scene, items, AlignItemCommand::AlignRight));
         statusBar()->showMessage("Aligned Right", 2000);
@@ -1874,7 +1798,7 @@ void SchematicEditor::onAlignRight() {
 }
 
 void SchematicEditor::onAlignTop() {
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
+    QList<SchematicItem*> items = selectedSchematicItems();
     if (items.size() > 1) {
         m_undoStack->push(new AlignItemCommand(m_scene, items, AlignItemCommand::AlignTop));
         statusBar()->showMessage("Aligned Top", 2000);
@@ -1882,7 +1806,7 @@ void SchematicEditor::onAlignTop() {
 }
 
 void SchematicEditor::onAlignBottom() {
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
+    QList<SchematicItem*> items = selectedSchematicItems();
     if (items.size() > 1) {
         m_undoStack->push(new AlignItemCommand(m_scene, items, AlignItemCommand::AlignBottom));
         statusBar()->showMessage("Aligned Bottom", 2000);
@@ -1890,7 +1814,7 @@ void SchematicEditor::onAlignBottom() {
 }
 
 void SchematicEditor::onAlignCenterX() {
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
+    QList<SchematicItem*> items = selectedSchematicItems();
     if (items.size() > 1) {
         m_undoStack->push(new AlignItemCommand(m_scene, items, AlignItemCommand::AlignCenterX));
         statusBar()->showMessage("Aligned Center X", 2000);
@@ -1898,7 +1822,7 @@ void SchematicEditor::onAlignCenterX() {
 }
 
 void SchematicEditor::onAlignCenterY() {
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
+    QList<SchematicItem*> items = selectedSchematicItems();
     if (items.size() > 1) {
         m_undoStack->push(new AlignItemCommand(m_scene, items, AlignItemCommand::AlignCenterY));
         statusBar()->showMessage("Aligned Center Y", 2000);
@@ -1906,7 +1830,7 @@ void SchematicEditor::onAlignCenterY() {
 }
 
 void SchematicEditor::onDistributeH() {
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
+    QList<SchematicItem*> items = selectedSchematicItems();
     if (items.size() > 2) {
         m_undoStack->push(new AlignItemCommand(m_scene, items, AlignItemCommand::DistributeH));
         statusBar()->showMessage("Distributed Horizontally", 2000);
@@ -1914,7 +1838,7 @@ void SchematicEditor::onDistributeH() {
 }
 
 void SchematicEditor::onDistributeV() {
-    QList<SchematicItem*> items = getSelectedSchematicItems(m_scene);
+    QList<SchematicItem*> items = selectedSchematicItems();
     if (items.size() > 2) {
         m_undoStack->push(new AlignItemCommand(m_scene, items, AlignItemCommand::DistributeV));
         statusBar()->showMessage("Distributed Vertically", 2000);

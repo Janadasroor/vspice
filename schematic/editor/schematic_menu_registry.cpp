@@ -356,7 +356,10 @@ void SchematicMenuRegistry::initializeDefaultActions() {
     };
     rotateNetLabel.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
         if (view->undoStack()) {
-            view->undoStack()->push(new RotateItemCommand(view->scene(), items, 90));
+            if (QUndoCommand* command = createItemTransformCommand(
+                    view->scene(), items, SchematicItem::TransformAction::RotateCW)) {
+                view->undoStack()->push(command);
+            }
         }
     };
     registerAction(SchematicItem::NetLabelType, rotateNetLabel);
@@ -370,7 +373,10 @@ void SchematicMenuRegistry::initializeDefaultActions() {
         rotate.priority = 90;
         rotate.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
             if (view->undoStack()) {
-                view->undoStack()->push(new RotateItemCommand(view->scene(), items, 90));
+                if (QUndoCommand* command = createItemTransformCommand(
+                        view->scene(), items, SchematicItem::TransformAction::RotateCW)) {
+                    view->undoStack()->push(command);
+                }
             }
         };
         registerAction(type, rotate);
@@ -381,7 +387,10 @@ void SchematicMenuRegistry::initializeDefaultActions() {
         rotateCW.priority = 89;
         rotateCW.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
             if (view->undoStack()) {
-                view->undoStack()->push(new RotateItemCommand(view->scene(), items, -90));
+                if (QUndoCommand* command = createItemTransformCommand(
+                        view->scene(), items, SchematicItem::TransformAction::RotateCCW)) {
+                    view->undoStack()->push(command);
+                }
             }
         };
         registerAction(type, rotateCW);
@@ -392,7 +401,10 @@ void SchematicMenuRegistry::initializeDefaultActions() {
         flip.priority = 80;
         flip.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
             if (view->undoStack()) {
-                view->undoStack()->push(new FlipItemCommand(view->scene(), items));
+                if (QUndoCommand* command = createItemTransformCommand(
+                        view->scene(), items, SchematicItem::TransformAction::FlipHorizontal)) {
+                    view->undoStack()->push(command);
+                }
             }
         };
         registerAction(type, flip);
@@ -403,9 +415,10 @@ void SchematicMenuRegistry::initializeDefaultActions() {
         flipV.priority = 79;
         flipV.handler = [](SchematicView* view, const QList<SchematicItem*>& items) {
             if (view->undoStack()) {
-                // Assuming FlipItemCommand handles vertical if we add a param, or we add a new command
-                // For now, let's assume we need to implement Vertical Flip
-                view->undoStack()->push(new FlipItemCommand(view->scene(), items, true /* vertical */));
+                if (QUndoCommand* command = createItemTransformCommand(
+                        view->scene(), items, SchematicItem::TransformAction::FlipVertical)) {
+                    view->undoStack()->push(command);
+                }
             }
         };
         registerAction(type, flipV);
@@ -527,7 +540,10 @@ void SchematicMenuRegistry::initializeDefaultActions() {
     rotateLabel.priority = 90;
     rotateLabel.handler = [](SchematicView* view, const auto& items) {
         if (view->undoStack()) {
-            view->undoStack()->push(new RotateItemCommand(view->scene(), items, 90));
+            if (QUndoCommand* command = createItemTransformCommand(
+                    view->scene(), items, SchematicItem::TransformAction::RotateCW)) {
+                view->undoStack()->push(command);
+            }
         }
     };
     registerAction(SchematicItem::LabelType, rotateLabel);

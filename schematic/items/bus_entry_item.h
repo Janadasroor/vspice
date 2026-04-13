@@ -17,6 +17,7 @@ public:
     QRectF boundingRect() const override;
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) override;
     QList<QPointF> connectionPoints() const override;
+    bool supportsTransformAction(TransformAction action) const override { Q_UNUSED(action) return true; }
     bool flipped() const { return m_flipped; }
     void setFlipped(bool flipped) { m_flipped = flipped; update(); }
 

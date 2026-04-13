@@ -17,6 +17,7 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include "schematic_view.h"
+#include "../tools/schematic_tool.h"
 #include "../ui/simulation_setup_dialog.h"
 #include "../ui/schematic_components_widget.h"
 #include "../ui/project_explorer_widget.h"
@@ -251,6 +252,18 @@ private:
     void beginMouseFollowPlacement(const QList<SchematicItem*>& items, const QString& actionLabel);
     void endMouseFollowPlacement(bool cancel);
     void ensureGeminiPanelInitialized();
+    QList<SchematicItem*> selectedSchematicItems() const;
+    bool handleTransformAction(SchematicTool::TransformAction action);
+    bool applyMouseFollowTransformAction(SchematicTool::TransformAction action, QString* statusMessage = nullptr);
+    bool applyCurrentToolTransformAction(SchematicTool::TransformAction action);
+    bool applySelectedItemsTransformAction(SchematicTool::TransformAction action, QString* statusMessage = nullptr);
+    bool handlePlacementModeEvent(QObject* watched, QEvent* event);
+    void saveActionShortcuts(const QList<QAction*>& actions, QMap<QAction*, QKeySequence>& storage);
+    void saveMatchingActionShortcuts(const QList<QAction*>& actions,
+                                     const QSet<QKeySequence>& shortcuts,
+                                     QMap<QAction*, QKeySequence>& storage);
+    void restoreActionShortcuts(QMap<QAction*, QKeySequence>& storage);
+    void updateComponentToolShortcutState();
 
     // UI Components
     QTabWidget *m_workspaceTabs;

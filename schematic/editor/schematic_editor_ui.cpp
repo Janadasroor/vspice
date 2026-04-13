@@ -799,7 +799,10 @@ void SchematicEditor::createToolBar() {
                  if (auto* si = dynamic_cast<SchematicItem*>(it)) items.append(si);
              }
              if (!items.isEmpty()) {
-                 m_undoStack->push(new RotateItemCommand(m_scene, items, 90));
+                 if (QUndoCommand* command = createItemTransformCommand(
+                         m_scene, items, SchematicItem::TransformAction::RotateCW)) {
+                     m_undoStack->push(command);
+                 }
              }
          }
     });

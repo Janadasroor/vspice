@@ -348,62 +348,228 @@ bool SchematicEditor::eventFilter(QObject* watched, QEvent* event) {
         }
     }
 
-    // Handle mouse-follow placement mode
-    if (m_mouseFollowPlacementActive && m_view) {
-        if (event->type() == QEvent::KeyPress) {
-            auto* ke = static_cast<QKeyEvent*>(event);
-            if (!ke) return true;
-            if (ke->key() == Qt::Key_Escape) {
-                endMouseFollowPlacement(true);
-                statusBar()->showMessage("Placement canceled", 1200);
-                return true;
-            }
-            if (ke->key() == Qt::Key_R && (ke->modifiers() & Qt::ControlModifier)) {
-                if (ke->modifiers() & Qt::ShiftModifier) {
-                    m_mouseFollowRotation -= 90;
-                } else {
-                    m_mouseFollowRotation += 90;
-                }
-                m_mouseFollowRotation = fmod(m_mouseFollowRotation, 360);
-                if (m_mouseFollowRotation < 0) m_mouseFollowRotation += 360;
-                applyPlacementTransforms();
-                statusBar()->showMessage(QString("Rotation: %1°").arg(m_mouseFollowRotation), 1200);
-                return true;
-            }
-            if (ke->key() == Qt::Key_H && !(ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
-                // Toggle horizontal flip during placement
-                m_mouseFollowFlippedH = !m_mouseFollowFlippedH;
-                applyPlacementTransforms();
-                statusBar()->showMessage(m_mouseFollowFlippedH ? "Flipped Horizontally" : "Unflipped Horizontally", 1200);
-                return true;
-            }
-            if (ke->key() == Qt::Key_V &&
-                (ke->modifiers() & Qt::ShiftModifier) &&
-                !(ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
-                // Toggle vertical flip during placement
-                m_mouseFollowFlippedV = !m_mouseFollowFlippedV;
-                applyPlacementTransforms();
-                statusBar()->showMessage(m_mouseFollowFlippedV ? "Flipped Vertically" : "Unflipped Vertically", 1200);
+    if (handlePlacementModeEvent(watched, event)) {
+        return true;
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+bool SchematicEditor::handlePlacementModeEvent(QObject* watched, QEvent* event) {
+    if (!m_mouseFollowPlacementActive || !m_view) return false;
+
+    if (event->type() == QEvent::KeyPress) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (!keyEvent) return true;
+
+        if (keyEvent->key() == Qt::Key_Escape) {
+            endMouseFollowPlacement(true);
+            statusBar()->showMessage("Placement canceled", 1200);
+            return true;
+        }
+
+        QString statusMessage;
+        if (keyEvent->key() == Qt::Key_R && (keyEvent->modifiers() & Qt::ControlModifier)) {
+            const SchematicTool::TransformAction action = (keyEvent->modifiers() & Qt::ShiftModifier)
+                ? SchematicTool::TransformAction::RotateCCW
+                : SchematicTool::TransformAction::RotateCW;
+            if (applyMouseFollowTransformAction(action, &statusMessage)) {
+                statusBar()->showMessage(statusMessage, 1200);
                 return true;
             }
         }
 
-        if (event->type() == QEvent::MouseButtonPress &&
-            (watched == m_view->viewport() || watched == m_view)) {
-            auto* me = static_cast<QMouseEvent*>(event);
-            if (me && me->button() == Qt::LeftButton) {
-                endMouseFollowPlacement(false);
-                statusBar()->showMessage("Placement confirmed", 1200);
-                return true;
-            }
-            if (me && me->button() == Qt::RightButton) {
-                endMouseFollowPlacement(true);
-                statusBar()->showMessage("Placement canceled", 1200);
+        if (keyEvent->key() == Qt::Key_H &&
+            !(keyEvent->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+            if (applyMouseFollowTransformAction(SchematicTool::TransformAction::FlipHorizontal, &statusMessage)) {
+                statusBar()->showMessage(statusMessage, 1200);
                 return true;
             }
         }
+
+        if (keyEvent->key() == Qt::Key_V &&
+            (keyEvent->modifiers() & Qt::ShiftModifier) &&
+            !(keyEvent->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+            if (applyMouseFollowTransformAction(SchematicTool::TransformAction::FlipVertical, &statusMessage)) {
+                statusBar()->showMessage(statusMessage, 1200);
+                return true;
+            }
+        }
+
+        return false;
     }
-    return QMainWindow::eventFilter(watched, event);
+
+    if (event->type() != QEvent::MouseButtonPress ||
+        (watched != m_view->viewport() && watched != m_view)) {
+        return false;
+    }
+
+    auto* mouseEvent = static_cast<QMouseEvent*>(event);
+    if (!mouseEvent) return false;
+
+    if (mouseEvent->button() == Qt::LeftButton) {
+        endMouseFollowPlacement(false);
+        statusBar()->showMessage("Placement confirmed", 1200);
+        return true;
+    }
+    if (mouseEvent->button() == Qt::RightButton) {
+        endMouseFollowPlacement(true);
+        statusBar()->showMessage("Placement canceled", 1200);
+        return true;
+    }
+
+    return false;
+}
+
+QList<SchematicItem*> SchematicEditor::selectedSchematicItems() const {
+    if (!m_scene) return {};
+
+    QList<SchematicItem*> result;
+    QSet<SchematicItem*> seen;
+    for (QGraphicsItem* graphicsItem : m_scene->selectedItems()) {
+        SchematicItem* schematicItem = nullptr;
+        QGraphicsItem* current = graphicsItem;
+        while (current) {
+            schematicItem = dynamic_cast<SchematicItem*>(current);
+            if (schematicItem && !schematicItem->isSubItem()) break;
+            current = current->parentItem();
+        }
+        if (schematicItem && !seen.contains(schematicItem)) {
+            seen.insert(schematicItem);
+            result.append(schematicItem);
+        }
+    }
+    return result;
+}
+
+bool SchematicEditor::handleTransformAction(SchematicTool::TransformAction action) {
+    QString statusMessage;
+    if (applyMouseFollowTransformAction(action, &statusMessage) ||
+        applySelectedItemsTransformAction(action, &statusMessage) ||
+        applyCurrentToolTransformAction(action)) {
+        if (!statusMessage.isEmpty()) {
+            statusBar()->showMessage(statusMessage, 2000);
+        }
+        return true;
+    }
+    return false;
+}
+
+bool SchematicEditor::applyMouseFollowTransformAction(SchematicTool::TransformAction action, QString* statusMessage) {
+    if (!m_mouseFollowPlacementActive) return false;
+
+    switch (action) {
+    case SchematicTool::TransformAction::RotateCW:
+        m_mouseFollowRotation += 90;
+        break;
+    case SchematicTool::TransformAction::RotateCCW:
+        m_mouseFollowRotation -= 90;
+        break;
+    case SchematicTool::TransformAction::FlipHorizontal:
+        m_mouseFollowFlippedH = !m_mouseFollowFlippedH;
+        applyPlacementTransforms();
+        if (statusMessage) *statusMessage = m_mouseFollowFlippedH ? "Flipped Horizontally" : "Unflipped Horizontally";
+        return true;
+    case SchematicTool::TransformAction::FlipVertical:
+        m_mouseFollowFlippedV = !m_mouseFollowFlippedV;
+        applyPlacementTransforms();
+        if (statusMessage) *statusMessage = m_mouseFollowFlippedV ? "Flipped Vertically" : "Unflipped Vertically";
+        return true;
+    }
+
+    m_mouseFollowRotation = fmod(m_mouseFollowRotation, 360);
+    if (m_mouseFollowRotation < 0) m_mouseFollowRotation += 360;
+    applyPlacementTransforms();
+    if (statusMessage) *statusMessage = QString("Rotation: %1°").arg(m_mouseFollowRotation);
+    return true;
+}
+
+bool SchematicEditor::applyCurrentToolTransformAction(SchematicTool::TransformAction action) {
+    if (!m_view || !m_view->currentTool()) return false;
+
+    return m_view->currentTool()->applyTransformAction(action);
+}
+
+bool SchematicEditor::applySelectedItemsTransformAction(SchematicTool::TransformAction action, QString* statusMessage) {
+    QList<SchematicItem*> items = selectedSchematicItems();
+    if (items.isEmpty()) return false;
+
+    SchematicItem::TransformAction itemAction;
+    switch (action) {
+    case SchematicTool::TransformAction::RotateCW:
+        itemAction = SchematicItem::TransformAction::RotateCW;
+        if (statusMessage) *statusMessage = "Rotated 90° CW";
+        break;
+    case SchematicTool::TransformAction::RotateCCW:
+        itemAction = SchematicItem::TransformAction::RotateCCW;
+        if (statusMessage) *statusMessage = "Rotated 90° CCW";
+        break;
+    case SchematicTool::TransformAction::FlipHorizontal:
+        itemAction = SchematicItem::TransformAction::FlipHorizontal;
+        if (statusMessage) *statusMessage = "Flipped Horizontally";
+        break;
+    case SchematicTool::TransformAction::FlipVertical:
+        itemAction = SchematicItem::TransformAction::FlipVertical;
+        if (statusMessage) *statusMessage = "Flipped Vertically";
+        break;
+    }
+
+    if (QUndoCommand* command = createItemTransformCommand(m_scene, items, itemAction)) {
+        m_undoStack->push(command);
+        return true;
+    }
+    return false;
+}
+
+void SchematicEditor::saveActionShortcuts(const QList<QAction*>& actions, QMap<QAction*, QKeySequence>& storage) {
+    storage.clear();
+    for (QAction* action : actions) {
+        if (!action) continue;
+        storage[action] = action->shortcut();
+        action->setShortcut(QKeySequence());
+    }
+}
+
+void SchematicEditor::saveMatchingActionShortcuts(const QList<QAction*>& actions,
+                                                  const QSet<QKeySequence>& shortcuts,
+                                                  QMap<QAction*, QKeySequence>& storage) {
+    storage.clear();
+    for (QAction* action : actions) {
+        if (!action) continue;
+        const QKeySequence shortcut = action->shortcut();
+        if (shortcut.isEmpty() || !shortcuts.contains(shortcut)) continue;
+        storage[action] = shortcut;
+        action->setShortcut(QKeySequence());
+    }
+}
+
+void SchematicEditor::restoreActionShortcuts(QMap<QAction*, QKeySequence>& storage) {
+    for (auto it = storage.begin(); it != storage.end(); ++it) {
+        if (it.key()) {
+            it.key()->setShortcut(it.value());
+        }
+    }
+    storage.clear();
+}
+
+void SchematicEditor::updateComponentToolShortcutState() {
+    const QSet<QKeySequence> transformShortcuts = {
+        QKeySequence("H"),
+        QKeySequence("Shift+V"),
+        QKeySequence("Ctrl+R"),
+        QKeySequence("Ctrl+Shift+R")
+    };
+    const bool isComponentTool = m_view && dynamic_cast<SchematicComponentTool*>(m_view->currentTool()) != nullptr;
+    if (isComponentTool && m_componentToolManipShortcuts.isEmpty()) {
+        saveMatchingActionShortcuts(m_manipActions, transformShortcuts, m_componentToolManipShortcuts);
+        saveMatchingActionShortcuts(m_toolActions.values(), transformShortcuts, m_componentToolToolShortcuts);
+        return;
+    }
+
+    if (!isComponentTool &&
+        (!m_componentToolManipShortcuts.isEmpty() || !m_componentToolToolShortcuts.isEmpty())) {
+        restoreActionShortcuts(m_componentToolManipShortcuts);
+        restoreActionShortcuts(m_componentToolToolShortcuts);
+    }
 }
 
 // ─── Canvas Setup ────────────────────────────────────────────────────────────
@@ -471,34 +637,7 @@ void SchematicEditor::addSchematicTab(const QString& name) {
         // When a component placement tool is active, disable H/Shift+V QAction shortcuts
         // so they reach the component tool's keyPressEvent instead of being consumed by
         // the flip actions (which require a selection and do nothing for preview items).
-        bool isComponentTool = m_view && dynamic_cast<SchematicComponentTool*>(m_view->currentTool()) != nullptr;
-        if (isComponentTool && m_componentToolManipShortcuts.isEmpty()) {
-            for (QAction* action : m_manipActions) {
-                if (action && !action->shortcut().isEmpty()) {
-                    m_componentToolManipShortcuts[action] = action->shortcut();
-                    action->setShortcut(QKeySequence());
-                }
-            }
-            // Also disable tool shortcuts that conflict with placement keys (e.g. H).
-            for (auto it = m_toolActions.begin(); it != m_toolActions.end(); ++it) {
-                QAction* action = it.value();
-                if (!action || action->shortcut().isEmpty()) continue;
-                if (action->shortcut() == QKeySequence("H")) {
-                    m_componentToolToolShortcuts[action] = action->shortcut();
-                    action->setShortcut(QKeySequence());
-                }
-            }
-        } else if (!isComponentTool &&
-                   (!m_componentToolManipShortcuts.isEmpty() || !m_componentToolToolShortcuts.isEmpty())) {
-            for (auto it = m_componentToolManipShortcuts.begin(); it != m_componentToolManipShortcuts.end(); ++it) {
-                if (it.key()) it.key()->setShortcut(it.value());
-            }
-            m_componentToolManipShortcuts.clear();
-            for (auto it = m_componentToolToolShortcuts.begin(); it != m_componentToolToolShortcuts.end(); ++it) {
-                if (it.key()) it.key()->setShortcut(it.value());
-            }
-            m_componentToolToolShortcuts.clear();
-        }
+        updateComponentToolShortcutState();
     });
 
     connect(view, &SchematicView::netProbed, this, [this](const QString& netName) {
@@ -989,22 +1128,22 @@ void SchematicEditor::beginMouseFollowPlacement(const QList<SchematicItem*>& ite
     m_view->setFocus(Qt::OtherFocusReason);
     m_view->viewport()->setFocus(Qt::OtherFocusReason);
 
-    // Temporarily clear tool shortcuts during placement mode to prevent conflicts (especially "Esc" for Select tool)
-    m_savedToolShortcuts.clear();
-    for (auto it = m_toolActions.begin(); it != m_toolActions.end(); ++it) {
-        if (QAction* action = it.value()) {
-            m_savedToolShortcuts[action] = action->shortcut();
-            action->setShortcut(QKeySequence());
-        }
-    }
-    // Also clear flip/rotate/manipulation shortcuts that conflict with placement keys
-    m_savedManipShortcuts.clear();
-    for (QAction* action : m_manipActions) {
-        if (action) {
-            m_savedManipShortcuts[action] = action->shortcut();
-            action->setShortcut(QKeySequence());
-        }
-    }
+    // Temporarily clear only the shortcuts that conflict with placement controls.
+    const QSet<QKeySequence> placementToolShortcuts = {
+        QKeySequence("Esc"),
+        QKeySequence("H"),
+        QKeySequence("Shift+V"),
+        QKeySequence("Ctrl+R"),
+        QKeySequence("Ctrl+Shift+R")
+    };
+    const QSet<QKeySequence> placementManipShortcuts = {
+        QKeySequence("H"),
+        QKeySequence("Shift+V"),
+        QKeySequence("Ctrl+R"),
+        QKeySequence("Ctrl+Shift+R")
+    };
+    saveMatchingActionShortcuts(m_toolActions.values(), placementToolShortcuts, m_savedToolShortcuts);
+    saveMatchingActionShortcuts(m_manipActions, placementManipShortcuts, m_savedManipShortcuts);
 
     const QPointF cursorScene = m_view->mapToScene(m_view->mapFromGlobal(QCursor::pos()));
     const QPointF target = m_view->snapToGridOrPin(cursorScene).point;
@@ -1045,27 +1184,9 @@ void SchematicEditor::endMouseFollowPlacement(bool cancel) {
     if (!m_mouseFollowPlacementActive) return;
     QList<SchematicItem*> activeItems = m_mouseFollowItems;
 
-    // Restore tool shortcuts
-    for (auto it = m_savedToolShortcuts.begin(); it != m_savedToolShortcuts.end(); ++it) {
-        if (it.key()) it.key()->setShortcut(it.value());
-    }
-    m_savedToolShortcuts.clear();
-    // Restore flip/rotate/manipulation shortcuts
-    for (auto it = m_savedManipShortcuts.begin(); it != m_savedManipShortcuts.end(); ++it) {
-        if (it.key()) it.key()->setShortcut(it.value());
-    }
-    m_savedManipShortcuts.clear();
-
-    // If a component tool is still active, re-disable the manip shortcuts
-    // (they may have been saved as empty by beginMouseFollowPlacement)
-    if (m_view && dynamic_cast<SchematicComponentTool*>(m_view->currentTool()) != nullptr) {
-        for (auto it = m_componentToolManipShortcuts.begin(); it != m_componentToolManipShortcuts.end(); ++it) {
-            if (it.key()) it.key()->setShortcut(QKeySequence());
-        }
-        for (auto it = m_componentToolToolShortcuts.begin(); it != m_componentToolToolShortcuts.end(); ++it) {
-            if (it.key()) it.key()->setShortcut(QKeySequence());
-        }
-    }
+    restoreActionShortcuts(m_savedToolShortcuts);
+    restoreActionShortcuts(m_savedManipShortcuts);
+    updateComponentToolShortcutState();
 
     if (m_view) {
         m_view->removeEventFilter(this);

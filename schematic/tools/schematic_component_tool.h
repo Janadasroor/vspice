@@ -24,6 +24,7 @@ public:
     void deactivate() override;
 
     void keyPressEvent(QKeyEvent* event) override;
+    bool applyTransformAction(TransformAction action) override;
 
 private:
     QString m_componentType;

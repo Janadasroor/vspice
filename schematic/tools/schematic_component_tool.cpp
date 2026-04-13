@@ -162,38 +162,55 @@ void SchematicComponentTool::mousePressEvent(QMouseEvent* event) {
 }
 
 void SchematicComponentTool::keyPressEvent(QKeyEvent* event) {
-    if (event->key() == Qt::Key_R) {
-        bool isShift = (event->modifiers() & Qt::ShiftModifier);
-
-        if (isShift) {
-            m_currentRotation = fmod(m_currentRotation - 90.0, 360.0);
-            if (m_currentRotation < 0) m_currentRotation += 360.0;
-        } else {
-            m_currentRotation = fmod(m_currentRotation + 90.0, 360.0);
+    if (event->key() == Qt::Key_R &&
+        !(event->modifiers() & (Qt::AltModifier | Qt::MetaModifier))) {
+        const TransformAction action = (event->modifiers() & Qt::ShiftModifier)
+            ? TransformAction::RotateCCW
+            : TransformAction::RotateCW;
+        if (applyTransformAction(action)) {
+            event->accept();
+            return;
         }
-
-        applyPreviewTransforms();
-        event->accept();
-        return;
     }
 
     if (event->key() == Qt::Key_H && !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
-        m_flippedH = !m_flippedH;
-        applyPreviewTransforms();
-        event->accept();
-        return;
+        if (applyTransformAction(TransformAction::FlipHorizontal)) {
+            event->accept();
+            return;
+        }
     }
 
     if (event->key() == Qt::Key_V &&
         (event->modifiers() & Qt::ShiftModifier) &&
         !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
-        m_flippedV = !m_flippedV;
-        applyPreviewTransforms();
-        event->accept();
-        return;
+        if (applyTransformAction(TransformAction::FlipVertical)) {
+            event->accept();
+            return;
+        }
     }
 
     SchematicTool::keyPressEvent(event);
+}
+
+bool SchematicComponentTool::applyTransformAction(TransformAction action) {
+    switch (action) {
+    case TransformAction::RotateCW:
+        m_currentRotation = fmod(m_currentRotation + 90.0, 360.0);
+        break;
+    case TransformAction::RotateCCW:
+        m_currentRotation = fmod(m_currentRotation - 90.0, 360.0);
+        if (m_currentRotation < 0) m_currentRotation += 360.0;
+        break;
+    case TransformAction::FlipHorizontal:
+        m_flippedH = !m_flippedH;
+        break;
+    case TransformAction::FlipVertical:
+        m_flippedV = !m_flippedV;
+        break;
+    }
+
+    applyPreviewTransforms();
+    return true;
 }
 
 void SchematicComponentTool::applyPreviewTransforms() {

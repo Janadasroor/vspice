@@ -885,6 +885,33 @@ void SchematicAnnotateCommand::redo() {
     }
 }
 
+QUndoCommand* createItemTransformCommand(QGraphicsScene* scene,
+                                         const QList<SchematicItem*>& items,
+                                         SchematicItem::TransformAction action,
+                                         QUndoCommand* parent) {
+    QList<SchematicItem*> supportedItems;
+    supportedItems.reserve(items.size());
+    for (SchematicItem* item : items) {
+        if (item && item->supportsTransformAction(action)) {
+            supportedItems.append(item);
+        }
+    }
+    if (supportedItems.isEmpty()) return nullptr;
+
+    switch (action) {
+    case SchematicItem::TransformAction::RotateCW:
+        return new RotateItemCommand(scene, supportedItems, 90, parent);
+    case SchematicItem::TransformAction::RotateCCW:
+        return new RotateItemCommand(scene, supportedItems, -90, parent);
+    case SchematicItem::TransformAction::FlipHorizontal:
+        return new FlipItemCommand(scene, supportedItems, false, parent);
+    case SchematicItem::TransformAction::FlipVertical:
+        return new FlipItemCommand(scene, supportedItems, true, parent);
+    }
+
+    return nullptr;
+}
+
 // ============================================================================
 // SwitchPinFunctionCommand
 // ============================================================================

@@ -14,6 +14,7 @@ public:
     bool fromJson(const QJsonObject& json) override;
     SchematicItem* clone() const override;
     QList<QPointF> connectionPoints() const override;
+    bool supportsTransformAction(TransformAction action) const override { Q_UNUSED(action) return false; }
 
     // QGraphicsItem interface
     QRectF boundingRect() const override;

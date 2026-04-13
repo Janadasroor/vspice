@@ -56,6 +56,9 @@ QJsonObject BusEntryItem::toJson() const {
     json["id"] = m_id.toString();
     json["x"] = pos().x();
     json["y"] = pos().y();
+    json["rotation"] = rotation();
+    json["isMirroredX"] = isMirroredX();
+    json["isMirroredY"] = isMirroredY();
     json["flipped"] = m_flipped;
     return json;
 }
@@ -63,10 +66,18 @@ QJsonObject BusEntryItem::toJson() const {
 bool BusEntryItem::fromJson(const QJsonObject& json) {
     if (json.contains("id")) m_id = QUuid(json["id"].toString());
     setPos(json["x"].toDouble(), json["y"].toDouble());
+    setRotation(json["rotation"].toDouble(0.0));
+    setMirroredX(json["isMirroredX"].toBool(false));
+    setMirroredY(json["isMirroredY"].toBool(false));
     m_flipped = json["flipped"].toBool();
+    update();
     return true;
 }
 
 SchematicItem* BusEntryItem::clone() const {
-    return new BusEntryItem(pos(), m_flipped);
+    auto* item = new BusEntryItem(pos(), m_flipped);
+    item->setRotation(rotation());
+    item->setMirroredX(isMirroredX());
+    item->setMirroredY(isMirroredY());
+    return item;
 }

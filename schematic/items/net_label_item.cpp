@@ -147,5 +147,6 @@ bool NetLabelItem::fromJson(const QJsonObject& json) {
 SchematicItem* NetLabelItem::clone() const {
     NetLabelItem* item = new NetLabelItem(pos(), value(), nullptr, m_scope);
     item->setNetClassName(m_netClassName);
+    item->setRotation(rotation());
     return item;
 }

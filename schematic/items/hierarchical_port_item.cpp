@@ -24,6 +24,7 @@ QJsonObject HierarchicalPortItem::toJson() const {
     json["id"] = m_id.toString();
     json["x"] = pos().x();
     json["y"] = pos().y();
+    json["rotation"] = rotation();
     json["label"] = value();
     json["portType"] = (int)m_portType;
     return json;
@@ -32,13 +33,16 @@ QJsonObject HierarchicalPortItem::toJson() const {
 bool HierarchicalPortItem::fromJson(const QJsonObject& json) {
     if (json.contains("id")) m_id = QUuid(json["id"].toString());
     setPos(json["x"].toDouble(), json["y"].toDouble());
+    setRotation(json["rotation"].toDouble(0.0));
     setValue(json["label"].toString());
     m_portType = (PortType)json["portType"].toInt();
     return true;
 }
 
 SchematicItem* HierarchicalPortItem::clone() const {
-    return new HierarchicalPortItem(pos(), value(), m_portType);
+    auto* item = new HierarchicalPortItem(pos(), value(), m_portType);
+    item->setRotation(rotation());
+    return item;
 }
 
 QPainterPath HierarchicalPortItem::shape() const {

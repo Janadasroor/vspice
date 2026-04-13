@@ -11,6 +11,13 @@
 class SchematicItem : public QObject, public QGraphicsItem {
     Q_OBJECT
 public:
+    enum class TransformAction {
+        RotateCW,
+        RotateCCW,
+        FlipHorizontal,
+        FlipVertical
+    };
+
     enum ItemType {
         ComponentType = QGraphicsItem::UserType + 1,
         WireType,
@@ -260,6 +267,7 @@ public:
     virtual void onInteractiveDoubleClick(const QPointF& scenePos) { Q_UNUSED(scenePos) }
     virtual void onInteractivePress(const QPointF& scenePos) { Q_UNUSED(scenePos) }
     virtual void onInteractiveRelease(const QPointF& scenePos) { Q_UNUSED(scenePos) }
+    virtual bool supportsTransformAction(TransformAction action) const { Q_UNUSED(action) return true; }
 
 Q_SIGNALS:
     void interactiveStateChanged();

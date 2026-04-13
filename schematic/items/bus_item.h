@@ -26,6 +26,7 @@ public:
     void setPoints(const QList<QPointF>& points);
     QList<QPointF> points() const { return m_points; }
     QList<QPointF> connectionPoints() const override { return m_points; }
+    bool supportsTransformAction(TransformAction action) const override { Q_UNUSED(action) return false; }
     
     void setPen(const QPen& pen) { m_pen = pen; update(); }
     QPen pen() const { return m_pen; }

@@ -16,6 +16,13 @@ class SchematicTool : public QObject {
     Q_OBJECT
 
 public:
+    enum class TransformAction {
+        RotateCW,
+        RotateCCW,
+        FlipHorizontal,
+        FlipVertical
+    };
+
     explicit SchematicTool(const QString& name, QObject* parent = nullptr);
     virtual ~SchematicTool() = default;
 
@@ -37,6 +44,7 @@ public:
     virtual void wheelEvent(QWheelEvent* event) { Q_UNUSED(event) }
     virtual void keyPressEvent(QKeyEvent* event) { Q_UNUSED(event) }
     virtual void keyReleaseEvent(QKeyEvent* event) { Q_UNUSED(event) }
+    virtual bool applyTransformAction(TransformAction action) { Q_UNUSED(action) return false; }
 
     // Tool properties
     virtual QString tooltip() const { return m_name; }

@@ -33,6 +33,9 @@ public:
     QRectF boundingRect() const override;
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) override;
     QList<QPointF> connectionPoints() const override;
+    bool supportsTransformAction(TransformAction action) const override {
+        return action == TransformAction::RotateCW || action == TransformAction::RotateCCW;
+    }
 
 private:
     PortType m_portType;

@@ -35,6 +35,9 @@ QJsonObject SchematicShapeItem::toJson() const {
     QJsonObject json;
     json["type"] = itemTypeName();
     json["id"] = id().toString();
+    json["rotation"] = rotation();
+    json["isMirroredX"] = isMirroredX();
+    json["isMirroredY"] = isMirroredY();
     json["start_x"] = m_start.x();
     json["start_y"] = m_start.y();
     json["end_x"] = m_end.x();
@@ -59,6 +62,9 @@ QJsonObject SchematicShapeItem::toJson() const {
 
 bool SchematicShapeItem::fromJson(const QJsonObject& json) {
     if (json.contains("id")) setId(QUuid::fromString(json["id"].toString()));
+    setRotation(json["rotation"].toDouble(0.0));
+    setMirroredX(json["isMirroredX"].toBool(false));
+    setMirroredY(json["isMirroredY"].toBool(false));
     
     if (json.contains("start_x")) m_start.setX(json["start_x"].toDouble());
     if (json.contains("start_y")) m_start.setY(json["start_y"].toDouble());
@@ -102,6 +108,9 @@ SchematicItem* SchematicShapeItem::clone() const {
     item->setPoints(m_points);
     item->setPen(m_pen);
     item->setBrush(m_brush);
+    item->setRotation(rotation());
+    item->setMirroredX(isMirroredX());
+    item->setMirroredY(isMirroredY());
     return item;
 }
 
