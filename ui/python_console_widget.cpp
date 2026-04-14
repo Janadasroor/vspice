@@ -13,6 +13,13 @@ PythonConsoleWidget::PythonConsoleWidget(QWidget* parent)
     setReadOnly(false);
     setTabStopDistance(24);
 
+    // Show startup status
+    if (py_executor_is_initialized()) {
+        printOutput("Python 3 initialized successfully.\n", false);
+    } else {
+        printOutput("WARNING: Python runtime not available.\n", true);
+    }
+
     // Initial prompt
     showPrompt();
     m_promptLine = document()->blockCount();
@@ -35,10 +42,10 @@ void PythonConsoleWidget::executeLine(const QString& code) {
 
     if (output) {
         QString qOutput = QString::fromUtf8(output);
-        if (!qOutput.isEmpty()) {
-            printOutput(qOutput, isError != 0);
-        }
+        printOutput(qOutput, isError != 0);  // Always print, even if empty
         py_executor_free(output);
+    } else {
+        printOutput("(null result)\n", true);
     }
 
     if (m_inContinuation) {

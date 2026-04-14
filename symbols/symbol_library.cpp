@@ -1729,71 +1729,89 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
         return pin;
     };
 
+    auto addDigitalBlockText = [](SymbolDefinition& def, const QString& textValue, const QPointF& pos,
+                                  int size, const QString& hAlign = "center", const QString& vAlign = "center") {
+        SymbolPrimitive text = SymbolPrimitive::createText(textValue, pos, size, QColor(Qt::black));
+        text.data["hAlign"] = hAlign;
+        text.data["vAlign"] = vAlign;
+        def.addPrimitive(text);
+    };
+
+    auto addDigitalMarker = [&](SymbolDefinition& def, const QString& pinName, const QPointF& anchor) {
+        const QString upper = pinName.trimmed().toUpper();
+        if (upper == "CLK" || upper == "CLOCK" || upper == "CK" || upper == "C") {
+            def.addPrimitive(SymbolPrimitive::createLine(anchor + QPointF(-8, -6), anchor + QPointF(0, 0)));
+            def.addPrimitive(SymbolPrimitive::createLine(anchor + QPointF(-8, 6), anchor + QPointF(0, 0)));
+        } else if (upper == "EN" || upper == "G" || upper == "GATE") {
+            def.addPrimitive(SymbolPrimitive::createLine(anchor + QPointF(-8, -6), anchor + QPointF(0, -6)));
+            def.addPrimitive(SymbolPrimitive::createLine(anchor + QPointF(-8, 6), anchor + QPointF(0, 6)));
+            def.addPrimitive(SymbolPrimitive::createLine(anchor + QPointF(0, -6), anchor + QPointF(0, 6)));
+        }
+    };
+
+    auto addDigitalBlock = [&](const QString& name,
+                               const QString& label,
+                               const QString& description,
+                               const QStringList& aliases,
+                               const QString& spiceModel,
+                               const QList<SymbolPrimitive>& pins,
+                               qreal bodyHeight,
+                               bool invertPrimaryOutput = false,
+                               bool invertSecondaryOutput = false) {
+        SymbolDefinition block(name);
+        block.setCategory("Logic");
+        block.setReferencePrefix("U");
+        block.setDescription(description);
+        block.setAliases(aliases);
+        block.setSpiceModelName(spiceModel);
+
+        const qreal halfHeight = bodyHeight / 2.0;
+        const qreal bodyLeft = -28.0;
+        const qreal bodyWidth = 56.0;
+        block.addPrimitive(SymbolPrimitive::createRect(QRectF(bodyLeft, -halfHeight, bodyWidth, bodyHeight), false));
+        block.addPrimitive(SymbolPrimitive::createLine(QPointF(bodyLeft, -halfHeight + 14.0), QPointF(bodyLeft + bodyWidth, -halfHeight + 14.0)));
+        addDigitalBlockText(block, spiceModel, QPointF(0, -halfHeight + 7.0), 8);
+        addDigitalBlockText(block, label, QPointF(0, 6.0), 10);
+
+        int outputIndex = 0;
+        for (const SymbolPrimitive& pin : pins) {
+            block.addPrimitive(pin);
+
+            const QString direction = pin.data.value("signalDirection").toString();
+            const QString pinName = pin.data.value("name").toString();
+            const QPointF pinPos(pin.data.value("x").toDouble(), pin.data.value("y").toDouble());
+            if (direction == "input") {
+                addDigitalMarker(block, pinName, QPointF(bodyLeft, pinPos.y()));
+            } else if (direction == "output") {
+                const bool invertThis = (outputIndex == 0) ? invertPrimaryOutput : invertSecondaryOutput;
+                if (invertThis) {
+                    block.addPrimitive(SymbolPrimitive::createCircle(QPointF(bodyLeft + bodyWidth + 4.0, pinPos.y()), 3.0, false));
+                }
+                ++outputIndex;
+            }
+        }
+
+        addSym(block);
+    };
+
     auto addGate = [&](const QString& name, const QString& type) {
-        SymbolDefinition gate(name);
-        gate.setCategory("Logic");
-        gate.setReferencePrefix("U");
-        gate.setDescription(type + " logic gate");
-        gate.setAliases({type + " Gate", type});
-        
-        const bool bubbleOutput = (type == "NAND" || type == "NOR" || type == "XNOR");
-
-        if (type == "AND" || type == "NAND") {
-            gate.addPrimitive(SymbolPrimitive::createArc(QRectF(-10, -20, 40, 40), -90, 180));
-            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-10, -20), QPointF(10, -20)));
-            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-10, 20), QPointF(10, 20)));
-            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-10, -20), QPointF(-10, 20)));
-        } else if (type == "OR" || type == "NOR") {
-            // OR gate body as Bezier curves for stable rendering/rotation.
-            gate.addPrimitive(SymbolPrimitive::createBezier(
-                QPointF(-30, -20), QPointF(-5, -22), QPointF(12, -12), QPointF(30, 0)));
-            gate.addPrimitive(SymbolPrimitive::createBezier(
-                QPointF(-30, 20), QPointF(-5, 22), QPointF(12, 12), QPointF(30, 0)));
-            gate.addPrimitive(SymbolPrimitive::createBezier(
-                QPointF(-30, -20), QPointF(-12, -10), QPointF(-12, 10), QPointF(-30, 20)));
-        } else if (type == "XOR" || type == "XNOR") {
-            gate.addPrimitive(SymbolPrimitive::createBezier(
-                QPointF(-30, -20), QPointF(-5, -22), QPointF(12, -12), QPointF(30, 0)));
-            gate.addPrimitive(SymbolPrimitive::createBezier(
-                QPointF(-30, 20), QPointF(-5, 22), QPointF(12, 12), QPointF(30, 0)));
-            gate.addPrimitive(SymbolPrimitive::createBezier(
-                QPointF(-30, -20), QPointF(-12, -10), QPointF(-12, 10), QPointF(-30, 20)));
-            // XOR extra front arc
-            gate.addPrimitive(SymbolPrimitive::createBezier(
-                QPointF(-35, -20), QPointF(-17, -10), QPointF(-17, 10), QPointF(-35, 20)));
-        } else if (type == "BUF") {
-            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, -15), QPointF(-20, 15)));
-            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, -15), QPointF(10, 0)));
-            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, 15), QPointF(10, 0)));
-            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(10, 0), QPointF(30, 0)));
-        } else if (type == "NOT") {
-            // Draw triangle using lines for robust rendering across old/new polygon loaders.
-            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, -15), QPointF(-20, 15)));
-            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, -15), QPointF(5, 0)));
-            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, 15), QPointF(5, 0)));
-            gate.addPrimitive(SymbolPrimitive::createCircle(QPointF(10, 0), 5, false));
-            gate.addPrimitive(SymbolPrimitive::createLine(QPointF(15, 0), QPointF(30, 0)));
-        }
-
-        if (bubbleOutput) {
-            gate.addPrimitive(SymbolPrimitive::createCircle(QPointF(35, 0), 5, false));
-        }
-        
         const bool singleInputGate = (type == "NOT" || type == "BUF");
-        const qreal inAY = singleInputGate ? 0.0 : -10.0;
-        SymbolPrimitive inA = makeDigitalPin(QPointF(-45, inAY), 1, "A", "Right", "input");
-        if (type == "OR" || type == "NOR" || type == "XOR" || type == "XNOR") inA.data["length"] = 15.0;
-        gate.addPrimitive(inA);
+        const bool bubbleOutput = (type == "NAND" || type == "NOR" || type == "XNOR" || type == "NOT");
+        QList<SymbolPrimitive> pins;
+        pins << makeDigitalPin(QPointF(-45, singleInputGate ? 0.0 : -10.0), 1, "A", "Right", "input");
         if (!singleInputGate) {
-            SymbolPrimitive inB = makeDigitalPin(QPointF(-45, 10), 2, "B", "Right", "input");
-            if (type == "OR" || type == "NOR" || type == "XOR" || type == "XNOR") inB.data["length"] = 15.0;
-            gate.addPrimitive(inB);
+            pins << makeDigitalPin(QPointF(-45, 10.0), 2, "B", "Right", "input");
         }
-        const qreal outPinX = bubbleOutput ? 55.0 : 45.0;
-        SymbolPrimitive outY = makeDigitalPin(QPointF(outPinX, 0), 3, "Y", "Left", "output",
-                                              singleInputGate ? 30.0 : 15.0);
-        gate.addPrimitive(outY);
-        addSym(gate);
+        pins << makeDigitalPin(QPointF(45, 0.0), 3, "Y", "Left", "output", bubbleOutput ? 17.0 : 15.0);
+
+        addDigitalBlock(name,
+                        type,
+                        QString("Native digital %1 gate").arg(type.toLower()),
+                        {type + " Gate", type},
+                        type == "NOT" ? QString("NOT") : type,
+                        pins,
+                        singleInputGate ? 36.0 : 44.0,
+                        bubbleOutput);
     };
     addGate("Gate_AND", "AND");
     addGate("Gate_OR", "OR");
@@ -1811,27 +1829,13 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
                                   const QString& spiceModel,
                                   const QList<SymbolPrimitive>& pins,
                                   qreal bodyHeight) {
-        SymbolDefinition seq(name);
-        seq.setCategory("Logic");
-        seq.setReferencePrefix("U");
-        seq.setDescription(description);
-        seq.setAliases(aliases);
-        seq.setSpiceModelName(spiceModel);
-        seq.addPrimitive(SymbolPrimitive::createRect(QRectF(-25, -bodyHeight / 2.0, 50, bodyHeight), false));
-        SymbolPrimitive text = SymbolPrimitive::createText(label, QPointF(0, 0), 10, QColor(Qt::black));
-        text.data["hAlign"] = "center";
-        text.data["vAlign"] = "center";
-        seq.addPrimitive(text);
-        for (const SymbolPrimitive& pin : pins) {
-            seq.addPrimitive(pin);
-        }
-        addSym(seq);
+        addDigitalBlock(name, label, description, aliases, spiceModel, pins, bodyHeight, false, true);
     };
 
     addSequentialLogic(
         "D_FlipFlop",
         "D FF",
-        "Edge-triggered D flip-flop with asynchronous set/reset and complementary outputs",
+        "Native digital edge-triggered D flip-flop with asynchronous set/reset and complementary outputs",
         {"D Flip-Flop", "D Flip Flop", "DFF", "Gate_DFF"},
         "DFF",
         {
@@ -1847,7 +1851,7 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
     addSequentialLogic(
         "JK_FlipFlop",
         "JK FF",
-        "Edge-triggered JK flip-flop with asynchronous set/reset and complementary outputs",
+        "Native digital edge-triggered JK flip-flop with asynchronous set/reset and complementary outputs",
         {"JK Flip-Flop", "JK Flip Flop", "JKFF", "Gate_JKFF"},
         "JKFF",
         {
@@ -1864,7 +1868,7 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
     addSequentialLogic(
         "T_FlipFlop",
         "T FF",
-        "Edge-triggered toggle flip-flop with asynchronous set/reset and complementary outputs",
+        "Native digital edge-triggered toggle flip-flop with asynchronous set/reset and complementary outputs",
         {"T Flip-Flop", "T Flip Flop", "TFF", "Toggle Flip-Flop", "Gate_TFF"},
         "TFF",
         {
@@ -1880,7 +1884,7 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
     addSequentialLogic(
         "SR_FlipFlop",
         "SR FF",
-        "Edge-triggered set-reset flip-flop with asynchronous set/reset and complementary outputs",
+        "Native digital edge-triggered set-reset flip-flop with asynchronous set/reset and complementary outputs",
         {"SR Flip-Flop", "SR Flip Flop", "Set-Reset Flip-Flop", "SRFF", "Gate_SRFF"},
         "SRFF",
         {
@@ -1897,7 +1901,7 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
     addSequentialLogic(
         "D_Latch",
         "D LAT",
-        "Level-sensitive D latch with asynchronous set/reset and complementary outputs",
+        "Native digital level-sensitive D latch with asynchronous set/reset and complementary outputs",
         {"D Latch", "DLATCH", "Gate_DLATCH"},
         "DLATCH",
         {
@@ -1913,7 +1917,7 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
     addSequentialLogic(
         "SR_Latch",
         "SR LAT",
-        "Level-sensitive set-reset latch with enable, asynchronous set/reset, and complementary outputs",
+        "Native digital level-sensitive set-reset latch with enable, asynchronous set/reset, and complementary outputs",
         {"SR Latch", "Set-Reset Latch", "SRLATCH", "Gate_SRLATCH"},
         "SRLATCH",
         {
@@ -1926,6 +1930,59 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
             makeDigitalPin(QPointF(40, 10), 7, "QN", "Left", "output"),
         },
         90.0);
+
+    addDigitalBlock(
+        "Counter",
+        "COUNT",
+        "Native digital counter with clock input and primary output",
+        {"COUNTER", "Gate_COUNTER"},
+        "COUNTER",
+        {
+            makeDigitalPin(QPointF(-45, 0.0), 1, "CLK", "Right", "input"),
+            makeDigitalPin(QPointF(45, 0.0), 2, "Q", "Left", "output"),
+        },
+        36.0);
+
+    addDigitalBlock(
+        "Schmitt_Trigger",
+        "SCHMITT",
+        "Native digital Schmitt trigger input buffer",
+        {"SCHMITT", "Schmitt Trigger", "Gate_SCHMITT"},
+        "SCHMITT",
+        {
+            makeDigitalPin(QPointF(-45, 0.0), 1, "A", "Right", "input"),
+            makeDigitalPin(QPointF(45, 0.0), 2, "Y", "Left", "output"),
+        },
+        36.0);
+
+    addDigitalBlock(
+        "TriState_Buffer",
+        "TRI",
+        "Native digital tri-state buffer with input, enable, and output",
+        {"TRISTATE", "Tri-State Buffer", "Gate_TRISTATE"},
+        "TRISTATE",
+        {
+            makeDigitalPin(QPointF(-45, -10.0), 1, "A", "Right", "input"),
+            makeDigitalPin(QPointF(-45, 10.0), 2, "EN", "Right", "input"),
+            makeDigitalPin(QPointF(45, 0.0), 3, "Y", "Left", "output"),
+        },
+        44.0);
+
+    addDigitalBlock(
+        "RAM_Native",
+        "RAM",
+        "Native digital RAM block with address, data in/out, chip select and write enable",
+        {"RAM Native", "Native RAM", "RAM_DIGITAL"},
+        "RAM",
+        {
+            makeDigitalPin(QPointF(-45, -25.0), 1, "A", "Right", "input"),
+            makeDigitalPin(QPointF(-45, -10.0), 2, "DI", "Right", "input"),
+            makeDigitalPin(QPointF(-45, 5.0), 3, "CS", "Right", "input"),
+            makeDigitalPin(QPointF(-45, 20.0), 4, "WE", "Right", "input"),
+            makeDigitalPin(QPointF(45, -10.0), 5, "DO", "Left", "output"),
+            makeDigitalPin(QPointF(45, 10.0), 6, "DO_BAR", "Left", "output"),
+        },
+        70.0);
 
     auto addRamSymbol = [&](const QString& name,
                             const QString& label,
@@ -1977,8 +2034,8 @@ void SymbolLibraryManager::createDefaultBuiltInLibrary() {
         addSym(ram);
     };
 
-    addRamSymbol("RAM_16x8", "RAM 16x8", "16-word by 8-bit XSPICE RAM with vector data/address ports", 8, 4);
-    addRamSymbol("RAM_16x4", "RAM 16x4", "16-word by 4-bit XSPICE RAM with vector data/address ports", 4, 4);
+    // Legacy XSPICE RAM variants intentionally not exposed in the default built-in
+    // library path now that native digital RAM is available.
 
     // === Behavioral Sources ===
     auto addBehSource = [&](const QString& name, bool isVoltage) {

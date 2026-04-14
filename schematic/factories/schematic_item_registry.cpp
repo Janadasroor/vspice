@@ -255,8 +255,8 @@ void SchematicItemRegistry::registerBuiltInItems() {
     });
 
     factory.registerItemType("RAM", [makeGenericFromLibrary](QPointF pos, const QJsonObject& properties, QGraphicsItem* parent) -> SchematicItem* {
-        const QString value = properties.value("value").toString("AS6C62256");
-        if (auto* item = makeGenericFromLibrary("RAM", pos, value, parent)) return item;
+        const QString value = properties.value("value").toString("RAM");
+        if (auto* item = makeGenericFromLibrary("RAM_Native", pos, value, parent)) return item;
         const int pinCount = properties.value("pinCount").toInt(16);
         return new ICItem(pos, value, pinCount, parent);
     });
@@ -268,11 +268,39 @@ void SchematicItemRegistry::registerBuiltInItems() {
         });
     };
     addLogicGate("Gate_AND", "74HC08");
+    addLogicGate("AND Gate", "74HC08");
     addLogicGate("Gate_OR", "74HC32");
+    addLogicGate("OR Gate", "74HC32");
     addLogicGate("Gate_XOR", "74HC86");
+    addLogicGate("XOR Gate", "74HC86");
     addLogicGate("Gate_NAND", "74HC00");
+    addLogicGate("NAND Gate", "74HC00");
     addLogicGate("Gate_NOR", "74HC02");
+    addLogicGate("NOR Gate", "74HC02");
+    addLogicGate("Gate_BUF", "74HC125");
+    addLogicGate("Buffer", "74HC125");
     addLogicGate("Gate_NOT", "74HC04");
+    addLogicGate("Inverter", "74HC04");
+    addLogicGate("Gate_XNOR", "CD4077");
+    addLogicGate("XNOR Gate", "CD4077");
+    addLogicGate("D_FlipFlop", "DFF");
+    addLogicGate("D Flip-Flop", "DFF");
+    addLogicGate("JK_FlipFlop", "JKFF");
+    addLogicGate("JK Flip-Flop", "JKFF");
+    addLogicGate("T_FlipFlop", "TFF");
+    addLogicGate("T Flip-Flop", "TFF");
+    addLogicGate("SR_FlipFlop", "SRFF");
+    addLogicGate("SR Flip-Flop", "SRFF");
+    addLogicGate("D_Latch", "DLATCH");
+    addLogicGate("D Latch", "DLATCH");
+    addLogicGate("SR_Latch", "SRLATCH");
+    addLogicGate("SR Latch", "SRLATCH");
+    addLogicGate("Counter", "COUNTER");
+    addLogicGate("Schmitt_Trigger", "SCHMITT");
+    addLogicGate("Schmitt Trigger", "SCHMITT");
+    addLogicGate("TriState_Buffer", "TRISTATE");
+    addLogicGate("Tri-State Buffer", "TRISTATE");
+    addLogicGate("RAM_Native", "RAM");
 
     // Register Power items
     // Each lambda restores from properties (custom net names, position, etc.) via fromJson

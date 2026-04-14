@@ -449,26 +449,66 @@ struct WizardTemplateDef {
 };
 
 const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
-    auto makeSequentialTemplateJson = [](const QString& symbolName,
-                                         const QString& description,
-                                         const QString& spiceModel,
-                                         const QString& label,
-                                         const QList<SymbolPrimitive>& pins,
-                                         qreal bodyHeight) {
+    auto addDigitalBlockText = [](SymbolDefinition& def, const QString& textValue, const QPointF& pos,
+                                  int size, const QString& hAlign = "center", const QString& vAlign = "center") {
+        SymbolPrimitive text = SymbolPrimitive::createText(textValue, pos, size, QColor(Qt::black));
+        text.data["hAlign"] = hAlign;
+        text.data["vAlign"] = vAlign;
+        def.addPrimitive(text);
+    };
+
+    auto addDigitalMarker = [](SymbolDefinition& def, const QString& pinName, const QPointF& anchor) {
+        const QString upper = pinName.trimmed().toUpper();
+        if (upper == "CLK" || upper == "CLOCK" || upper == "CK" || upper == "C") {
+            def.addPrimitive(SymbolPrimitive::createLine(anchor + QPointF(-8, -6), anchor + QPointF(0, 0)));
+            def.addPrimitive(SymbolPrimitive::createLine(anchor + QPointF(-8, 6), anchor + QPointF(0, 0)));
+        } else if (upper == "EN" || upper == "G" || upper == "GATE") {
+            def.addPrimitive(SymbolPrimitive::createLine(anchor + QPointF(-8, -6), anchor + QPointF(0, -6)));
+            def.addPrimitive(SymbolPrimitive::createLine(anchor + QPointF(-8, 6), anchor + QPointF(0, 6)));
+            def.addPrimitive(SymbolPrimitive::createLine(anchor + QPointF(0, -6), anchor + QPointF(0, 6)));
+        }
+    };
+
+    auto buildDigitalBlockDef = [&](const QString& symbolName,
+                                    const QString& description,
+                                    const QString& spiceModel,
+                                    const QString& label,
+                                    const QList<SymbolPrimitive>& pins,
+                                    qreal bodyHeight,
+                                    bool invertPrimaryOutput = false,
+                                    bool invertSecondaryOutput = false) {
         SymbolDefinition def(symbolName);
         def.setDescription(description);
         def.setCategory("Logic");
         def.setReferencePrefix("U");
         def.setSpiceModelName(spiceModel);
-        def.addPrimitive(SymbolPrimitive::createRect(QRectF(-25, -bodyHeight / 2.0, 50, bodyHeight), false));
-        SymbolPrimitive text = SymbolPrimitive::createText(label, QPointF(0, 0), 10, QColor(Qt::black));
-        text.data["hAlign"] = "center";
-        text.data["vAlign"] = "center";
-        def.addPrimitive(text);
+
+        const qreal halfHeight = bodyHeight / 2.0;
+        const qreal bodyLeft = -28.0;
+        const qreal bodyWidth = 56.0;
+        def.addPrimitive(SymbolPrimitive::createRect(QRectF(bodyLeft, -halfHeight, bodyWidth, bodyHeight), false));
+        def.addPrimitive(SymbolPrimitive::createLine(QPointF(bodyLeft, -halfHeight + 14.0), QPointF(bodyLeft + bodyWidth, -halfHeight + 14.0)));
+        addDigitalBlockText(def, spiceModel, QPointF(0, -halfHeight + 7.0), 8);
+        addDigitalBlockText(def, label, QPointF(0, 6.0), 10);
+
+        int outputIndex = 0;
         for (const SymbolPrimitive& pin : pins) {
             def.addPrimitive(pin);
+            const QString direction = pin.data.value("signalDirection").toString();
+            const QString pinName = pin.data.value("name").toString();
+            const QPointF pinPos(pin.data.value("x").toDouble(), pin.data.value("y").toDouble());
+            if (direction == "input") {
+                addDigitalMarker(def, pinName, QPointF(bodyLeft, pinPos.y()));
+            } else if (direction == "output") {
+                const bool invertThis = (outputIndex == 0) ? invertPrimaryOutput : invertSecondaryOutput;
+                if (invertThis) {
+                    def.addPrimitive(SymbolPrimitive::createCircle(QPointF(bodyLeft + bodyWidth + 4.0, pinPos.y()), 3.0, false));
+                }
+                ++outputIndex;
+            }
         }
-        return def.toJson();
+
+        return def;
     };
 
     auto makeDigitalPin = [](const QPointF& pos, int number, const QString& name,
@@ -496,7 +536,7 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
         {"not_1", "NOT Gate (Inverter)", "Digital inverter", "logic", "Digital", "U", "NOT", 2, 10.0, 0.0, "not"},
         {"buf_1", "Buffer Gate", "Digital non-inverting buffer", "logic", "Digital", "U", "BUF", 2, 10.0, 0.0, "buf"},
         {"d_flipflop", "D Flip-Flop", "Edge-triggered D flip-flop with set/reset and Q/QN outputs", "symbol", "Logic", "U", "D_FlipFlop", 6, 10.0, 0.0, "",
-            makeSequentialTemplateJson(
+            buildDigitalBlockDef(
                 "D_FlipFlop",
                 "Edge-triggered D flip-flop with asynchronous set/reset and complementary outputs",
                 "DFF",
@@ -509,9 +549,9 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                     makeDigitalPin(QPointF(40, -10), 5, "Q", "Left", "output"),
                     makeDigitalPin(QPointF(40, 10), 6, "QN", "Left", "output"),
                 },
-                70.0)},
+                70.0, false, true).toJson()},
         {"jk_flipflop", "JK Flip-Flop", "Edge-triggered JK flip-flop with set/reset and Q/QN outputs", "symbol", "Logic", "U", "JK_FlipFlop", 7, 10.0, 0.0, "",
-            makeSequentialTemplateJson(
+            buildDigitalBlockDef(
                 "JK_FlipFlop",
                 "Edge-triggered JK flip-flop with asynchronous set/reset and complementary outputs",
                 "JKFF",
@@ -525,9 +565,9 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                     makeDigitalPin(QPointF(40, -10), 6, "Q", "Left", "output"),
                     makeDigitalPin(QPointF(40, 10), 7, "QN", "Left", "output"),
                 },
-                90.0)},
+                90.0, false, true).toJson()},
         {"t_flipflop", "T Flip-Flop", "Edge-triggered toggle flip-flop with set/reset and Q/QN outputs", "symbol", "Logic", "U", "T_FlipFlop", 6, 10.0, 0.0, "",
-            makeSequentialTemplateJson(
+            buildDigitalBlockDef(
                 "T_FlipFlop",
                 "Edge-triggered toggle flip-flop with asynchronous set/reset and complementary outputs",
                 "TFF",
@@ -540,9 +580,9 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                     makeDigitalPin(QPointF(40, -10), 5, "Q", "Left", "output"),
                     makeDigitalPin(QPointF(40, 10), 6, "QN", "Left", "output"),
                 },
-                70.0)},
+                70.0, false, true).toJson()},
         {"sr_flipflop", "SR Flip-Flop", "Edge-triggered set-reset flip-flop with set/reset and Q/QN outputs", "symbol", "Logic", "U", "SR_FlipFlop", 7, 10.0, 0.0, "",
-            makeSequentialTemplateJson(
+            buildDigitalBlockDef(
                 "SR_FlipFlop",
                 "Edge-triggered set-reset flip-flop with asynchronous set/reset and complementary outputs",
                 "SRFF",
@@ -556,9 +596,9 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                     makeDigitalPin(QPointF(40, -10), 6, "Q", "Left", "output"),
                     makeDigitalPin(QPointF(40, 10), 7, "QN", "Left", "output"),
                 },
-                90.0)},
+                90.0, false, true).toJson()},
         {"d_latch", "D Latch", "Level-sensitive D latch with enable, set/reset, and Q/QN outputs", "symbol", "Logic", "U", "D_Latch", 6, 10.0, 0.0, "",
-            makeSequentialTemplateJson(
+            buildDigitalBlockDef(
                 "D_Latch",
                 "Level-sensitive D latch with asynchronous set/reset and complementary outputs",
                 "DLATCH",
@@ -571,9 +611,9 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                     makeDigitalPin(QPointF(40, -10), 5, "Q", "Left", "output"),
                     makeDigitalPin(QPointF(40, 10), 6, "QN", "Left", "output"),
                 },
-                70.0)},
+                70.0, false, true).toJson()},
         {"sr_latch", "SR Latch", "Level-sensitive SR latch with enable, set/reset, and Q/QN outputs", "symbol", "Logic", "U", "SR_Latch", 7, 10.0, 0.0, "",
-            makeSequentialTemplateJson(
+            buildDigitalBlockDef(
                 "SR_Latch",
                 "Level-sensitive set-reset latch with enable, asynchronous set/reset, and complementary outputs",
                 "SRLATCH",
@@ -587,7 +627,7 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                     makeDigitalPin(QPointF(40, -10), 6, "Q", "Left", "output"),
                     makeDigitalPin(QPointF(40, 10), 7, "QN", "Left", "output"),
                 },
-                90.0)},
+                90.0, false, true).toJson()},
     };
     return defs;
 }
@@ -796,46 +836,45 @@ SymbolDefinition buildLogicTemplateSymbol(const WizardTemplateDef& tpl,
     const QString gate = tpl.gate.toLower();
     const bool unary = (gate == "not" || gate == "buf");
     const bool inverted = (gate == "nand" || gate == "nor" || gate == "xnor" || gate == "not");
+    const QString displayLabel = gate.toUpper();
+    const QString modelLabel = (gate == "buf") ? QString("BUF") : (gate == "not" ? QString("NOT") : displayLabel);
+    const qreal bodyHeight = unary ? 36.0 : 44.0;
+    const qreal halfHeight = bodyHeight / 2.0;
+    const qreal bodyLeft = -28.0;
+    const qreal bodyWidth = 56.0;
 
-    // Pin frame is kept on 10-unit multiples to stay grid-clean.
-    const qreal inX = -40.0;
-    const qreal outX = 40.0;
-    const qreal leadLenIn = 20.0;
-    const qreal leadLenOut = inverted ? 14.0 : 20.0;
+    auto makeLogicPin = [](const QPointF& pos, int number, const QString& name,
+                           const QString& orientation, const QString& direction, qreal length = 15.0) {
+        SymbolPrimitive pin = SymbolPrimitive::createPin(pos, number, name, orientation, length);
+        pin.data["signalDomain"] = "digital_event";
+        pin.data["signalDirection"] = direction;
+        return pin;
+    };
+
+    def.addPrimitive(SymbolPrimitive::createRect(QRectF(bodyLeft, -halfHeight, bodyWidth, bodyHeight), false));
+    def.addPrimitive(SymbolPrimitive::createLine(QPointF(bodyLeft, -halfHeight + 14.0), QPointF(bodyLeft + bodyWidth, -halfHeight + 14.0)));
+
+    SymbolPrimitive modelText = SymbolPrimitive::createText(modelLabel, QPointF(0, -halfHeight + 7.0), 8, QColor(Qt::black));
+    modelText.data["hAlign"] = "center";
+    modelText.data["vAlign"] = "center";
+    def.addPrimitive(modelText);
+
+    SymbolPrimitive labelText = SymbolPrimitive::createText(displayLabel, QPointF(0, 6.0), 10, QColor(Qt::black));
+    labelText.data["hAlign"] = "center";
+    labelText.data["vAlign"] = "center";
+    def.addPrimitive(labelText);
 
     if (unary) {
-        def.addPrimitive(SymbolPrimitive::createPin(QPointF(inX, 0.0), 1, "A", "Right", leadLenIn));
-        def.addPrimitive(SymbolPrimitive::createPin(QPointF(outX, 0.0), 2, "Y", "Left", leadLenOut));
+        def.addPrimitive(makeLogicPin(QPointF(-45, 0.0), 1, "A", "Right", "input"));
+        def.addPrimitive(makeLogicPin(QPointF(45, 0.0), 2, "Y", "Left", "output", inverted ? 17.0 : 15.0));
     } else {
-        def.addPrimitive(SymbolPrimitive::createPin(QPointF(inX, -10.0), 1, "A", "Right", leadLenIn));
-        def.addPrimitive(SymbolPrimitive::createPin(QPointF(inX, 10.0), 2, "B", "Right", leadLenIn));
-        def.addPrimitive(SymbolPrimitive::createPin(QPointF(outX, 0.0), 3, "Y", "Left", leadLenOut));
-    }
-
-    if (gate == "and" || gate == "nand") {
-        def.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, -20), QPointF(-20, 20)));
-        def.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, -20), QPointF(0, -20)));
-        def.addPrimitive(SymbolPrimitive::createLine(QPointF(-20, 20), QPointF(0, 20)));
-        def.addPrimitive(SymbolPrimitive::createArc(QRectF(-20, -20, 40, 40), 90 * 16, -180 * 16));
-    } else if (gate == "or" || gate == "nor" || gate == "xor" || gate == "xnor") {
-        def.addPrimitive(SymbolPrimitive::createBezier(
-            QPointF(-22, -20), QPointF(-4, -20), QPointF(8, -12), QPointF(20, 0)));
-        def.addPrimitive(SymbolPrimitive::createBezier(
-            QPointF(-22, 20), QPointF(-4, 20), QPointF(8, 12), QPointF(20, 0)));
-        def.addPrimitive(SymbolPrimitive::createBezier(
-            QPointF(-22, -20), QPointF(-36, -10), QPointF(-36, 10), QPointF(-22, 20)));
-        if (gate == "xor" || gate == "xnor") {
-            def.addPrimitive(SymbolPrimitive::createBezier(
-                QPointF(-28, -20), QPointF(-42, -10), QPointF(-42, 10), QPointF(-28, 20)));
-        }
-    } else if (gate == "not" || gate == "buf") {
-        def.addPrimitive(SymbolPrimitive::createPolygon({
-            QPointF(-20, -20), QPointF(-20, 20), QPointF(18, 0)
-        }, false));
+        def.addPrimitive(makeLogicPin(QPointF(-45, -10.0), 1, "A", "Right", "input"));
+        def.addPrimitive(makeLogicPin(QPointF(-45, 10.0), 2, "B", "Right", "input"));
+        def.addPrimitive(makeLogicPin(QPointF(45, 0.0), 3, "Y", "Left", "output", inverted ? 17.0 : 15.0));
     }
 
     if (inverted) {
-        def.addPrimitive(SymbolPrimitive::createCircle(QPointF(23, 0), 3.0, false));
+        def.addPrimitive(SymbolPrimitive::createCircle(QPointF(bodyLeft + bodyWidth + 4.0, 0.0), 3.0, false));
     }
 
     return def;

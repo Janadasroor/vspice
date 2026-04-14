@@ -34,6 +34,7 @@ private Q_SLOTS:
 private:
     struct SearchResult {
         QString name;
+        QString displayName;
         QString category;
         QString description;
         QString library;

@@ -87,6 +87,70 @@ bool isBundledKicadSymLibraryPath(const QString& p) {
     return false;
 }
 
+QString cleanDigitalDisplayName(const QString& rawName) {
+    static const QMap<QString, QString> kDisplayNames = {
+        {"Gate_AND", "AND Gate"},
+        {"Gate_OR", "OR Gate"},
+        {"Gate_XOR", "XOR Gate"},
+        {"Gate_NAND", "NAND Gate"},
+        {"Gate_NOR", "NOR Gate"},
+        {"Gate_XNOR", "XNOR Gate"},
+        {"Gate_BUF", "Buffer"},
+        {"Gate_NOT", "Inverter"},
+        {"D_FlipFlop", "D Flip-Flop"},
+        {"JK_FlipFlop", "JK Flip-Flop"},
+        {"T_FlipFlop", "T Flip-Flop"},
+        {"SR_FlipFlop", "SR Flip-Flop"},
+        {"D_Latch", "D Latch"},
+        {"SR_Latch", "SR Latch"},
+        {"Schmitt_Trigger", "Schmitt Trigger"},
+        {"TriState_Buffer", "Tri-State Buffer"},
+        {"RAM_Native", "RAM"},
+    };
+    return kDisplayNames.value(rawName, rawName);
+}
+
+QString cleanDigitalDescription(const QString& rawName, const QString& fallback) {
+    static const QMap<QString, QString> kDescriptions = {
+        {"Gate_AND", "Native digital AND gate"},
+        {"Gate_OR", "Native digital OR gate"},
+        {"Gate_XOR", "Native digital XOR gate"},
+        {"Gate_NAND", "Native digital NAND gate"},
+        {"Gate_NOR", "Native digital NOR gate"},
+        {"Gate_XNOR", "Native digital XNOR gate"},
+        {"Gate_BUF", "Native digital buffer"},
+        {"Gate_NOT", "Native digital inverter"},
+        {"D_FlipFlop", "Native digital D flip-flop"},
+        {"JK_FlipFlop", "Native digital JK flip-flop"},
+        {"T_FlipFlop", "Native digital T flip-flop"},
+        {"SR_FlipFlop", "Native digital SR flip-flop"},
+        {"D_Latch", "Native digital D latch"},
+        {"SR_Latch", "Native digital SR latch"},
+        {"Counter", "Native digital counter"},
+        {"Schmitt_Trigger", "Native digital Schmitt trigger"},
+        {"TriState_Buffer", "Native digital tri-state buffer"},
+        {"RAM_Native", "Native digital RAM block"},
+        {"AND Gate", "Native digital AND gate"},
+        {"OR Gate", "Native digital OR gate"},
+        {"XOR Gate", "Native digital XOR gate"},
+        {"NAND Gate", "Native digital NAND gate"},
+        {"NOR Gate", "Native digital NOR gate"},
+        {"XNOR Gate", "Native digital XNOR gate"},
+        {"Buffer", "Native digital buffer"},
+        {"Inverter", "Native digital inverter"},
+        {"D Flip-Flop", "Native digital D flip-flop"},
+        {"JK Flip-Flop", "Native digital JK flip-flop"},
+        {"T Flip-Flop", "Native digital T flip-flop"},
+        {"SR Flip-Flop", "Native digital SR flip-flop"},
+        {"D Latch", "Native digital D latch"},
+        {"SR Latch", "Native digital SR latch"},
+        {"Schmitt Trigger", "Native digital Schmitt trigger"},
+        {"Tri-State Buffer", "Native digital tri-state buffer"},
+        {"RAM", "Native digital RAM block"},
+    };
+    return kDescriptions.value(rawName, fallback);
+}
+
 SymbolDefinition makeFallbackPreviewSymbol(const QString& name, const QString& category) {
     SymbolDefinition def(name);
     def.setCategory(category);
@@ -390,8 +454,9 @@ void LibraryBrowserDialog::performSymbolSearch(const QString& query) {
             for (const SymbolLibrary::SymbolInfo& info : infos) {
                 SearchResult result;
                 result.name = info.name;
+                result.displayName = cleanDigitalDisplayName(info.name);
                 result.category = info.category;
-                result.description = info.description;
+                result.description = cleanDigitalDescription(info.name, info.description);
                 result.library = info.library;
                 result.libraryPath = info.libraryPath;
                 found.append(result);
@@ -404,8 +469,9 @@ void LibraryBrowserDialog::performSymbolSearch(const QString& query) {
         for (const SymbolLibrary::SymbolInfo& info : infos) {
             SearchResult result;
             result.name = info.name;
+            result.displayName = cleanDigitalDisplayName(info.name);
             result.category = info.category;
-            result.description = info.description;
+            result.description = cleanDigitalDescription(info.name, info.description);
             result.library = info.library;
             result.libraryPath = info.libraryPath;
             found.append(result);
@@ -413,7 +479,8 @@ void LibraryBrowserDialog::performSymbolSearch(const QString& query) {
     }
 
     auto appendResult = [&](const SearchResult& result) {
-        const QString key = result.name.trimmed().toLower();
+        const QString visibleName = result.displayName.isEmpty() ? result.name : result.displayName;
+        const QString key = visibleName.trimmed().toLower();
         if (key.isEmpty() || seenNames.contains(key)) return;
         seenNames.insert(key);
 
@@ -428,7 +495,7 @@ void LibraryBrowserDialog::performSymbolSearch(const QString& query) {
         QString accent = theme ? theme->accentColor().name() : "#007acc";
         QString secFg = theme ? theme->textSecondary().name() : "#666";
 
-        QLabel* nameLabel = new QLabel(result.name);
+        QLabel* nameLabel = new QLabel(visibleName);
         nameLabel->setStyleSheet(QString("font-weight: 700; font-size: 13px; color: %1;").arg(accent));
 
         QString detailText = result.category;
@@ -447,7 +514,7 @@ void LibraryBrowserDialog::performSymbolSearch(const QString& query) {
     };
 
     for (const SearchResult& result : found) {
-        if (result.name.trimmed().isEmpty()) continue;
+        if ((result.displayName.isEmpty() ? result.name : result.displayName).trimmed().isEmpty()) continue;
         if (isBundledKicadSymLibraryPath(result.libraryPath)) continue;
         appendResult(result);
     }
@@ -467,7 +534,9 @@ void LibraryBrowserDialog::performSymbolSearch(const QString& query) {
         if (!q.isEmpty() && !tool.first.contains(q, Qt::CaseInsensitive)) continue;
         SearchResult result;
         result.name = tool.first;
+        result.displayName = cleanDigitalDisplayName(tool.first);
         result.category = tool.second;
+        result.description = cleanDigitalDescription(tool.first, QString());
         result.builtInTool = true;
         appendResult(result);
     }
@@ -501,7 +570,7 @@ void LibraryBrowserDialog::onResultSelected(QListWidgetItem* item) {
             m_selectedSymbol.setCategory(result.category);
             m_selectedSymbol.setDescription(result.description);
         }
-        m_previewTitle->setText(m_selectedSymbol.name());
+        m_previewTitle->setText(result.displayName.isEmpty() ? m_selectedSymbol.name() : result.displayName);
         m_previewDesc->setText(m_selectedSymbol.description().isEmpty() ? "No description available for this part." : m_selectedSymbol.description());
         m_previewStats->setText("Industry Standard • High Reliability");
 

@@ -323,6 +323,30 @@ QString defaultXspiceModelLine(const QString& ref, const QString& codeModel) {
     return QString(".model %1 %2").arg(modelName, codeModel);
 }
 
+QString nativeLogicKeywordForCodeModel(const QString& codeModel) {
+    if (codeModel == "d_and") return "AND";
+    if (codeModel == "d_nand") return "NAND";
+    if (codeModel == "d_or") return "OR";
+    if (codeModel == "d_nor") return "NOR";
+    if (codeModel == "d_xor") return "XOR";
+    if (codeModel == "d_xnor") return "XNOR";
+    if (codeModel == "d_buffer") return "BUF";
+    if (codeModel == "d_inverter") return "NOT";
+    if (codeModel == "d_dff") return "DFF";
+    if (codeModel == "d_jkff") return "JKFF";
+    if (codeModel == "d_tff") return "TFF";
+    if (codeModel == "d_srff") return "SRFF";
+    if (codeModel == "d_dlatch") return "DLATCH";
+    if (codeModel == "d_srlatch") return "SRLATCH";
+    if (codeModel == "d_tristate") return "TRISTATE";
+    if (codeModel == "d_ram") return "RAM";
+    return QString();
+}
+
+bool usesNativeLogicADevice(const QString& codeModel) {
+    return !nativeLogicKeywordForCodeModel(codeModel).isEmpty();
+}
+
 bool xspiceModelUsesCollapsedInputVector(const QString& codeModel) {
     return codeModel == "d_and" || codeModel == "d_nand" ||
            codeModel == "d_or" || codeModel == "d_nor" ||
@@ -3333,7 +3357,8 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         const QString ref = comp.reference;
         const QString rawLogicToken = comp.spiceModel.trimmed().isEmpty() ? comp.value.trimmed() : comp.spiceModel.trimmed();
         const bool isADevice = isXspiceLogicComponent(rawLogicToken, comp.typeName, ref);
-        if (!isADevice) continue;
+        const QString codeModel = normalizeXspiceModelAlias(rawLogicToken, comp.typeName);
+        if (!isADevice || usesNativeLogicADevice(codeModel)) continue;
 
         SymbolDefinition* sym = SymbolLibraryManager::instance().findSymbol(comp.typeName);
         const QMap<QString, QString> pins = componentPins.value(ref);
@@ -3485,6 +3510,11 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
             }
         }
         const bool isADevice = line.startsWith("A", Qt::CaseInsensitive);
+        const QString normalizedLogicCodeModel =
+            isADevice ? normalizeXspiceModelAlias(comp.spiceModel.trimmed().isEmpty() ? comp.value.trimmed() : comp.spiceModel.trimmed(),
+                                                  comp.typeName)
+                      : QString();
+        const bool isNativeLogicADevice = isADevice && usesNativeLogicADevice(normalizedLogicCodeModel);
 
         // --- SPICE Mapper Logic ---
         value = comp.value;
@@ -3737,7 +3767,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                     const bool shouldTreatAsInput = isExplicitDigitalInput ||
                                                     (!hasDirectionMetadata && isLikelyLogicInputPinName(heuristicPinName));
 
-                    if (shouldTreatAsInput) {
+                    if (shouldTreatAsInput && !isNativeLogicADevice) {
                         if (!digitalDrivenNets.contains(net)) {
                             const QString bridgedNet = QString("__MM_ADC_%1_%2").arg(sanitizeMixedModeToken(ref), sanitizeMixedModeToken(pk));
                             netlist += mixedModeAdcBridgeLine(ref, pk, net, bridgedNet) + "\n";
@@ -3770,8 +3800,79 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                     assignments.last().isInput = false;
                 }
 
-                const QString pendingCodeModel = normalizeXspiceModelAlias(value, comp.typeName);
-                nodes = buildXspiceNodeTokens(assignments, xspiceModelUsesCollapsedInputVector(pendingCodeModel));
+                if (isNativeLogicADevice) {
+                    QStringList nativeNodes(8, QStringLiteral("0"));
+                    QList<XspicePinAssignment> inputs;
+                    QList<XspicePinAssignment> outputs;
+                    for (const XspicePinAssignment& assignment : assignments) {
+                        if (assignment.isInput) inputs.append(assignment);
+                        else outputs.append(assignment);
+                    }
+
+                    auto upperName = [](const XspicePinAssignment& assignment) {
+                        return assignment.pinName.trimmed().toUpper();
+                    };
+                    auto takeByNames = [upperName](QList<XspicePinAssignment>& pool, std::initializer_list<const char*> names) -> QString {
+                        for (const char* rawName : names) {
+                            const QString wanted = QString::fromLatin1(rawName);
+                            for (int i = 0; i < pool.size(); ++i) {
+                                if (upperName(pool[i]) == wanted) {
+                                    const QString net = pool.takeAt(i).netName;
+                                    return net.isEmpty() ? QStringLiteral("0") : net;
+                                }
+                            }
+                        }
+                        return QString();
+                    };
+                    auto takeFirst = [](QList<XspicePinAssignment>& pool) -> QString {
+                        if (pool.isEmpty()) return QString();
+                        const QString net = pool.takeFirst().netName;
+                        return net.isEmpty() ? QStringLiteral("0") : net;
+                    };
+                    auto placeIf = [&](int index, const QString& net) {
+                        if (index >= 0 && index < nativeNodes.size() && !net.isEmpty()) nativeNodes[index] = net;
+                    };
+
+                    if (normalizedLogicCodeModel == "d_dff") {
+                        placeIf(0, takeByNames(inputs, {"D"}));
+                        placeIf(1, takeByNames(inputs, {"CLK", "CLOCK", "CK", "C"}));
+                    } else if (normalizedLogicCodeModel == "d_jkff") {
+                        placeIf(0, takeByNames(inputs, {"J"}));
+                        placeIf(1, takeByNames(inputs, {"K"}));
+                        placeIf(2, takeByNames(inputs, {"CLK", "CLOCK", "CK", "C"}));
+                    } else if (normalizedLogicCodeModel == "d_tff") {
+                        placeIf(0, takeByNames(inputs, {"T"}));
+                        placeIf(1, takeByNames(inputs, {"CLK", "CLOCK", "CK", "C"}));
+                    } else if (normalizedLogicCodeModel == "d_srff" || normalizedLogicCodeModel == "d_srlatch") {
+                        placeIf(0, takeByNames(inputs, {"S", "SET"}));
+                        placeIf(1, takeByNames(inputs, {"R", "RESET"}));
+                    } else if (normalizedLogicCodeModel == "d_dlatch") {
+                        placeIf(0, takeByNames(inputs, {"D"}));
+                        placeIf(1, takeByNames(inputs, {"CLK", "CLOCK", "CK", "C", "EN", "G", "GATE"}));
+                    } else if (normalizedLogicCodeModel == "d_ram") {
+                        int slot = 0;
+                        while (slot < 5 && !inputs.isEmpty()) nativeNodes[slot++] = takeFirst(inputs);
+                    } else {
+                        int slot = 0;
+                        while (slot < 5 && !inputs.isEmpty()) nativeNodes[slot++] = takeFirst(inputs);
+                    }
+
+                    QList<XspicePinAssignment> outputPool = assignments;
+                    for (int i = outputPool.size() - 1; i >= 0; --i) {
+                        if (outputPool[i].isInput) outputPool.removeAt(i);
+                    }
+                    QString q = takeByNames(outputPool, {"Q", "Y", "OUT"});
+                    QString nq = takeByNames(outputPool, {"NQ", "QN", "QB", "OUTB", "YB"});
+                    if (q.isEmpty()) q = takeFirst(outputPool);
+                    if (nq.isEmpty()) nq = takeFirst(outputPool);
+                    placeIf(6, q);
+                    placeIf(7, nq);
+
+                    nodes = nativeNodes;
+                } else {
+                    const QString pendingCodeModel = normalizeXspiceModelAlias(value, comp.typeName);
+                    nodes = buildXspiceNodeTokens(assignments, xspiceModelUsesCollapsedInputVector(pendingCodeModel));
+                }
             } else {
                 for (const QString& pk : sortedKeys) {
                     QString net = pins[pk];
@@ -4398,7 +4499,7 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
             switchModelsAdded.insert(value.toLower());
         }
 
-        if (isADevice) {
+        if (isADevice && !isNativeLogicADevice) {
             const QString codeModel = normalizeXspiceModelAlias(value, comp.typeName);
             if (codeModel.isEmpty()) {
                 runtimeWarnings.append(QString("Unknown XSPICE gate model '%1' on %2; defaulted to d_and.").arg(value, ref));
@@ -4416,6 +4517,11 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
                     netlist += modelLine + "\n";
                     switchModelsAdded.insert(modelName.toLower());
                 }
+            }
+        } else if (isNativeLogicADevice) {
+            const QString nativeKeyword = nativeLogicKeywordForCodeModel(normalizedLogicCodeModel);
+            if (!nativeKeyword.isEmpty()) {
+                value = nativeKeyword;
             }
         }
 
