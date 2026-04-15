@@ -71,6 +71,7 @@ private:
     bool m_bgRunIssued = false;
     bool m_stopRequested = false;
     bool m_pauseRequested = false;
+    bool m_switchToggleInProgress = false;  // Prevents simulationFinished() during switch toggles
     QString m_currentNetlist;
     SimControl* m_streamingControl = nullptr;
     

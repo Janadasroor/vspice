@@ -463,22 +463,26 @@ void SimulationManager::alterSwitchResistance(const QString& resistorName, doubl
 #ifdef HAVE_NGSPICE
     if (!m_isInitialized) return;
 
-    // Use bg_halt -> alter -> bg_run cycle for mid-simulation switch change
-    // This preserves simulation state (capacitor voltages, inductor currents)
+    // Set flag to prevent simulationFinished() from being emitted
+    // when the background thread stops due to bg_halt
+    m_switchToggleInProgress = true;
 
-    // 1. Halt the simulation
+    // 1. Halt the simulation (pauses, doesn't fully stop)
     sendInternalCommand("bg_halt");
 
     // Small delay to ensure simulation has stopped
-    QThread::msleep(10);
+    QThread::msleep(20);
 
     // 2. Alter the resistor value
     // ngspice syntax: alter Rname R=value
     QString cmd = QString("alter %1 R=%2").arg(resistorName, QString::number(resistance, 'g', 12));
     ngSpice_Command(cmd.toLatin1().data());
 
-    // 3. Resume simulation
+    // 3. Resume simulation (bg_resume continues from paused state, bg_run would restart)
     sendInternalCommand("bg_resume");
+
+    // Clear flag after resume
+    m_switchToggleInProgress = false;
 #endif
 }
 
@@ -706,11 +710,14 @@ int SimulationManager::cbSendInitData(void* initData, int id, void* userData) {
 int SimulationManager::cbBGThreadRunning(bool finished, int id, void* userData) {
     SimulationManager* self = static_cast<SimulationManager*>(userData);
     if (self && finished && self->m_bgRunIssued) {
-        if (self->m_pauseRequested || self->m_stopRequested) {
+        // If we're in the middle of a switch toggle, don't emit simulationFinished.
+        // The simulation will be resumed immediately via bg_run.
+        if (self->m_switchToggleInProgress) {
             QMetaObject::invokeMethod(self->m_bufferTimer, "stop", Qt::QueuedConnection);
             QMetaObject::invokeMethod(self, "processBufferedData", Qt::QueuedConnection);
             return 0;
         }
+        // Normal completion or stop: write raw file and emit signals
         QFileInfo info(self->m_currentNetlist);
         const QString rawPath = info.absolutePath() + "/" + info.completeBaseName() + ".raw";
         QMetaObject::invokeMethod(self, "handleSimulationFinished", Qt::QueuedConnection, Q_ARG(QString, rawPath));
