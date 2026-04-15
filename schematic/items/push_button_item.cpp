@@ -18,11 +18,9 @@ void triggerInteractiveSimulationUpdateIfNeeded() {
 }
 
 void updatePushButtonRealTime(const QString& ref, bool pressed) {
-    // Use real-time update instead of full simulation restart
-    // This preserves simulation state (capacitor voltages, inductor currents)
+    // Phase 1: Use alter command (proven working)
     auto& sim = SimulationManager::instance();
-    double resistance = pressed ? 0.001 : 1e12;
-    sim.alterSwitchResistance(ref.startsWith("R") ? ref : "R" + ref, resistance);
+    sim.alterSwitchResistance(ref.startsWith("R") ? ref : "R" + ref, pressed ? 0.001 : 1e12);
 }
 }
 

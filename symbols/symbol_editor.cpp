@@ -484,8 +484,8 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
         def.setSpiceModelName(spiceModel);
 
         const qreal halfHeight = bodyHeight / 2.0;
-        const qreal bodyLeft = -30.0;
-        const qreal bodyWidth = 60.0;
+        const qreal bodyLeft = -45.0;
+        const qreal bodyWidth = 90.0;
         def.addPrimitive(SymbolPrimitive::createRect(QRectF(bodyLeft, -halfHeight, bodyWidth, bodyHeight), false));
         def.addPrimitive(SymbolPrimitive::createLine(QPointF(bodyLeft, -halfHeight + 15.0), QPointF(bodyLeft + bodyWidth, -halfHeight + 15.0)));
         addDigitalBlockText(def, spiceModel, QPointF(0, -halfHeight + 7.5), 8);
@@ -542,14 +542,14 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                 "DFF",
                 "D FF",
                 {
-                    makeDigitalPin(QPointF(-45, -30), 1, "D", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, -15), 2, "CLK", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 0), 3, "SET", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 15), 4, "RESET", "Right", "input"),
-                    makeDigitalPin(QPointF(45, -15), 5, "Q", "Left", "output"),
-                    makeDigitalPin(QPointF(45, 15), 6, "QN", "Left", "output"),
+                    makeDigitalPin(QPointF(-60, -30.0), 1, "D", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, -15.0), 2, "CLK", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 15.0), 3, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 30.0), 4, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(60, 0.0), 5, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(60, 15.0), 6, "QN", "Left", "output"),
                 },
-                75.0, false, true).toJson()},
+                90.0, false, true).toJson()},
         {"jk_flipflop", "JK Flip-Flop", "Edge-triggered JK flip-flop with set/reset and Q/QN outputs", "symbol", "Logic", "U", "JK_FlipFlop", 7, 10.0, 0.0, "",
             buildDigitalBlockDef(
                 "JK_FlipFlop",
@@ -557,13 +557,13 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                 "JKFF",
                 "JK FF",
                 {
-                    makeDigitalPin(QPointF(-45, -30), 1, "J", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, -15), 2, "K", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 0), 3, "CLK", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 15), 4, "SET", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 30), 5, "RESET", "Right", "input"),
-                    makeDigitalPin(QPointF(45, -15), 6, "Q", "Left", "output"),
-                    makeDigitalPin(QPointF(45, 15), 7, "QN", "Left", "output"),
+                    makeDigitalPin(QPointF(-60, -30.0), 1, "J", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, -15.0), 2, "K", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 0.0), 3, "CLK", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 15.0), 4, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 30.0), 5, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(60, 0.0), 6, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(60, 15.0), 7, "QN", "Left", "output"),
                 },
                 90.0, false, true).toJson()},
         {"t_flipflop", "T Flip-Flop", "Edge-triggered toggle flip-flop with set/reset and Q/QN outputs", "symbol", "Logic", "U", "T_FlipFlop", 6, 10.0, 0.0, "",
@@ -573,14 +573,14 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                 "TFF",
                 "T FF",
                 {
-                    makeDigitalPin(QPointF(-45, -30), 1, "T", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, -15), 2, "CLK", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 0), 3, "SET", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 15), 4, "RESET", "Right", "input"),
-                    makeDigitalPin(QPointF(45, -15), 5, "Q", "Left", "output"),
-                    makeDigitalPin(QPointF(45, 15), 6, "QN", "Left", "output"),
+                    makeDigitalPin(QPointF(-60, -30.0), 1, "T", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, -15.0), 2, "CLK", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 15.0), 3, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 30.0), 4, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(60, 0.0), 5, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(60, 15.0), 6, "QN", "Left", "output"),
                 },
-                75.0, false, true).toJson()},
+                90.0, false, true).toJson()},
         {"sr_flipflop", "SR Flip-Flop", "Edge-triggered set-reset flip-flop with set/reset and Q/QN outputs", "symbol", "Logic", "U", "SR_FlipFlop", 7, 10.0, 0.0, "",
             buildDigitalBlockDef(
                 "SR_FlipFlop",
@@ -588,13 +588,13 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                 "SRFF",
                 "SR FF",
                 {
-                    makeDigitalPin(QPointF(-45, -30), 1, "S", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, -15), 2, "R", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 0), 3, "CLK", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 15), 4, "SET", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 30), 5, "RESET", "Right", "input"),
-                    makeDigitalPin(QPointF(45, -15), 6, "Q", "Left", "output"),
-                    makeDigitalPin(QPointF(45, 15), 7, "QN", "Left", "output"),
+                    makeDigitalPin(QPointF(-60, -30.0), 1, "S", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, -15.0), 2, "R", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 0.0), 3, "CLK", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 15.0), 4, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 30.0), 5, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(60, 0.0), 6, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(60, 15.0), 7, "QN", "Left", "output"),
                 },
                 90.0, false, true).toJson()},
         {"d_latch", "D Latch", "Level-sensitive D latch with enable, set/reset, and Q/QN outputs", "symbol", "Logic", "U", "D_Latch", 6, 10.0, 0.0, "",
@@ -604,14 +604,14 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                 "DLATCH",
                 "D LAT",
                 {
-                    makeDigitalPin(QPointF(-45, -30), 1, "D", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, -15), 2, "EN", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 0), 3, "SET", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 15), 4, "RESET", "Right", "input"),
-                    makeDigitalPin(QPointF(45, -15), 5, "Q", "Left", "output"),
-                    makeDigitalPin(QPointF(45, 15), 6, "QN", "Left", "output"),
+                    makeDigitalPin(QPointF(-60, -30.0), 1, "D", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, -15.0), 2, "EN", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 15.0), 3, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 30.0), 4, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(60, 0.0), 5, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(60, 15.0), 6, "QN", "Left", "output"),
                 },
-                75.0, false, true).toJson()},
+                90.0, false, true).toJson()},
         {"sr_latch", "SR Latch", "Level-sensitive SR latch with enable, set/reset, and Q/QN outputs", "symbol", "Logic", "U", "SR_Latch", 7, 10.0, 0.0, "",
             buildDigitalBlockDef(
                 "SR_Latch",
@@ -619,13 +619,13 @@ const QList<WizardTemplateDef>& builtinWizardTemplateDefs() {
                 "SRLATCH",
                 "SR LAT",
                 {
-                    makeDigitalPin(QPointF(-45, -30), 1, "S", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, -15), 2, "R", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 0), 3, "EN", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 15), 4, "SET", "Right", "input"),
-                    makeDigitalPin(QPointF(-45, 30), 5, "RESET", "Right", "input"),
-                    makeDigitalPin(QPointF(45, -15), 6, "Q", "Left", "output"),
-                    makeDigitalPin(QPointF(45, 15), 7, "QN", "Left", "output"),
+                    makeDigitalPin(QPointF(-60, -30.0), 1, "S", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, -15.0), 2, "R", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 0.0), 3, "EN", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 15.0), 4, "SET", "Right", "input"),
+                    makeDigitalPin(QPointF(-60, 30.0), 5, "RESET", "Right", "input"),
+                    makeDigitalPin(QPointF(60, 0.0), 6, "Q", "Left", "output"),
+                    makeDigitalPin(QPointF(60, 15.0), 7, "QN", "Left", "output"),
                 },
                 90.0, false, true).toJson()},
     };
@@ -838,10 +838,10 @@ SymbolDefinition buildLogicTemplateSymbol(const WizardTemplateDef& tpl,
     const bool inverted = (gate == "nand" || gate == "nor" || gate == "xnor" || gate == "not");
     const QString displayLabel = gate.toUpper();
     const QString modelLabel = (gate == "buf") ? QString("BUF") : (gate == "not" ? QString("NOT") : displayLabel);
-    const qreal bodyHeight = unary ? 36.0 : 44.0;
+    const qreal bodyHeight = unary ? 60.0 : 60.0;
     const qreal halfHeight = bodyHeight / 2.0;
-    const qreal bodyLeft = -28.0;
-    const qreal bodyWidth = 56.0;
+    const qreal bodyLeft = -45.0;
+    const qreal bodyWidth = 90.0;
 
     auto makeLogicPin = [](const QPointF& pos, int number, const QString& name,
                            const QString& orientation, const QString& direction, qreal length = 15.0) {
@@ -852,9 +852,9 @@ SymbolDefinition buildLogicTemplateSymbol(const WizardTemplateDef& tpl,
     };
 
     def.addPrimitive(SymbolPrimitive::createRect(QRectF(bodyLeft, -halfHeight, bodyWidth, bodyHeight), false));
-    def.addPrimitive(SymbolPrimitive::createLine(QPointF(bodyLeft, -halfHeight + 14.0), QPointF(bodyLeft + bodyWidth, -halfHeight + 14.0)));
+    def.addPrimitive(SymbolPrimitive::createLine(QPointF(bodyLeft, -halfHeight + 15.0), QPointF(bodyLeft + bodyWidth, -halfHeight + 15.0)));
 
-    SymbolPrimitive modelText = SymbolPrimitive::createText(modelLabel, QPointF(0, -halfHeight + 7.0), 8, QColor(Qt::black));
+    SymbolPrimitive modelText = SymbolPrimitive::createText(modelLabel, QPointF(0, -halfHeight + 7.5), 8, QColor(Qt::black));
     modelText.data["hAlign"] = "center";
     modelText.data["vAlign"] = "center";
     def.addPrimitive(modelText);
@@ -865,12 +865,12 @@ SymbolDefinition buildLogicTemplateSymbol(const WizardTemplateDef& tpl,
     def.addPrimitive(labelText);
 
     if (unary) {
-        def.addPrimitive(makeLogicPin(QPointF(-45, 0.0), 1, "A", "Right", "input"));
-        def.addPrimitive(makeLogicPin(QPointF(45, 0.0), 2, "Y", "Left", "output", inverted ? 17.0 : 15.0));
+        def.addPrimitive(makeLogicPin(QPointF(-60, 0.0), 1, "A", "Right", "input"));
+        def.addPrimitive(makeLogicPin(QPointF(60, 0.0), 2, "Y", "Left", "output", inverted ? 17.0 : 15.0));
     } else {
-        def.addPrimitive(makeLogicPin(QPointF(-45, -10.0), 1, "A", "Right", "input"));
-        def.addPrimitive(makeLogicPin(QPointF(-45, 10.0), 2, "B", "Right", "input"));
-        def.addPrimitive(makeLogicPin(QPointF(45, 0.0), 3, "Y", "Left", "output", inverted ? 17.0 : 15.0));
+        def.addPrimitive(makeLogicPin(QPointF(-60, -15.0), 1, "A", "Right", "input"));
+        def.addPrimitive(makeLogicPin(QPointF(-60, 15.0), 2, "B", "Right", "input"));
+        def.addPrimitive(makeLogicPin(QPointF(60, 0.0), 3, "Y", "Left", "output", inverted ? 17.0 : 15.0));
     }
 
     if (inverted) {

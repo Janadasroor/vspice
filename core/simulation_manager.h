@@ -8,6 +8,7 @@
 #include <functional>
 #include <vector>
 #include <mutex>
+#include <map>
 
 #ifdef HAVE_NGSPICE
 #include <ngspice/sharedspice.h>

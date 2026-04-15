@@ -508,6 +508,52 @@ void SimulationManager::alterSwitchVoltage(const QString& controlSourceName, dou
 #endif
 }
 
+// --- Phase 2: Real-Time Interactive Switch Callback ---
+
+// Forward declaration of VioMATRIXC Phase 2 callback registration function
+extern "C" {
+    typedef int (GetSwitchData)(double*, const char*, int, void*);
+    int ngSpice_Init_SwitchData(GetSwitchData *switchdat, void *userData);
+}
+
+void SimulationManager::registerSwitchCallback() {
+#ifdef HAVE_NGSPICE
+    if (!m_isInitialized) return;
+
+    // Register the callback with ngspice
+    ngSpice_Init_SwitchData(cbGetSwitchData, this);
+    qDebug() << "[SimulationManager] Registered Phase 2 switch callback (zero latency)";
+#endif
+}
+
+void SimulationManager::setSwitchResistance(const QString& name, double resistance) {
+    std::lock_guard<std::mutex> lock(m_switchMutex);
+    m_switchResistances[name.toStdString()] = resistance;
+}
+
+double SimulationManager::getSwitchResistance(const QString& name) const {
+    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(m_switchMutex));
+    auto it = m_switchResistances.find(name.toStdString());
+    if (it != m_switchResistances.end()) {
+        return it->second;
+    }
+    return 0.0; // 0 means "use default"
+}
+
+// Static callback called by ngspice during simulation at every timestep
+int SimulationManager::cbGetSwitchData(double* resistance, const char* name, int ident, void* userData) {
+    SimulationManager* self = static_cast<SimulationManager*>(userData);
+    if (!self || !resistance || !name) return -1;
+
+    std::lock_guard<std::mutex> lock(self->m_switchMutex);
+    auto it = self->m_switchResistances.find(name);
+    if (it != self->m_switchResistances.end() && it->second > 0.0) {
+        *resistance = it->second;
+        return 0; // Success: return override value
+    }
+    return -1; // No override: ngspice uses default model value
+}
+
 void SimulationManager::processBufferedData() {
     std::vector<SimDataPoint> batch;
     std::vector<QString> logBatch;

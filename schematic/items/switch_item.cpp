@@ -18,7 +18,8 @@ void triggerInteractiveSimulationUpdateIfNeeded() {
 }
 
 void updateSwitchRealTime(const QString& switchRef, bool open, double vt, double vh) {
-    // Try real-time update first (no restart)
+    // Phase 1: Use alter command (proven working)
+    // bg_halt → alter R=value → bg_resume
     auto& sim = SimulationManager::instance();
     sim.alterSwitch(switchRef, open, vt, vh);
 }
