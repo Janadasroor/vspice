@@ -2,6 +2,7 @@
 // VS Code-style quick open dialog for searching and opening recent files
 
 #include "quick_open_dialog.h"
+#include "../core/theme_manager.h"
 #include <QKeyEvent>
 #include <QFileInfo>
 #include <QDir>
@@ -18,8 +19,9 @@ QuickOpenDialog::QuickOpenDialog(QWidget* parent)
     , m_selectOnShow(true)
 {
     setWindowTitle("Quick Open");
-    setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint | Qt::WindowSystemMenuHint);
-    setWindowModality(Qt::ApplicationModal);
+    setWindowFlags(Qt::Popup | Qt::FramelessWindowHint);
+    setAttribute(Qt::WA_NoSystemBackground, false);
+    setAttribute(Qt::WA_TranslucentBackground, true);
 
     // Set size (similar to VS Code's quick open)
     resize(600, 400);
@@ -40,22 +42,36 @@ QuickOpenDialog::QuickOpenDialog(QWidget* parent)
     m_layout->setContentsMargins(0, 0, 0, 0);
     m_layout->setSpacing(0);
 
+    // Get current theme
+    PCBTheme* theme = ThemeManager::theme();
+    bool isLight = theme && theme->type() == PCBTheme::Light;
+
+    const QString bgColor = theme ? theme->panelBackground().name() : "#1e1e1e";
+    const QString borderColor = theme ? theme->panelBorder().name() : "#3f3f46";
+    const QString textColor = theme ? theme->textColor().name() : "#f4f4f5";
+    const QString accentColor = theme ? theme->accentColor().name() : "#2563eb";
+    const QString hoverColor = theme ? theme->accentHover().name() : "#1e40af";
+    const QString inputBg = isLight ? "#ffffff" : "#27272a";
+    const QString inputFocusBg = isLight ? "#f8f9fa" : "#2f2f33";
+
     // Search box
     m_searchBox = new QLineEdit(this);
     m_searchBox->setPlaceholderText("Search files... (type to filter)");
     m_searchBox->setClearButtonEnabled(true);
-    m_searchBox->setStyleSheet(
+    m_searchBox->setStyleSheet(QString(
         "QLineEdit {"
         "    padding: 12px 16px;"
         "    font-size: 14px;"
         "    border: none;"
-        "    border-bottom: 1px solid #e0e0e0;"
-        "    background: #ffffff;"
+        "    border-bottom: 1px solid %1;"
+        "    background: %2;"
+        "    color: %3;"
         "    border-radius: 8px 8px 0 0;"
         "}"
         "QLineEdit:focus {"
-        "    background: #f8f9fa;"
+        "    background: %4;"
         "}"
+        ).arg(borderColor, inputBg, textColor, inputFocusBg)
     );
     m_layout->addWidget(m_searchBox);
 
@@ -67,23 +83,25 @@ QuickOpenDialog::QuickOpenDialog(QWidget* parent)
     m_fileList->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_fileList->setSelectionMode(QAbstractItemView::SingleSelection);
     m_fileList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    m_fileList->setStyleSheet(
+    m_fileList->setStyleSheet(QString(
         "QListWidget {"
         "    border: none;"
-        "    background: #ffffff;"
+        "    background: %1;"
+        "    color: %2;"
         "    border-radius: 0 0 8px 8px;"
         "}"
         "QListWidget::item {"
         "    padding: 8px 16px;"
-        "    border-bottom: 1px solid #f0f0f0;"
+        "    border-bottom: 1px solid %3;"
         "}"
         "QListWidget::item:selected {"
-        "    background: #007acc;"
+        "    background: %4;"
         "    color: #ffffff;"
         "}"
         "QListWidget::item:hover {"
-        "    background: #e8f4fc;"
+        "    background: %5;"
         "}"
+        ).arg(bgColor, textColor, borderColor, accentColor, hoverColor)
     );
     m_layout->addWidget(m_fileList);
 
@@ -95,6 +113,71 @@ QuickOpenDialog::QuickOpenDialog(QWidget* parent)
     // Install event filter for keyboard navigation
     m_searchBox->installEventFilter(this);
     m_fileList->installEventFilter(this);
+
+    // Ensure click outside closes
+    setAttribute(Qt::WA_DeleteOnClose, false);
+    setAutoFillBackground(true);
+
+    // Apply base dialog theme
+    if (ThemeManager::theme()) {
+        ThemeManager::theme()->applyToWidget(this);
+    }
+
+    // Update styles when theme changes
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
+        // Refresh all styles
+        PCBTheme* theme = ThemeManager::theme();
+        bool isLight = theme && theme->type() == PCBTheme::Light;
+
+        const QString bgColor = theme ? theme->panelBackground().name() : "#1e1e1e";
+        const QString borderColor = theme ? theme->panelBorder().name() : "#3f3f46";
+        const QString textColor = theme ? theme->textColor().name() : "#f4f4f5";
+        const QString accentColor = theme ? theme->accentColor().name() : "#2563eb";
+        const QString hoverColor = theme ? theme->accentHover().name() : "#1e40af";
+        const QString inputBg = isLight ? "#ffffff" : "#27272a";
+        const QString inputFocusBg = isLight ? "#f8f9fa" : "#2f2f33";
+
+        m_searchBox->setStyleSheet(QString(
+            "QLineEdit {"
+            "    padding: 12px 16px;"
+            "    font-size: 14px;"
+            "    border: none;"
+            "    border-bottom: 1px solid %1;"
+            "    background: %2;"
+            "    color: %3;"
+            "    border-radius: 8px 8px 0 0;"
+            "}"
+            "QLineEdit:focus {"
+            "    background: %4;"
+            "}"
+            ).arg(borderColor, inputBg, textColor, inputFocusBg)
+        );
+
+        m_fileList->setStyleSheet(QString(
+            "QListWidget {"
+            "    border: none;"
+            "    background: %1;"
+            "    color: %2;"
+            "    border-radius: 0 0 8px 8px;"
+            "}"
+            "QListWidget::item {"
+            "    padding: 8px 16px;"
+            "    border-bottom: 1px solid %3;"
+            "}"
+            "QListWidget::item:selected {"
+            "    background: %4;"
+            "    color: #ffffff;"
+            "}"
+            "QListWidget::item:hover {"
+            "    background: %5;"
+            "}"
+            ).arg(bgColor, textColor, borderColor, accentColor, hoverColor)
+        );
+
+        if (theme) {
+            theme->applyToWidget(this);
+        }
+    });
 }
 
 QuickOpenDialog::~QuickOpenDialog() {
@@ -118,6 +201,8 @@ void QuickOpenDialog::addRecentFile(const QString& file) {
 
 void QuickOpenDialog::showEvent(QShowEvent* event) {
     QDialog::showEvent(event);
+    // Install global event filter to catch clicks outside dialog
+    qApp->installEventFilter(this);
     m_searchBox->clear();
     m_searchBox->setFocus();
     updateFileList();
@@ -127,11 +212,23 @@ void QuickOpenDialog::showEvent(QShowEvent* event) {
 }
 
 void QuickOpenDialog::hideEvent(QHideEvent* event) {
+    // Remove global event filter
+    qApp->removeEventFilter(this);
     QDialog::hideEvent(event);
     Q_EMIT dialogClosed();
 }
 
 bool QuickOpenDialog::eventFilter(QObject* watched, QEvent* event) {
+    if (event->type() == QEvent::MouseButtonPress) {
+        // Close if mouse pressed anywhere outside this dialog
+        QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+        QPoint globalPos = mouseEvent->globalPosition().toPoint();
+        if (!geometry().contains(globalPos)) {
+            reject();
+            return true;
+        }
+    }
+
     if (watched == m_searchBox || watched == m_fileList) {
         if (event->type() == QEvent::KeyPress) {
             QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
