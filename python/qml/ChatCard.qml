@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 
 Item {
     id: root
@@ -17,6 +18,18 @@ Item {
 
     property bool thoughtExpanded: false
     signal showDashboardRequested()
+
+    MessageDialog {
+        id: undoConfirmDialog
+        title: "Rewind Conversation"
+        text: "Are you sure you want to rewind the chat to this point? This will also undo any schematic changes made after this message."
+        buttons: MessageDialog.Yes | MessageDialog.No
+        onButtonClicked: (button, role) => {
+            if (button === MessageDialog.Yes) {
+                geminiBridge.undoToPoint(index)
+            }
+        }
+    }
     
     onMessageThoughtChanged: {
         if (messageThought !== "" && !thoughtExpanded) {
@@ -32,7 +45,43 @@ Item {
         anchors.leftMargin: 10
         
         radius: 6
-        clip: true
+        clip: false // Changed from true to allow hover icon to slightly overlap if needed
+        
+        HoverHandler {
+            id: hoverHandler
+        }
+
+        // Undo Icon (Visible on hover)
+        Rectangle {
+            id: undoBtn
+            visible: isUser && hoverHandler.hovered
+            width: 24; height: 24; radius: 4
+            color: Qt.rgba(30, 41, 59, 0.9)
+            border.color: "#3b82f6"
+            border.width: 1
+            
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: 4
+            z: 10
+            
+            Text {
+                anchors.centerIn: parent
+                text: "↺"
+                color: "white"
+                font.bold: true
+                font.pixelSize: 14
+            }
+            
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: undoConfirmDialog.open()
+                ToolTip.visible: parent.visible && containsMouse
+                ToolTip.text: "Undo/Rewind to here"
+                ToolTip.delay: 400
+            }
+        }
         color: {
             if (isUser) {
                 return (typeof geminiBridge !== "undefined" && geminiBridge && geminiBridge.glassBackground) ? geminiBridge.glassBackground : "rgba(15, 23, 42, 0.95)";

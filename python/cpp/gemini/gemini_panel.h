@@ -76,6 +76,7 @@ private Q_SLOTS:
     void onBridgeRefreshModelsRequest();
     void onBridgeCloseRequest();
     void onBridgeShowHistoryRequest();
+    void onUndoToPoint(int messageIndex);
     void onExportRequested();
 
 private:

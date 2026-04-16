@@ -152,6 +152,10 @@ void GeminiBridge::showHistory() {
 void GeminiBridge::startNewChat() {
     Q_EMIT startNewChatRequested();
 }
+
+void GeminiBridge::undoToPoint(int messageIndex) {
+    Q_EMIT undoToPointRequested(messageIndex);
+}
 void GeminiBridge::setTokenCount(int count) {
     if (m_tokenCount != count) {
         m_tokenCount = count;

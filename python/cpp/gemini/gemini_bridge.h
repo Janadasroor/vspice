@@ -79,6 +79,7 @@ public:
     Q_INVOKABLE void closePanel();
     Q_INVOKABLE void showHistory();
     Q_INVOKABLE void startNewChat();
+    Q_INVOKABLE void undoToPoint(int messageIndex);
     Q_INVOKABLE void showInstructions();
     Q_INVOKABLE void zoomIn();
     Q_INVOKABLE void zoomOut();
@@ -112,6 +113,7 @@ Q_SIGNALS:
     void closeRequested();
     void showHistoryRequested();
     void startNewChatRequested();
+    void undoToPointRequested(int messageIndex);
     void showInstructionsRequested();
     void exportRequested();
 

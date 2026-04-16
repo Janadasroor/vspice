@@ -41,6 +41,7 @@
 #include <QTextStream>
 #include <QTemporaryFile>
 #include <QDirIterator>
+#include <QUndoStack>
 
 namespace {
 QString compactErrorSummary(const QString& raw, int maxLen = 180) {
@@ -201,6 +202,7 @@ GeminiPanel::GeminiPanel(QGraphicsScene* scene, QWidget* parent)
     connect(m_bridge, &GeminiBridge::clearHistoryRequested, this, &GeminiPanel::clearHistory);
     connect(m_bridge, &GeminiBridge::closeRequested, this, &GeminiPanel::onBridgeCloseRequest);
     connect(m_bridge, &GeminiBridge::showHistoryRequested, this, &GeminiPanel::onBridgeShowHistoryRequest);
+    connect(m_bridge, &GeminiBridge::undoToPointRequested, this, &GeminiPanel::onUndoToPoint);
     connect(m_bridge, &GeminiBridge::startNewChatRequested, this, &GeminiPanel::clearHistory);
     connect(m_bridge, &GeminiBridge::showInstructionsRequested, this, &GeminiPanel::onCustomInstructionsClicked);
     connect(m_bridge, &GeminiBridge::exportRequested, this, &GeminiPanel::onExportRequested);
@@ -299,6 +301,37 @@ void GeminiPanel::onBridgeCloseRequest() {
     hide();
 }
 
+void GeminiPanel::onUndoToPoint(int messageIndex) {
+    if (messageIndex < 0 || messageIndex >= m_history.size()) return;
+    
+    qDebug() << "[GeminiPanel] Request to undo to message index:" << messageIndex;
+    
+    const QVariantMap& entry = m_history.at(messageIndex);
+    if (entry["role"].toString() != "user") {
+        qDebug() << "[GeminiPanel] Can only undo to a 'user' message point.";
+        return;
+    }
+
+    int targetUndoIndex = entry["undoIndex"].toInt();
+    qDebug() << "[GeminiPanel] Target undo stack index:" << targetUndoIndex;
+
+    // 1. Revert the editor undo stack
+    if (m_undoStack && targetUndoIndex >= 0) {
+        m_undoStack->setIndex(targetUndoIndex);
+    }
+
+    // 2. Truncate the chat history
+    // We keep up to the selected message (inclusive)
+    while (m_history.size() > messageIndex + 1) {
+        m_history.removeLast();
+    }
+
+    syncHistoryToBridge();
+    saveHistory();
+    
+    appendSystemNote("<b>Chat Rewound:</b> Reverted to state before this message.");
+}
+
 void GeminiPanel::onExportRequested() {
     QString defaultName = m_bridge->conversationTitle().trimmed();
     if (defaultName.isEmpty() || defaultName == "VIORA AI") defaultName = "Conversation";
@@ -383,6 +416,7 @@ void GeminiPanel::askPrompt(const QString& text, bool includeContext, const QStr
         entry["image"] = imageBase64;
     }
     entry["timestamp"] = nowTimeChip();
+    entry["undoIndex"] = m_undoStack ? m_undoStack->index() : -1;
     m_history.append(entry);
     syncHistoryToBridge();
 
