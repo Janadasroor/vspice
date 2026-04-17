@@ -9,6 +9,7 @@ class QCheckBox;
 class QLineEdit;
 class QSpinBox;
 class QPushButton;
+class WaveformDrawWidget;
 
 class VoltageSourceCustomWaveformDialog : public QDialog {
     Q_OBJECT
@@ -29,17 +30,19 @@ private Q_SLOTS:
     void onApplySquare();
     void onApplyTriangle();
     void onApplySawtooth();
+    void onApplyPulse();
+    void onApplyMirrorV();
     void onApplySmooth();
     void onApplyNoise();
     void onApplyInvert();
     void onApplyFormula();
+    void onApplyReverse();
+    void onApplyScaleTime();
+    void onApplyShiftTime();
 
 private:
-    class WaveformDrawWidget;
-
     void setupUi();
     QString buildPwlPoints() const;
-    double evaluateFormula(const QString& formula, double x);
 
     WaveformDrawWidget* m_drawWidget;
     QLineEdit* m_formulaEdit;

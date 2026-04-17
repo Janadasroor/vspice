@@ -220,7 +220,7 @@ void CurrentSourceItem::updateValue() {
                                 .arg(m_sffmOff).arg(m_sffmAmplit).arg(m_sffmCarrier).arg(m_sffmModIndex).arg(m_sffmSignalFreq)
                                 .arg(acStr).arg(tail); break;
         case PWL:   m_value = QString("PWL(%1)%2").arg(m_pwlPoints).arg(repeatStr); break;
-        case PWLFile: m_value = QString("PWL(file=\"%1\")%2").arg(m_pwlFile).arg(repeatStr); break;
+        case PWLFile: m_value = QString("pwlfile=\"%1\" %2").arg(m_pwlFile).arg(repeatStr); break;
         case Behavioral: 
             if (!m_value.startsWith("I=")) m_value = "I=0";
             break;

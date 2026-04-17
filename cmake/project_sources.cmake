@@ -213,6 +213,10 @@ set(SCHEMATIC_SOURCES
     schematic/dialogs/voltage_source_ltspice_dialog.h
     schematic/dialogs/voltage_source_custom_waveform_dialog.cpp
     schematic/dialogs/voltage_source_custom_waveform_dialog.h
+    schematic/dialogs/waveform_draw_widget.cpp
+    schematic/dialogs/waveform_draw_widget.h
+    schematic/dialogs/waveform_engine.cpp
+    schematic/dialogs/waveform_engine.h
     schematic/dialogs/spice_directive_dialog.cpp
     schematic/dialogs/spice_directive_dialog.h
     schematic/dialogs/spice_subcircuit_import_dialog.cpp

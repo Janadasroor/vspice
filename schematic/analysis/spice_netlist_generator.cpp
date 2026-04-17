@@ -2384,6 +2384,17 @@ QString inlinePwlFileIfNeeded(const QString& value, const QString& projectDir, Q
         body = match2.captured(1).trimmed();
     }
 
+    // Check for FILE="..." syntax
+    QRegularExpression fileRe(R"(FILE\s*=\s*["']?([^"']+)["']?)", QRegularExpression::CaseInsensitiveOption);
+    auto fileMatch = fileRe.match(body);
+    if (fileMatch.hasMatch()) {
+        QString path = fileMatch.captured(1);
+        // Use the new native VioMATRIXC 'pwlfile' parameter
+        QString result = QString("pwlfile=\"%1\"").arg(path);
+        if (!tail.isEmpty()) result += " " + tail;
+        return result;
+    }
+
     QStringList tokens = tokenizePwlBody(body);
     if (tokens.isEmpty()) return value;
 
@@ -4900,6 +4911,12 @@ QString SpiceNetlistGenerator::generateCompatibilityLayer(const QString& rawNetl
         QString trimmed = line.trimmed();
         if (trimmed.isEmpty() || trimmed.startsWith('*') || trimmed.startsWith(';') || trimmed.startsWith('#') || trimmed.startsWith('+')) {
             outLines << line; // Keep continuation lines as-is, don't try to rewrite them
+            continue;
+        }
+
+        // If the line already uses native VioMATRIXC pwlfile, don't mess with it
+        if (trimmed.contains("pwlfile=", Qt::CaseInsensitive)) {
+            outLines << line;
             continue;
         }
 
