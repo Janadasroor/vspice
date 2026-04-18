@@ -1,0 +1,13 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="12" y="4" width="24" height="40" fill="#D8C81E"/>
+<rect x="4" y="7.5" width="8" height="6" fill="#EE6035"/>
+<rect x="4" y="16.5" width="8" height="6" fill="#EE6035"/>
+<rect x="4" y="25.5" width="8" height="6" fill="#EE6035"/>
+<rect x="4" y="34.5" width="8" height="6" fill="#EE6035"/>
+<rect x="36" y="7.5" width="8" height="6" fill="#EE6035"/>
+<rect x="36" y="16.5" width="8" height="6" fill="#EE6035"/>
+<rect x="36" y="25.5" width="8" height="6" fill="#EE6035"/>
+<rect x="36" y="34.5" width="8" height="6" fill="#EE6035"/>
+<path d="M30.7082 8.4571L30 4L29.2918 8.4571L26.4733 5.33688L28.1459 9.4284L24.2937 8.83688L27.7082 11L24.2937 13.1631L28.1459 12.5716L26.4733 16.6631L29.2918 13.5429L30 18L30.7082 13.5429L33.5267 16.6631L31.8541 12.5716L35.7063 13.1631L32.2918 11L35.7063 8.83688L31.8541 9.4284L33.5267 5.33688L30.7082 8.4571Z" fill="#4A2878"/>
+<path d="M29.2918 13.5429L26.4733 16.6631L28.1459 12.5716L22 22.5L24.2937 24.5L29.2918 13.5429Z" fill="#371D5B"/>
+</svg>

@@ -1,12 +1,14 @@
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M19 3H5C3.89543 3 3 3.89543 3 5V19C3 20.1046 3.89543 21 5 21H19C20.1046 21 21 20.1046 21 19V5C21 3.89543 20.1046 3 19 3Z" stroke="#E0E0E0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M7 3V8" stroke="#E0E0E0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M12 3V6" stroke="#E0E0E0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M17 3V8" stroke="#E0E0E0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M21 7H16" stroke="#E0E0E0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M21 12H18" stroke="#E0E0E0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M21 17H16" stroke="#E0E0E0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M3 17H8" stroke="#E0E0E0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M3 12H6" stroke="#E0E0E0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M3 7H8" stroke="#E0E0E0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="33.59" y="2.77177" width="16.4589" height="43.6751" rx="4.5" transform="rotate(45 33.59 2.77177)" stroke="currentColor" stroke-width="2.5"/>
+<line x1="15.4502" y1="38.0195" x2="18.4875" y2="40.6416" stroke="currentColor" stroke-width="1.5"/>
+<line x1="17.4502" y1="36.0772" x2="20.4875" y2="38.6993" stroke="currentColor" stroke-width="1.5"/>
+<line x1="19.4502" y1="34.1349" x2="22.4875" y2="36.757" stroke="currentColor" stroke-width="1.5"/>
+<line x1="21.4502" y1="32.1926" x2="24.4875" y2="34.8147" stroke="currentColor" stroke-width="1.5"/>
+<line x1="23.4502" y1="30.2503" x2="26.4875" y2="32.8724" stroke="currentColor" stroke-width="1.5"/>
+<line x1="25.4502" y1="28.308" x2="28.4875" y2="30.9301" stroke="currentColor" stroke-width="1.5"/>
+<line x1="27.4502" y1="26.3657" x2="30.4875" y2="28.9878" stroke="currentColor" stroke-width="1.5"/>
+<line x1="29.4502" y1="24.4234" x2="32.4875" y2="27.0455" stroke="currentColor" stroke-width="1.5"/>
+<line x1="31.4502" y1="22.4811" x2="34.4875" y2="25.1032" stroke="currentColor" stroke-width="1.5"/>
+<line x1="33.4502" y1="20.5387" x2="36.4875" y2="23.1609" stroke="currentColor" stroke-width="1.5"/>
+<line x1="35.4502" y1="18.5964" x2="38.4875" y2="21.2186" stroke="currentColor" stroke-width="1.5"/>
 </svg>

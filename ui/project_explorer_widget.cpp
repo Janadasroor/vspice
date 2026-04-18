@@ -737,14 +737,18 @@ void ProjectExplorerWidget::applyTheme() {
     setStyleSheet(QString(
         "QWidget { background-color: %1; color: %2; }"
         "QWidget#ExplorerHeader { background-color: %1; border-bottom: 1px solid %3; }"
-        "QLineEdit { background-color: %5; border: 1px solid %3; padding: 4px 8px; border-radius: 4px; color: %2; }"
+        "QLineEdit { background-color: %5; border: 1px solid %3; padding: 6px 12px; border-radius: 6px; color: %2; font-size: 13px; }"
         "QLineEdit:focus { border: 1px solid %4; background-color: %1; }"
-        "QTreeView { background-color: %1; border: none; outline: none; alternate-background-color: %6; }"
-        "QTreeView::item { padding: 4px 6px; border-radius: 4px; margin: 0px 4px; height: 24px; }"
-        "QTreeView::item:hover { background-color: %7; }"
-        "QTreeView::item:selected { background-color: %8; color: %2; }"
-        "QTreeView::branch:has-children:!has-siblings:closed, QTreeView::branch:closed:has-children:has-siblings { image: url(%9); }"
-        "QTreeView::branch:open:has-children:!has-siblings, QTreeView::branch:open:has-children:has-siblings { image: url(%10); }"
+        "QTreeView { background-color: %1; border: none; outline: none; alternate-background-color: %6; show-decoration-selected: 0; selection-background-color: transparent; }"
+        "QTreeView::item { padding: 6px 8px; border-radius: 4px; margin: 1px 10px 1px 0px; height: 24px; color: %2; font-size: 13px; }"
+        "QTreeView::item:hover:!selected { background-color: %7; }"
+        "QTreeView::item:selected { "
+        "   background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 %4, stop:0.04 %4, stop:0.041 rgba(86, 156, 214, 20), stop:1 rgba(86, 156, 214, 10));"
+        "   color: %4; font-weight: bold; border-radius: 0px; "
+        "}"
+        "QTreeView::branch { background-color: transparent; }"
+        "QTreeView::branch:has-children:closed:has-siblings, QTreeView::branch:has-children:closed:!has-siblings { image: url(%9); }"
+        "QTreeView::branch:open:has-children:has-siblings, QTreeView::branch:open:has-children:!has-siblings { image: url(%10); }"
     ).arg(bg, fg, border, accent, inputBg, altRow, hoverBg, selectionBg, rightPath, downPath));
 
     if (m_titleLabel) {

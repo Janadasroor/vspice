@@ -51,6 +51,7 @@
         <file>icons/tool_pin.svg</file>
         <file>icons/tool_pad.svg</file>
         <file>icons/tool_pad_settings.svg</file>
+        <file>icons/tool_footprint_wizard.svg</file>
         <file>icons/pad_rect.svg</file>
         <file>icons/pad_circle.svg</file>
         <file>icons/pad_oblong.svg</file>
@@ -69,6 +70,7 @@
         <file>icons/comp_gnd.svg</file>
         <file>icons/comp_vcc.svg</file>
         <file>icons/tool_net_label.svg</file>
+        <file>icons/tool_net.svg</file>
         <file>icons/view_zoom_in.svg</file>
         <file>icons/view_zoom_out.svg</file>
         <file>icons/view_zoom_selection.svg</file>
@@ -109,7 +111,6 @@
         <file>icons/ai_wizard.png</file>
         <file>icons/tool_run.png</file>
         <file>icons/tool_src.png</file>
-        <file>icons/tool_pad_settings.png</file>
         <file>icons/tool_wizard.png</file>
         <file>icons/tool_drc.png</file>
         <file>icons/tool_3d.png</file>

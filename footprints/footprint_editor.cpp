@@ -60,7 +60,7 @@ using namespace Flux::Analysis;
 namespace {
 constexpr const char* kFootprintEditorStateKey = "FootprintEditor";
 
-QIcon getThemeIcon(const QString& path, bool tinted = true) {
+QIcon getThemeIcon(const QString& path, bool tinted = true, const QColor& overrideColor = QColor()) {
     QIcon icon(path);
     if (!tinted || !ThemeManager::theme()) {
         return icon;
@@ -74,7 +74,9 @@ QIcon getThemeIcon(const QString& path, bool tinted = true) {
     QPixmap result = pixmap;
     QPainter painter(&result);
     painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-    painter.fillRect(result.rect(), ThemeManager::theme()->textColor());
+    
+    QColor tintColor = overrideColor.isValid() ? overrideColor : ThemeManager::theme()->textColor();
+    painter.fillRect(result.rect(), tintColor);
     painter.end();
     return QIcon(result);
 }
@@ -1483,8 +1485,8 @@ void FootprintEditor::createToolBar() {
     group->setExclusive(true);
     
     // Helper to add tool to appropriate toolbar
-    auto addTool = [&](QToolBar* bar, const QString& name, Tool tool, const QString& iconFile, const QString& shortcut = "") {
-        QAction* action = new QAction(getThemeIcon(":/icons/" + iconFile), name, this);
+    auto addTool = [&](QToolBar* bar, const QString& name, Tool tool, const QString& iconFile, const QString& shortcut = "", const QColor& overrideColor = QColor(), bool tinted = true) {
+        QAction* action = new QAction(getThemeIcon(":/icons/" + iconFile, tinted, overrideColor), name, this);
         action->setData(static_cast<int>(tool));
         action->setCheckable(true);
         if (!shortcut.isEmpty()) {
@@ -1604,7 +1606,7 @@ void FootprintEditor::createToolBar() {
     m_padNumberStepSpin->setToolTip("Pad number increment for repeated placement");
 
     m_padSettingsButton = new QToolButton(this);
-    m_padSettingsButton->setIcon(getThemeIcon(":/icons/tool_pad_settings.png", false));
+    m_padSettingsButton->setIcon(getThemeIcon(":/icons/tool_pad_settings.svg", false));
     m_padSettingsButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_padSettingsButton->setPopupMode(QToolButton::DelayedPopup);
     m_padSettingsButton->setToolTip("Pad settings");
@@ -1638,11 +1640,10 @@ void FootprintEditor::createToolBar() {
     QAction* zoomFit = m_toolbar->addAction(getThemeIcon(":/icons/view_fit.svg"), "Zoom Fit");
     connect(zoomFit, &QAction::triggered, this, &FootprintEditor::onZoomFit);
     
-    QAction* wizardAction = m_toolbar->addAction(getThemeIcon(":/icons/tool_wizard.png", false), "Wizard");
-    wizardAction->setToolTip("Footprint Wizard — auto-generate standard packages");
+    QAction* wizardAction = m_toolbar->addAction(getThemeIcon(":/icons/tool_footprint_wizard.svg", false), "Footprint Wizard");
+    wizardAction->setToolTip("Advanced Footprint Wizard — generate standard packages with live preview");
     wizardAction->setShortcut(QKeySequence("Ctrl+W"));
     connect(wizardAction, &QAction::triggered, this, &FootprintEditor::onOpenWizard);
-    connect(zoomFit, &QAction::triggered, this, &FootprintEditor::onZoomFit);
     
     m_toolbar->addSeparator();
 
@@ -1856,7 +1857,7 @@ void FootprintEditor::createToolBar() {
     });
 
     // Left Toolbar Items (Drawing Tools)
-    addTool(m_leftToolbar, "Pad", Pad, "tool_pad.svg", "P");
+    addTool(m_leftToolbar, "Pad", Pad, "tool_pad.svg", "P", QColor(), false);
     m_leftToolbar->addSeparator();
     addTool(m_leftToolbar, "Line", Line, "tool_line.svg", "L");
     addTool(m_leftToolbar, "Rect", Rect, "tool_rect.svg", "R");
@@ -2318,15 +2319,11 @@ void FootprintEditor::onZoomFit() {
 }
 
 void FootprintEditor::onOpenWizard() {
-    if (m_leftNavigatorPanel) m_leftNavigatorPanel->setVisible(true);
-    if (m_leftTabWidget) {
-        const int wizardIndex = 1;
-        if (wizardIndex >= 0 && wizardIndex < m_leftTabWidget->count()) {
-            m_leftTabWidget->setCurrentIndex(wizardIndex);
+    FootprintWizardDialog dlg(this, this);
+    if (dlg.exec() == QDialog::Accepted) {
+        if (m_statusLabel) {
+            m_statusLabel->setText("Footprint generated and saved to library.");
         }
-    }
-    if (m_statusLabel) {
-        m_statusLabel->setText("Wizard panel opened on the left.");
     }
 }
 
