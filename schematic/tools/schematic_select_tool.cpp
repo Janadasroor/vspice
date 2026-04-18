@@ -1,6 +1,6 @@
 #include "schematic_select_tool.h"
 #include "schematic_view.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include <QGraphicsItem>
 #include <QGraphicsScene>
 #include <QGraphicsRectItem>
@@ -10,8 +10,8 @@
 #include <QPainter>
 #include <QMouseEvent>
 #include <QTimer>
-#include "flux/core/net_manager.h"
-#include "flux/core/theme_manager.h"
+#include "net_manager.h"
+#include "theme_manager.h"
 #include "schematic_item.h"
 #include "../items/schematic_item_selection_utils.h"
 #include "wire_item.h"

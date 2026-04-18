@@ -1,6 +1,6 @@
 #include "oscilloscope_window.h"
 #if __has_include("../../core/remote_display_server.h") && __has_include(<QtWebSockets/QWebSocketServer>)
-#include "../../core/remote_display_server.h"
+#include "remote_display_server.h"
 #define VIOSPICE_HAS_REMOTE_DISPLAY 1
 #endif
 #include <QVBoxLayout>
@@ -16,7 +16,7 @@
 #include <QDebug>
 #include <QJsonArray>
 #include <QDateTime>
-#include "flux/core/net_manager.h"
+#include "net_manager.h"
 
 OscilloscopeWindow::OscilloscopeWindow(const QUuid& itemId, const QString& itemName, QWidget* parent)
     : QMainWindow(parent), m_itemId(itemId), m_itemName(itemName) {

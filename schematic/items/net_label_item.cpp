@@ -1,5 +1,5 @@
 #include "net_label_item.h"
-#include "flux/core/theme_manager.h"
+#include "theme_manager.h"
 #include <QPainter>
 #include <QFontMetrics>
 

@@ -1,7 +1,7 @@
 #include "led_properties_dialog.h"
 #include "../items/led_item.h"
 #include "../items/blinking_led_item.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include <QComboBox>
 #include <QCheckBox>
 #include <QDialogButtonBox>

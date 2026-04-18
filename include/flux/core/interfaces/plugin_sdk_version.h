@@ -1,2 +1,2 @@
 #pragma once
-#include "core/interfaces/plugin_sdk_version.h"
+#include "interfaces/plugin_sdk_version.h"

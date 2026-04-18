@@ -3,7 +3,7 @@
 
 #include "schematic_editor.h"
 
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include "settings_dialog.h"
 
 #include <QFileDialog>

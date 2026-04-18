@@ -16,7 +16,7 @@
 #include <QPainterPathStroker>
 #include "../drc/pcb_drc.h"
 #include "../analysis/signal_integrity_engine.h"
-#include "../../core/net_class.h"
+#include "net_class.h"
 #include <cmath>
 #include <algorithm>
 #include <QMap>

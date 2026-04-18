@@ -10,9 +10,9 @@
 #include "../drc/pcb_drc.h"
 #include "../analysis/pcb_ratsnest_manager.h"
 #include "../analysis/length_measurement_engine.h"
-#include "../../core/bom_manager.h"
-#include "../../core/net_class.h"
-#include "../../core/eco_types.h"
+#include "bom_manager.h"
+#include "net_class.h"
+#include "eco_types.h"
 
 #include <QGraphicsScene>
 #include <QDateTime>

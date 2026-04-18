@@ -1,2 +1,2 @@
 #pragma once
-#include "core/config_manager.h"
+#include "config_manager.h"

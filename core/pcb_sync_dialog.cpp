@@ -1,6 +1,6 @@
 #include "pcb_sync_dialog.h"
 #include "../../footprints/footprint_library.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include <QHeaderView>
 #include <QIcon>
 #include <QColor>

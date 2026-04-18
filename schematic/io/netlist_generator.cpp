@@ -2,7 +2,7 @@
 #include "schematic_item.h"
 #include "generic_component_item.h"
 #include "wire_item.h"
-#include "flux/core/net_manager.h"
+#include "net_manager.h"
 #include "schematic_file_io.h"
 #include "../items/schematic_sheet_item.h"
 #include "../items/net_label_item.h"

@@ -1,5 +1,5 @@
 #include "oscilloscope_item.h"
-#include "flux/core/net_manager.h"
+#include "net_manager.h"
 #include <QPainter>
 #include <QJsonArray>
 #include <QJsonObject>

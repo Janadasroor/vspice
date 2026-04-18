@@ -1,7 +1,7 @@
 #include "pcb_via_tool.h"
 #include "pcb_view.h"
 #include "via_item.h"
-#include "flux/core/net_class.h"
+#include "net_class.h"
 #include "../layers/pcb_layer.h"
 #include <QMouseEvent>
 #include <QGraphicsScene>

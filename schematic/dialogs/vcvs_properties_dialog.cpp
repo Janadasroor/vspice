@@ -1,6 +1,6 @@
 #include "vcvs_properties_dialog.h"
 #include "../items/schematic_item.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLabel>

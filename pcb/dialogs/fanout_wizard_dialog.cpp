@@ -4,7 +4,7 @@
 #include <QDialogButtonBox>
 #include <QPushButton>
 #include <QGroupBox>
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 
 FanoutWizardDialog::FanoutWizardDialog(ComponentItem* component, QWidget* parent)
     : QDialog(parent), m_component(component) {

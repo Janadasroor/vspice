@@ -1,6 +1,6 @@
 #include "board_setup_dialog.h"
-#include "../../core/net_class.h"
-#include "flux/core/net_manager.h"
+#include "net_class.h"
+#include "net_manager.h"
 #include "../analysis/pcb_ratsnest_manager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>

@@ -1,6 +1,6 @@
 #include "pcb_3d_window.h"
 #include "../mcad/mcad_exporter.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 
 #include <QAction>
 #include <QCheckBox>

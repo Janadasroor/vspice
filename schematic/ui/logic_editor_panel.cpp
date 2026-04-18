@@ -3,8 +3,8 @@
 #include "flux_code_editor.h"
 #include "mini_scope_widget.h"
 #include "../items/smart_signal_item.h"
-#include "../../core/config_manager.h"
-#include "../../core/flux_python.h"
+#include "config_manager.h"
+#include "flux_python.h"
 #include "../../python/cpp/core/flux_script_manager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -27,14 +27,14 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QComboBox>
-#include "../../core/jit_context_manager.h"
+#include "jit_context_manager.h"
 
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QTextBrowser>
 #include <QVariantMap>
-#include "../../core/diagnostics/debugger.h"
+#include "diagnostics/debugger.h"
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QMessageBox>
@@ -46,6 +46,7 @@
 
 LogicEditorPanel::LogicEditorPanel(QGraphicsScene* scene, NetManager* netManager, QWidget* parent)
     : QMainWindow(parent, Qt::Window), m_scene(scene), m_netManager(netManager) {
+    qDebug() << "[LogicEditorPanel] Initializing...";
     
     setWindowTitle("viospice Logic IDE");
     resize(1100, 700);
@@ -55,12 +56,17 @@ LogicEditorPanel::LogicEditorPanel(QGraphicsScene* scene, NetManager* netManager
     m_previewTimer->setInterval(500);
     connect(m_previewTimer, &QTimer::timeout, this, &LogicEditorPanel::updatePreview);
 
+    qDebug() << "[LogicEditorPanel] Setting up UI...";
     setupUi();
+    qDebug() << "[LogicEditorPanel] Setting up menus...";
     setupMenus();
+    qDebug() << "[LogicEditorPanel] Creating shortcuts...";
     createShortcuts();
+    qDebug() << "[LogicEditorPanel] Refreshing templates...";
     refreshTemplates();
 
     // Setup Template Watcher
+    qDebug() << "[LogicEditorPanel] Setting up template watcher...";
     m_templateWatcher = new QFileSystemWatcher(this);
     QString templatesPath = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../python/templates");
     if (!QFile::exists(templatesPath)) {
@@ -112,6 +118,20 @@ void LogicEditorPanel::onTemplateDoubleClicked(QListWidgetItem* item) {
 }
 
 void LogicEditorPanel::setupUi() {
+    // 2. Central Widget (Splitter for Editor and Console)
+    auto* central = new QWidget();
+    setCentralWidget(central);
+    auto* mainLayout = new QVBoxLayout(central);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
+
+    m_tabs = new QTabWidget();
+    m_tabs->setStyleSheet(
+        "QTabWidget::pane { border-top: 1px solid #3e3e42; background: #1e1e1e; }"
+        "QTabBar::tab { background: #2d2d2d; color: #888888; padding: 8px 20px; border-right: 1px solid #3e3e42; }"
+        "QTabBar::tab:selected { background: #1e1e1e; color: #ffffff; }"
+    );
+
     // 1. Sidebar (Project Explorer)
     auto* explorerDock = new QDockWidget("Block Explorer", this);
     explorerDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
@@ -120,43 +140,6 @@ void LogicEditorPanel::setupUi() {
     explorerDock->setWidget(m_explorerList);
     addDockWidget(Qt::LeftDockWidgetArea, explorerDock);
     connect(m_explorerList, &QListWidget::itemClicked, this, &LogicEditorPanel::onExplorerItemClicked);
-
-    // 1b. Right Sidebar (Template Library & AI Copilot)
-    auto* rightDockArea = new QWidget();
-    auto* rightLayout = new QVBoxLayout(rightDockArea);
-    rightLayout->setContentsMargins(0, 0, 0, 0);
-
-    m_templateDock = new QDockWidget("Logic Templates", this);
-    m_templateDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    m_templateList = new QListWidget();
-    m_templateList->setStyleSheet("background: #252526; color: #4ec9b0; border: none; font-size: 12px; font-weight: bold;");
-    m_templateDock->setWidget(m_templateList);
-    addDockWidget(Qt::RightDockWidgetArea, m_templateDock);
-    connect(m_templateList, &QListWidget::itemDoubleClicked, this, &LogicEditorPanel::onTemplateDoubleClicked);
-
-    m_aiDock = new QDockWidget("AI Copilot", this);
-    m_aiDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    
-    m_geminiPanel = new GeminiPanel(m_scene, this);
-    m_geminiPanel->setNetManager(m_netManager);
-    m_geminiPanel->setMode("logic");
-    
-    // Provide live code context to Gemini
-    m_geminiPanel->setContextProvider([this]() -> QString {
-        return m_editor->toPlainText();
-    });
-    
-    connect(m_geminiPanel, &GeminiPanel::pythonScriptGenerated, this, &LogicEditorPanel::onPythonGenerated);
-
-    m_aiDock->setWidget(m_geminiPanel);
-    addDockWidget(Qt::RightDockWidgetArea, m_aiDock);
-
-    // 2. Central Widget (Splitter for Editor and Console)
-    auto* central = new QWidget();
-    setCentralWidget(central);
-    auto* mainLayout = new QVBoxLayout(central);
-    mainLayout->setContentsMargins(0, 0, 0, 0);
-    mainLayout->setSpacing(0);
 
     // Top Toolbar (IDE Style)
     auto* toolbar = new QFrame();
@@ -199,14 +182,6 @@ void LogicEditorPanel::setupUi() {
     
     mainLayout->addWidget(toolbar);
 
-    // 2. Central Tabs (Logic vs Pins)
-    m_tabs = new QTabWidget();
-    m_tabs->setStyleSheet(
-        "QTabWidget::pane { border-top: 1px solid #3e3e42; background: #1e1e1e; }"
-        "QTabBar::tab { background: #2d2d2d; color: #888888; padding: 8px 20px; border-right: 1px solid #3e3e42; }"
-        "QTabBar::tab:selected { background: #1e1e1e; color: #ffffff; }"
-    );
-
     // Tab 1: Logic Editor
     auto* logicTab = new QWidget();
     auto* logicLayout = new QVBoxLayout(logicTab);
@@ -229,6 +204,36 @@ void LogicEditorPanel::setupUi() {
     topLayout->addWidget(m_scope, 1);
     
     vSplitter->addWidget(topHalf);
+
+    // 1b. Right Sidebar (Template Library & AI Copilot)
+    auto* rightDockArea = new QWidget();
+    auto* rightLayout = new QVBoxLayout(rightDockArea);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+
+    m_templateDock = new QDockWidget("Logic Templates", this);
+    m_templateDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_templateList = new QListWidget();
+    m_templateList->setStyleSheet("background: #252526; color: #4ec9b0; border: none; font-size: 12px; font-weight: bold;");
+    m_templateDock->setWidget(m_templateList);
+    addDockWidget(Qt::RightDockWidgetArea, m_templateDock);
+    connect(m_templateList, &QListWidget::itemDoubleClicked, this, &LogicEditorPanel::onTemplateDoubleClicked);
+
+    m_aiDock = new QDockWidget("AI Copilot", this);
+    m_aiDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    
+    m_geminiPanel = new GeminiPanel(m_scene, this);
+    m_geminiPanel->setNetManager(m_netManager);
+    m_geminiPanel->setMode("logic");
+    
+    // Provide live code context to Gemini
+    m_geminiPanel->setContextProvider([this]() -> QString {
+        return m_editor->toPlainText();
+    });
+    
+    connect(m_geminiPanel, &GeminiPanel::pythonScriptGenerated, this, &LogicEditorPanel::onPythonGenerated);
+
+    m_aiDock->setWidget(m_geminiPanel);
+    addDockWidget(Qt::RightDockWidgetArea, m_aiDock);
 
     // Bottom Half: Console
     m_console = new QTextEdit();
@@ -405,7 +410,7 @@ void LogicEditorPanel::refreshExplorer() {
     for (auto* item : m_scene->items()) {
         if (auto* smart = dynamic_cast<SmartSignalItem*>(item)) {
             auto* listItem = new QListWidgetItem(smart->reference() + " (" + smart->name() + ")");
-            listItem->setData(Qt::UserRole, QVariant::fromValue(static_cast<void*>(smart)));
+            listItem->setData(Qt::UserRole, smart->id().toString());
             m_explorerList->addItem(listItem);
         }
     }
@@ -450,9 +455,18 @@ void LogicEditorPanel::onCodeChanged() {
 }
 
 void LogicEditorPanel::onExplorerItemClicked(QListWidgetItem* item) {
-    auto* smart = static_cast<SmartSignalItem*>(item->data(Qt::UserRole).value<void*>());
-    if (smart) {
-        setTargetBlock(smart);
+    if (!item || !m_scene) return;
+
+    const QUuid targetId = QUuid::fromString(item->data(Qt::UserRole).toString());
+    if (targetId.isNull()) return;
+
+    for (auto* sceneItem : m_scene->items()) {
+        if (auto* smart = dynamic_cast<SmartSignalItem*>(sceneItem)) {
+            if (smart->id() == targetId) {
+                setTargetBlock(smart);
+                return;
+            }
+        }
     }
 }
 
@@ -617,7 +631,7 @@ void LogicEditorPanel::runTests() {
     m_console->append("<br><font color='#007acc'>[Tester] Starting Test Suite...</font>");
     QString code = m_editor->toPlainText();
     QMap<int, QString> errors;
-    if (!Flux::JITContextManager::instance().compileAndLoad(code, errors)) {
+    if (!Flux::JITContextManager::instance().compileAndLoad(m_targetBlock->reference(), code, errors)) {
         m_console->append("<font color='#f44747'><b>Linter:</b> Code has syntax errors, skipping tests.</font>");
         return;
     }
@@ -786,7 +800,8 @@ void LogicEditorPanel::updatePreview() {
         timer.start();
         
         QMap<int, QString> errors;
-        if (Flux::JITContextManager::instance().compileAndLoad(code, errors)) {
+        QString id = m_targetBlock ? m_targetBlock->reference() : "preview_block";
+        if (Flux::JITContextManager::instance().compileAndLoad(id, code, errors)) {
             qint64 elapsed = timer.elapsed();
             m_console->append("<font color='#4ec9b0'>[JIT] Compilation successful in " + QString::number(elapsed) + "ms.</font>");
             m_statusLabel->setText("JIT Ready. Compilation: " + QString::number(elapsed) + "ms");
@@ -813,7 +828,7 @@ void LogicEditorPanel::onApplyClicked() {
     if (m_targetBlock->engineType() == SmartSignalItem::EngineType::FluxScript) {
         m_console->append("<font color='#007acc'>[FluxScript] Compiling JIT Module for deployment...</font>");
         QMap<int, QString> errors;
-        if (Flux::JITContextManager::instance().compileAndLoad(m_targetBlock->fluxCode(), errors)) {
+        if (Flux::JITContextManager::instance().compileAndLoad(m_targetBlock->reference(), m_targetBlock->fluxCode(), errors)) {
             m_console->append("<font color='#22c55e'>[JIT] Deployment Success! Current engine: FluxScript.</font>");
             m_statusLabel->setText("Deployed FluxScript to " + m_targetBlock->reference());
         } else {

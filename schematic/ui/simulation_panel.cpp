@@ -9,9 +9,9 @@
 #include "waveform_viewer.h"
 #include "simulation_log_dialog.h"
 #include "../../simulator/bridge/sim_audio_engine.h"
-#include "../../core/theme_manager.h"
-#include "../../core/config_manager.h"
-#include "../../core/simulation_manager.h"
+#include "theme_manager.h"
+#include "config_manager.h"
+#include "simulation_manager.h"
 #include "../io/netlist_generator.h"
 #include "../items/schematic_item.h"
 #include "../items/voltage_source_item.h"
@@ -91,7 +91,7 @@ struct WaveformStats {
 #include <algorithm>
 #include <cmath>
 #include "virtual_instruments.h"
-#include "../../core/si_formatter.h"
+#include "si_formatter.h"
 #include "../../simulator/core/sim_math.h"
 #include "../../simulator/core/sim_value_parser.h"
 #include "../../simulator/bridge/sim_schematic_bridge.h"

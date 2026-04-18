@@ -1,5 +1,5 @@
 #include "shortcuts_dialog.h"
-#include "core/theme_manager.h"
+#include "theme_manager.h"
 #include <QVBoxLayout>
 #include <QLineEdit>
 #include <QTableWidget>

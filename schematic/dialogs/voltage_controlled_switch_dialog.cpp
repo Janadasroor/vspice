@@ -1,6 +1,6 @@
 #include "voltage_controlled_switch_dialog.h"
 #include "../items/voltage_controlled_switch_item.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLineEdit>

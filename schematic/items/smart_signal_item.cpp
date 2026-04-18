@@ -8,7 +8,9 @@ SmartSignalItem::SmartSignalItem(QPointF pos, QGraphicsItem* parent)
     : SchematicItem(parent)
     , m_size(80, 60) {
     setPos(pos);
-    setFlags(QGraphicsItem::ItemIsSelectable | QGraphicsItem::ItemIsMovable);
+    setFlags(QGraphicsItem::ItemIsSelectable |
+             QGraphicsItem::ItemIsMovable |
+             QGraphicsItem::ItemSendsGeometryChanges);
     
     // Default config
     m_inputPins << "In1";
@@ -41,7 +43,11 @@ void SmartSignalItem::setOutputPins(const QStringList& pins) {
 void SmartSignalItem::updateSize() {
     int maxPins = std::max(m_inputPins.size(), m_outputPins.size());
     qreal height = std::max(60.0, maxPins * 20.0 + 20.0);
-    m_size = QSizeF(100, height);
+    const QSizeF newSize(100, height);
+    if (m_size == newSize) return;
+
+    prepareGeometryChange();
+    m_size = newSize;
 }
 
 QRectF SmartSignalItem::boundingRect() const {

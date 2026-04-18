@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Janada Sroor
 
 #include "waveform_expression_dialog.h"
-#include "core/theme_manager.h"
+#include "theme_manager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>

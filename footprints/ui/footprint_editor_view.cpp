@@ -1,6 +1,6 @@
 #include "footprint_editor_view.h"
 #include "../footprint_editor.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include <QGraphicsScene>
 #include <QGraphicsItem>
 #include <QAbstractGraphicsShapeItem>

@@ -1,6 +1,6 @@
 #include "symbol_primitive_item.h"
-#include "../../core/theme_manager.h"
-#include "../../core/text_resolver.h"
+#include "theme_manager.h"
+#include "text_resolver.h"
 #include <QPainterPathStroker>
 #include <QJsonArray>
 #include <QDate>

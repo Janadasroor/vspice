@@ -7,7 +7,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include "../../core/eco_types.h"
+#include "eco_types.h"
 
 /**
  * @brief Dialog to review and confirm schematic to PCB synchronization

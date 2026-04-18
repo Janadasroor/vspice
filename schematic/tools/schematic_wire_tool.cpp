@@ -4,7 +4,7 @@
 #include "schematic_commands.h"
 #include "schematic_connectivity.h"
 #include "../analysis/wire_router.h"
-#include "flux/core/config_manager.h"
+#include "config_manager.h"
 #include <QUndoStack>
 #include <QKeyEvent>
 #include <QDebug>

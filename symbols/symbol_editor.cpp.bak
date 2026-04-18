@@ -23,7 +23,7 @@
 #include "kicad_symbol_importer.h"
 #include "../core/library_index.h"
 #include <QGraphicsTextItem>
-#include "theme_manager.h"
+#include "core/theme_manager.h"
 #include "symbol_commands.h"
 #include "pin_table_dialog.h"
 #include "pin_modes_dialog.h"

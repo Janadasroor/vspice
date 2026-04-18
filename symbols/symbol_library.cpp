@@ -728,7 +728,7 @@ void SymbolLibraryManager::loadBuiltInLibrary() {
     }
 }
 
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include <QDirIterator>
 #include <QCoreApplication>
 

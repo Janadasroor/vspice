@@ -6,7 +6,7 @@
 #include "../analysis/schematic_erc.h"
 #include "theme_manager.h"
 #include "../../python/cpp/gemini/gemini_panel.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include "schematic_commands.h"
 #include "spice_directive_classifier.h"
 #include "../dialogs/spice_mean_dialog.h"
@@ -69,7 +69,7 @@ using Flux::Model::SymbolPrimitive;
 #include <QPointer>
 #include <array>
 #include "../io/netlist_to_schematic.h"
-#include "../../core/ws_server.h"
+#include "ws_server.h"
 
 void SchematicEditor::createMenuBar() {
     // Hide traditional menu bar for modern UI
@@ -208,7 +208,7 @@ QIcon SchematicEditor::createComponentIcon(const QString& name) {
         painter.drawLine(8, 16, 16, 24); // Arrow head bottom
         painter.drawRect(22, 10, 4, 12); // Vertical bar (door/up)
     } else if (name == "Wire") {
-        return getThemeIcon(":/icons/tool_net.svg");
+        return getThemeIcon(":/icons/tool_wire.svg");
     } else if (name == "Probe" || name == "Voltage Probe" || name == "Current Probe" || name == "Power Probe" || name == "Logic Probe" || name == "Simulator") {
         QString iconPath = ":/icons/tool_probe.svg";
         if (name == "Voltage Probe") iconPath = ":/icons/tool_voltage_probe.svg";
@@ -240,7 +240,7 @@ QIcon SchematicEditor::createComponentIcon(const QString& name) {
     } else if (name == "VCC" || name == "VDD" || name == "VSS" || name == "VBAT") {
         return getThemeIcon(":/icons/comp_vcc.svg");
     } else if (name == "Net Label" || name == "Global Label") {
-        return getThemeIcon(":/icons/tool_net_label.svg");
+        return getThemeIcon(":/icons/tool_net.svg");
     } else if (name == "Sheet" || name == "Hierarchical Port") {
         return getThemeIcon(name == "Sheet" ? ":/icons/tool_sheet.svg" : ":/icons/tool_hierarchical_port.svg");
     } else if (name == "Spice Directive") {

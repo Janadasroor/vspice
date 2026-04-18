@@ -2,7 +2,7 @@
 #include <QPainter>
 #include <QGraphicsDropShadowEffect>
 #include <QFontDatabase>
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 
 SmartProbeOverlay::SmartProbeOverlay(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_TransparentForMouseEvents);

@@ -34,7 +34,7 @@
 #include "../schematic/dialogs/subcircuit_picker_dialog.h"
 #include "../core/text_resolver.h"
 #include "../simulator/bridge/model_library_manager.h"
-#include "../../core/ui/text_properties_dialog.h"
+#include "ui/text_properties_dialog.h"
 
 #include <QGraphicsDropShadowEffect>
 #include <QFileDialog>
@@ -280,7 +280,7 @@ public:
 #include <QUndoCommand>
 #include <QTreeWidget>
 #include <QRegularExpression>
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 
 namespace {
 QString resolveModelPathForEditor(const QString& rawPath, const QString& source, const QString& projectKey = QString()) {
@@ -419,7 +419,7 @@ struct MappingStatusInfo {
 #include <QJsonArray>
 #include <algorithm>
 #include <cmath>
-#include "core/config_manager.h"
+#include "config_manager.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  SymbolEditor – Construction

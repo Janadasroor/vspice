@@ -29,15 +29,21 @@ public:
 
     /**
      * @brief Compiles and loads a script into the JIT engine.
+     * @param id Unique identifier for this script (e.g. block reference).
+     * @param source The FluxScript source code.
+     * @param errors Map of line numbers to error messages.
      * @return true if compilation succeeded, false otherwise.
      */
-    bool compileAndLoad(const QString& source, QMap<int, QString>& errors);
+    bool compileAndLoad(const QString& id, const QString& source, QMap<int, QString>& errors);
 
     /**
-     * @brief Executes the 'update' function in the JIT if it exists.
-     * Guaranteed to be thread-safe for calls from the simulation thread.
+     * @brief Executes the 'update' function in the JIT with inputs.
+     * @param id Unique identifier for the script to execute.
+     * @param time The current simulation time.
+     * @param inputs List of input voltages from pins.
+     * @return The computed output voltage/value.
      */
-    void runUpdate(double time);
+    double runUpdate(const QString& id, double time, const std::vector<double>& inputs);
 
     /**
      * @brief Resets the JIT state (clears all loaded modules).
@@ -59,7 +65,7 @@ private:
 
 #ifdef HAVE_FLUXSCRIPT
     std::unique_ptr<FluxJIT> m_jit;
-    void* m_updateFunc = nullptr;
+    QMap<QString, void*> m_updateFunctions;
 #endif
 };
 

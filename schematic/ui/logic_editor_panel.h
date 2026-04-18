@@ -2,9 +2,10 @@
 #define LOGIC_EDITOR_PANEL_H
 
 #include <QMainWindow>
+#include <QPointer>
 #include <QString>
 #include <QGraphicsScene>
-#include "../../core/diagnostics/debugger.h"
+#include "diagnostics/debugger.h"
 class NetManager;
 class QLineEdit;
 class QPushButton;
@@ -90,7 +91,7 @@ private:
 
     QGraphicsScene* m_scene;
     NetManager* m_netManager;
-    SmartSignalItem* m_targetBlock = nullptr;
+    QPointer<SmartSignalItem> m_targetBlock;
 
     class QTabWidget* m_tabs;
     Flux::CodeEditor* m_editor;

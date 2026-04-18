@@ -1,5 +1,5 @@
 #include "schematic_text_item.h"
-#include "flux/core/theme_manager.h"
+#include "theme_manager.h"
 #include <QPainter>
 #include <QStyleOptionGraphicsItem>
 #include <QJsonObject>

@@ -7,7 +7,7 @@
 #include <QUndoStack>
 #include <QMouseEvent>
 #include <QGraphicsRectItem>
-#include "flux/core/theme_manager.h"
+#include "theme_manager.h"
 
 namespace {
 SchematicItem* owningSchematicItem(QGraphicsItem* item) {

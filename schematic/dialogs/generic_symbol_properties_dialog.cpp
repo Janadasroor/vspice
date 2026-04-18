@@ -2,7 +2,7 @@
 #include "../editor/schematic_commands.h"
 #include "../items/generic_component_item.h"
 #include "subcircuit_picker_dialog.h"
-#include "../../core/assignment_validator.h"
+#include "assignment_validator.h"
 #include "../../symbols/symbol_library.h"
 #include "../../simulator/bridge/model_library_manager.h"
 #include <QComboBox>

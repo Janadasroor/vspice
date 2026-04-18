@@ -1,7 +1,7 @@
 #include "switch_properties_dialog.h"
 #include "../items/switch_item.h"
 #include "../items/schematic_item.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>

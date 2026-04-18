@@ -1,2 +1,2 @@
 #pragma once
-#include "core/interfaces/iplugin.h"
+#include "interfaces/iplugin.h"

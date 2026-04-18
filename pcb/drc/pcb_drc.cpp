@@ -7,7 +7,7 @@
 #include "copper_pour_item.h"
 #include "ratsnest_item.h"
 #include "pcb_layer.h"
-#include "../../core/net_class.h"
+#include "net_class.h"
 #include <QGraphicsItem>
 #include <QtMath>
 #include <QDebug>

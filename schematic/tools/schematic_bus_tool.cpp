@@ -3,7 +3,7 @@
 #include "schematic_view.h"
 #include "schematic_editor.h"
 #include "../editor/schematic_commands.h"
-#include "flux/core/config_manager.h"
+#include "config_manager.h"
 #include <QMouseEvent>
 #include <QGraphicsScene>
 

@@ -20,7 +20,7 @@
 #include <QCryptographicHash>
 #include <cmath>
 #include <limits>
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include "../../simulator/core/sim_value_parser.h"
 #include "../../simulator/mixedmode/NetlistManager.h"
 
@@ -287,6 +287,7 @@ QString normalizeXspiceModelAlias(const QString& rawToken, const QString& typeNa
     if (matches({"d_srlatch", "srlatch", "sr_latch", "set_reset_latch"})) return "d_srlatch";
     if (matches({"d_tristate", "tristate", "tri_state"})) return "d_tristate";
     if (matches({"d_ram", "ram", "memory", "digital_ram"})) return "d_ram";
+    if (type.contains("smartsignal") || type.contains("smart signal") || token.contains("fluxscript")) return "flux_script";
 
     if (token.startsWith("d_")) return token;
     return QString();
@@ -320,6 +321,10 @@ QString defaultXspiceModelLine(const QString& ref, const QString& codeModel) {
             .arg(modelName);
     }
 
+    if (codeModel == "flux_script") {
+        return QString(".model %1 flux_script(script_id=\"%2\")").arg(modelName, ref);
+    }
+
     return QString(".model %1 %2").arg(modelName, codeModel);
 }
 
@@ -350,7 +355,8 @@ bool usesNativeLogicADevice(const QString& codeModel) {
 bool xspiceModelUsesCollapsedInputVector(const QString& codeModel) {
     return codeModel == "d_and" || codeModel == "d_nand" ||
            codeModel == "d_or" || codeModel == "d_nor" ||
-           codeModel == "d_xor" || codeModel == "d_xnor";
+           codeModel == "d_xor" || codeModel == "d_xnor" ||
+           codeModel == "flux_script";
 }
 
 NetlistManager::PinDirection pinDirectionFromMetadata(const SymbolDefinition* sym, const QString& pinName, bool* hasExplicitMetadata = nullptr) {
@@ -3531,6 +3537,10 @@ QString SpiceNetlistGenerator::generate(QGraphicsScene* scene, const QString& pr
         else if (type == SchematicItem::VoltageSourceType) {
             if (comp.value.trimmed().startsWith("V=", Qt::CaseInsensitive)) line = ensurePrefix(ref, "B");
             else line = ensurePrefix(ref, "V");
+        }
+        else if (type == SchematicItem::SmartSignalType) {
+            line = ensurePrefix(ref, "V"); // Controlled by FluxScript JIT
+            value = "0"; // Initial value
         }
         else if (isXspiceLogicComponent(comp.spiceModel.trimmed().isEmpty() ? comp.value.trimmed() : comp.spiceModel.trimmed(),
                                         comp.typeName,

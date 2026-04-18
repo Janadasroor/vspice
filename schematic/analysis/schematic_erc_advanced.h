@@ -7,7 +7,7 @@
 #include <QSet>
 #include "../items/schematic_item.h"
 #include "net_manager.h"
-#include "../../core/design_rule.h"
+#include "design_rule.h"
 
 using namespace Flux::Core;
 

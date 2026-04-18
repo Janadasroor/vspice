@@ -10,6 +10,7 @@
 #include "../items/voltage_source_item.h"
 #include "../items/generic_component_item.h"
 #include "../items/schematic_sheet_item.h"
+#include "../items/smart_signal_item.h"
 #include "../items/hierarchical_port_item.h"
 #include "../items/led_item.h"
 #include "../items/blinking_led_item.h"
@@ -17,7 +18,7 @@
 #include "../ui/simulation_panel.h"
 #include "../analysis/net_manager.h"
 #include "../tools/schematic_net_label_tool.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include "../dialogs/led_properties_dialog.h"
 #include <algorithm>
 #include <set>
@@ -195,6 +196,25 @@ void SchematicMenuRegistry::initializeDefaultActions() {
         }
     };
     registerGlobalAction(runERC);
+
+    // --- Smart Signal Actions ---
+    ContextAction openLogicEditor;
+    openLogicEditor.label = "Open Logic Editor...";
+    openLogicEditor.icon = QIcon(":/icons/tool_code.svg");
+    openLogicEditor.priority = 100;
+    openLogicEditor.isVisible = [](const auto& items) {
+        if (items.size() != 1) return false;
+        return items.first()->itemType() == SchematicItem::SmartSignalType;
+    };
+    openLogicEditor.handler = [](SchematicView* view, const auto& items) {
+        if (items.isEmpty()) return;
+        if (auto* editor = qobject_cast<SchematicEditor*>(view->window())) {
+            if (auto* smart = dynamic_cast<SmartSignalItem*>(items.first())) {
+                editor->openLogicEditor(smart);
+            }
+        }
+    };
+    registerAction(SchematicItem::SmartSignalType, openLogicEditor);
 
     // --- Wire Actions ---
     

@@ -3,7 +3,7 @@
 #include "passive_model_picker_dialog.h"
 #include "../../pcb/dialogs/footprint_browser_dialog.h"
 #include "../items/schematic_item.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>

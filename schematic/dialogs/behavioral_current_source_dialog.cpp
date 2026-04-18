@@ -1,6 +1,6 @@
 #include "behavioral_current_source_dialog.h"
 #include "../items/behavioral_current_source_item.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include "../analysis/net_manager.h"
 #include <QDialogButtonBox>
 #include <QFormLayout>

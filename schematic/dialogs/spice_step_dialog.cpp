@@ -1,6 +1,6 @@
 #include "spice_step_dialog.h"
 
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include "../../simulator/core/sim_value_parser.h"
 #include "../items/current_source_item.h"
 #include "../items/transistor_item.h"

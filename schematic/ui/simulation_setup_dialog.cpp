@@ -1,5 +1,5 @@
 #include "simulation_setup_dialog.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include "../../simulator/core/sim_value_parser.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>

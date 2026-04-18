@@ -38,11 +38,13 @@ public:
     void sendInternalCommand(const QString& command);
 
     // --- Real-Time Switch Control ---
-    // Uses bg_halt → alter R=value → bg_resume cycle for mid-simulation toggling.
-    // Preserves simulation state (capacitor voltages, inductor currents).
     void alterSwitch(const QString& switchRef, bool open, double vt = 0.5, double vh = 0.1);
     void alterSwitchResistance(const QString& resistorName, double resistance);
     void alterSwitchVoltage(const QString& controlSourceName, double voltage);
+
+    // --- FluxScript JIT Targets ---
+    void setFluxScriptTargets(const QStringList& targetIds);
+    void clearFluxScriptTargets();
 
 
 Q_SIGNALS:
@@ -72,6 +74,7 @@ private:
     bool m_switchToggleInProgress = false;  // Prevents simulationFinished() during switch toggles
     QString m_currentNetlist;
     SimControl* m_streamingControl = nullptr;
+    QStringList m_fluxScriptTargets;
     
     // Thread-safe buffering for real-time updates
     struct SimDataPoint {

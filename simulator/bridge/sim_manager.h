@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QStringList>
+#include <QMap>
 #include "../core/sim_results.h"
 #include "../core/sim_netlist.h"
 
@@ -45,6 +46,10 @@ public:
     
     void runRealTime(QGraphicsScene* scene, NetManager* netMgr, int intervalMs = 100);
     void stopRealTime();
+
+    // FluxScript JIT Integration
+    void compileFluxScripts(QGraphicsScene* scene);
+    QMap<QString, class SmartSignalItem*> m_fluxScriptTargets;
     
     void stopAll();
     void pauseSimulation(bool pause);

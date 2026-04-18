@@ -1,6 +1,6 @@
 #include "schematic_components_widget.h"
 #include "model_browser_widget.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include "../../symbols/symbol_library.h"
 #include "../../symbols/symbol_editor.h"
 #include "../../symbols/models/symbol_definition.h"

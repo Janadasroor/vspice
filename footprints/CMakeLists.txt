@@ -37,10 +37,11 @@ set(FOOTPRINTS_SOURCES
     ui/footprint_wizard_dialog.h
 )
 
-add_library(FluxFootprints STATIC ${FOOTPRINTS_SOURCES})
-set_target_properties(FluxFootprints PROPERTIES AUTOMOC ON)
-target_include_directories(FluxFootprints PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(FluxFootprints PUBLIC
+add_library(VioFootprints STATIC ${FOOTPRINTS_SOURCES})
+set_target_properties(VioFootprints PROPERTIES AUTOMOC ON)
+vioraeda_configure_module_target(VioFootprints)
+
+target_link_libraries(VioFootprints PUBLIC
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Gui
     Qt${QT_VERSION_MAJOR}::Core

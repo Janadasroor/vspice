@@ -4,7 +4,7 @@
 #include "../items/inductor_item.h"
 #include "../items/power_item.h"
 #include "../items/schematic_spice_directive_item.h"
-#include "../../core/simulation_manager.h"
+#include "simulation_manager.h"
 #include "../../simulator/bridge/sim_manager.h"
 #include "../../simulator/core/sim_net_evaluator.h"
 #include "../../simulator/core/raw_data_parser.h"

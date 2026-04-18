@@ -1,7 +1,7 @@
 #include "generic_component_item.h"
 #include "schematic_text_item.h"
-#include "flux/core/text_resolver.h"
-#include "flux/core/theme_manager.h"
+#include "text_resolver.h"
+#include "theme_manager.h"
 #include <QPainter>
 #include <QDateTime>
 #include <QStyleOptionGraphicsItem>
@@ -12,6 +12,8 @@ using Flux::Model::SymbolPrimitive;
 using namespace Flux::Item;
 
 namespace {
+constexpr qreal kSchematicGridSize = 15.0;
+
 QString unitSuffixForDisplay(int unit) {
     if (unit <= 0) return "A";
     if (unit <= 26) return QString(QChar('A' + unit - 1));
@@ -46,6 +48,25 @@ bool symbolValueRepresentsSpiceModel(const SymbolDefinition& symbol, const QStri
            symbolName.contains("jfet") ||
            symbolName.contains("mesfet") ||
            symbolName.contains("bjt");
+}
+
+bool usesDigitalEventPins(const QList<SymbolPrimitive>& primitives) {
+    for (const auto& prim : primitives) {
+        if (prim.type != SymbolPrimitive::Pin) continue;
+
+        const QString signalDomain = prim.data.value("signalDomain").toString().trimmed().toLower();
+        const QString nodeType = prim.data.value("nodeType").toString().trimmed().toLower();
+        if (signalDomain == "digital_event" || nodeType == "digital_event") {
+            return true;
+        }
+    }
+    return false;
+}
+
+QPointF snapPointToGrid(const QPointF& point, qreal gridSize) {
+    if (gridSize <= 0.0) return point;
+    return QPointF(std::round(point.x() / gridSize) * gridSize,
+                   std::round(point.y() / gridSize) * gridSize);
 }
 }
 
@@ -193,7 +214,11 @@ bool GenericComponentItem::fromJson(const QJsonObject& json) {
         m_spiceModel = m_value.trimmed();
     }
     
-    setPos(json["x"].toDouble(), json["y"].toDouble());
+    QPointF restoredPos(json["x"].toDouble(), json["y"].toDouble());
+    if (usesDigitalEventPins(resolvedPrimitives())) {
+        restoredPos = snapPointToGrid(restoredPos, kSchematicGridSize);
+    }
+    setPos(restoredPos);
     setRotation(json["rotation"].toDouble());
     
     rebuildPrimitives();
@@ -330,7 +355,23 @@ void GenericComponentItem::paint(QPainter *painter, const QStyleOptionGraphicsIt
 }
 
 QVariant GenericComponentItem::itemChange(GraphicsItemChange change, const QVariant& value) {
+    if (change == QGraphicsItem::ItemPositionChange && !parentItem()) {
+        const QList<SymbolPrimitive> primitives = resolvedPrimitives();
+        if (usesDigitalEventPins(primitives)) {
+            return snapPointToGrid(value.toPointF(), kSchematicGridSize);
+        }
+    }
+
     const QVariant result = SchematicItem::itemChange(change, value);
+    if (change == QGraphicsItem::ItemSceneHasChanged && scene() && !parentItem()) {
+        const QList<SymbolPrimitive> primitives = resolvedPrimitives();
+        if (usesDigitalEventPins(primitives)) {
+            const QPointF snappedPos = snapPointToGrid(pos(), kSchematicGridSize);
+            if (snappedPos != pos()) {
+                setPos(snappedPos);
+            }
+        }
+    }
     if (change == QGraphicsItem::ItemRotationHasChanged ||
         change == QGraphicsItem::ItemTransformHasChanged) {
         syncReadablePrimitiveText();

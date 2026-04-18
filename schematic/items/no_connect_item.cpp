@@ -1,7 +1,7 @@
 #include "no_connect_item.h"
 #include <QPainter>
 #include <QPen>
-#include "flux/core/theme_manager.h"
+#include "theme_manager.h"
 
 NoConnectItem::NoConnectItem(QGraphicsItem *parent)
     : SchematicItem(parent) {

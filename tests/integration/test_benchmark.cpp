@@ -6,7 +6,7 @@
 #include <QElapsedTimer>
 #include <QCommandLineParser>
 
-#include "core/simulation_manager.h"
+#include "simulation_manager.h"
 
 struct BenchmarkResult {
     QString name;

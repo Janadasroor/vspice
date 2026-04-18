@@ -1,5 +1,5 @@
 #include "model_browser_widget.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QPushButton>

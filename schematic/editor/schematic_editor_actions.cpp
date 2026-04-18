@@ -4,7 +4,7 @@
 #include "schematic_editor.h"
 #include <QJsonDocument>
 #include <QJsonObject>
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include "schematic_item.h"
 #include "schematic_commands.h"
 #include "schematic_file_io.h"
@@ -28,7 +28,7 @@
 #include "../../ui/help_window.h"
 #include "../../ui/developer_help_window.h"
 #include "../../ui/shortcuts_dialog.h"
-#include "../../core/ui/project_audit_dialog.h"
+#include "ui/project_audit_dialog.h"
 #include "../dialogs/power_nets_manager_dialog.h"
 #include "../dialogs/component_properties_dialog.h"
 #include "../dialogs/title_block_dialog.h"
@@ -73,10 +73,10 @@
 #include "../dialogs/erc_rules_dialog.h"
 #include "../ui/simulation_panel.h"
 #include "../dialogs/find_replace_dialog.h"
-#include "../../core/assignment_validator.h"
-#include "../../core/ui/command_palette.h"
-#include "../../core/sync_manager.h"
-#include "../../core/config_manager.h"
+#include "assignment_validator.h"
+#include "ui/command_palette.h"
+#include "sync_manager.h"
+#include "config_manager.h"
 #include "../../symbols/symbol_library.h"
 #include "../../symbols/symbol_editor.h"
 #include "../../ui/spice_model_architect.h"
@@ -772,9 +772,7 @@ void SchematicEditor::onSelectionChanged() {
             SchematicItem* item = sItems.first();
             // 0. Smart Signal Logic Editor (Standalone IDE)
             if (auto* smartBlock = dynamic_cast<SmartSignalItem*>(item)) {
-                if (m_logicEditorPanel) {
-                    m_logicEditorPanel->setTargetBlock(smartBlock);
-                }
+                openLogicEditor(smartBlock);
             }
 
             // 1. Component Cross-Probe
@@ -2422,5 +2420,18 @@ void SchematicEditor::onRewindRequested() {
         update();
     } else {
         qWarning() << "[SchematicEditor] Rewind failed:" << error;
+    }
+}
+
+void SchematicEditor::openLogicEditor(SmartSignalItem* item) {
+    if (!m_logicEditorPanel) {
+        m_logicEditorPanel = new LogicEditorPanel(m_scene, m_netManager, this);
+        connect(m_logicEditorPanel, &LogicEditorPanel::closed, this, [this]() {
+            if (m_logicEditorPanel) m_logicEditorPanel->setTargetBlock(nullptr);
+        });
+    }
+    
+    if (m_logicEditorPanel) {
+        m_logicEditorPanel->setTargetBlock(item);
     }
 }

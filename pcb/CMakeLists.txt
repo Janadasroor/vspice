@@ -193,8 +193,10 @@ set(PCB_SOURCES
 
 add_library(VioraPCBCore STATIC ${PCB_SOURCES})
 set_target_properties(VioraPCBCore PROPERTIES AUTOMOC ON)
+
+vioraeda_configure_module_target(VioraPCBCore)
+
 target_include_directories(VioraPCBCore PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/editor
     ${CMAKE_CURRENT_SOURCE_DIR}/items
     ${CMAKE_CURRENT_SOURCE_DIR}/tools
@@ -211,18 +213,14 @@ target_include_directories(VioraPCBCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/mcad
     ${CMAKE_CURRENT_SOURCE_DIR}/plugins
     ${CMAKE_CURRENT_SOURCE_DIR}/factories
-    ${CMAKE_CURRENT_SOURCE_DIR}/../core
     ${CMAKE_CURRENT_SOURCE_DIR}/../python
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+
 target_link_libraries(VioraPCBCore PUBLIC
-    FluxCore
-    FluxFootprints
-    FluxHeadless
-    Qt${QT_VERSION_MAJOR}::Widgets
+    VioCore
+    VioFootprints
+    VioHeadless
     Qt${QT_VERSION_MAJOR}::PrintSupport
-    Qt${QT_VERSION_MAJOR}::Gui
-    Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::Sql
     Qt${QT_VERSION_MAJOR}::OpenGL
     Qt${QT_VERSION_MAJOR}::OpenGLWidgets

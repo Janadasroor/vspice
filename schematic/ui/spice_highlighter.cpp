@@ -1,6 +1,6 @@
 #include "spice_highlighter.h"
 
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 
 SpiceHighlighter::SpiceHighlighter(QTextDocument* parent)
     : QSyntaxHighlighter(parent) {

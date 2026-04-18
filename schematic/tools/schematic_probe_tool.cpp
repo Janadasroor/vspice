@@ -1,7 +1,7 @@
 #include "schematic_probe_tool.h"
 #include "schematic_view.h"
 #include "../editor/schematic_editor.h"
-#include "flux/core/net_manager.h"
+#include "net_manager.h"
 #include <QGraphicsScene>
 #include <QGraphicsItem>
 #include <QGraphicsEllipseItem>

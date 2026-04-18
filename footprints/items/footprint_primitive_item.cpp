@@ -1,5 +1,5 @@
 #include "footprint_primitive_item.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include <QPainterPathStroker>
 #include <QFontMetricsF>
 

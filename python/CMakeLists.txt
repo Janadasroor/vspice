@@ -13,19 +13,19 @@ add_library(FluxScriptManager STATIC
     cpp/dialogs/gemini_instructions_dialog.h
 )
 
+vioraeda_configure_module_target(FluxScriptManager)
+
+target_include_directories(FluxScriptManager PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/gemini
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/dialogs
+    ${CMAKE_CURRENT_SOURCE_DIR}/../schematic/io
+    ${CMAKE_CURRENT_SOURCE_DIR}/../schematic/items
+)
+
 target_link_libraries(FluxScriptManager PRIVATE 
     Qt6::Core
     Qt6::Widgets
     Qt6::Quick
     Qt6::QuickWidgets
-)
-
-target_include_directories(FluxScriptManager PUBLIC 
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/gemini
-    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/dialogs
-    ${CMAKE_CURRENT_SOURCE_DIR}/../core
-    ${CMAKE_CURRENT_SOURCE_DIR}/../schematic/io
-    ${CMAKE_CURRENT_SOURCE_DIR}/../schematic/items
 )

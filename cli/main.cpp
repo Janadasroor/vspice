@@ -36,7 +36,7 @@
 // We use QCoreApplication::aboutToQuit or QTimer to ensure clean termination
 // instead of platform-specific signal handlers.
 
-#include "core/plugins/plugin_manager.h"
+#include "plugins/plugin_manager.h"
 // Symbols
 #include "symbols/models/symbol_definition.h"
 #include "symbols/symbol_library.h"
@@ -70,7 +70,7 @@
 
 #include "schematic/analysis/spice_netlist_generator.h"
 #include "simulator/bridge/sim_schematic_bridge.h"
-#include "core/simulation_manager.h"
+#include "simulation_manager.h"
 #include "simulator/bridge/sim_manager.h"
 #include "simulator/core/sim_value_parser.h"
 #include "simulator/bridge/model_library_manager.h"

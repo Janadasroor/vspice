@@ -2,7 +2,7 @@
 
 #include "../../simulator/bridge/model_library_manager.h"
 #include "../../simulator/bridge/spice_model_search.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 
 #include <QDialogButtonBox>
 #include <QFileInfo>

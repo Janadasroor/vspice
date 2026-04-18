@@ -1,22 +1,30 @@
 set(VIORAEDA_COMMON_INCLUDE_DIRS
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/symbols
-    ${CMAKE_CURRENT_SOURCE_DIR}/schematic
-    ${CMAKE_CURRENT_SOURCE_DIR}/schematic/editor
-    ${CMAKE_CURRENT_SOURCE_DIR}/schematic/ui
-    ${CMAKE_CURRENT_SOURCE_DIR}/schematic/dialogs
-    ${CMAKE_CURRENT_SOURCE_DIR}/schematic/items
-    ${CMAKE_CURRENT_SOURCE_DIR}/schematic/tools
-    ${CMAKE_CURRENT_SOURCE_DIR}/schematic/io
-    ${CMAKE_CURRENT_SOURCE_DIR}/schematic/analysis
-    ${CMAKE_CURRENT_SOURCE_DIR}/schematic/factories
-    ${CMAKE_CURRENT_SOURCE_DIR}/ui
-    ${CMAKE_CURRENT_SOURCE_DIR}/python
-    ${CMAKE_CURRENT_SOURCE_DIR}/simulator
-    ${CMAKE_CURRENT_SOURCE_DIR}/footprints
-    ${CMAKE_CURRENT_SOURCE_DIR}/pcb
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/core
+    ${CMAKE_SOURCE_DIR}/schematic/analysis
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/symbols
+    ${CMAKE_SOURCE_DIR}/schematic
+    ${CMAKE_SOURCE_DIR}/schematic/editor
+    ${CMAKE_SOURCE_DIR}/schematic/ui
+    ${CMAKE_SOURCE_DIR}/schematic/dialogs
+    ${CMAKE_SOURCE_DIR}/schematic/items
+    ${CMAKE_SOURCE_DIR}/schematic/tools
+    ${CMAKE_SOURCE_DIR}/schematic/io
+    ${CMAKE_SOURCE_DIR}/schematic/analysis
+    ${CMAKE_SOURCE_DIR}/schematic/factories
+    ${CMAKE_SOURCE_DIR}/ui
+    ${CMAKE_SOURCE_DIR}/python
+    ${CMAKE_SOURCE_DIR}/simulator
+    ${CMAKE_SOURCE_DIR}/footprints
+    ${CMAKE_SOURCE_DIR}/pcb
+    ${CMAKE_SOURCE_DIR}/pcb/editor
+    ${CMAKE_SOURCE_DIR}/pcb/items
+    ${CMAKE_SOURCE_DIR}/pcb/tools
+    ${CMAKE_SOURCE_DIR}/pcb/models
+    ${CMAKE_SOURCE_DIR}/pcb/analysis
+    ${CMAKE_SOURCE_DIR}/pcb/ui
+    ${CMAKE_SOURCE_DIR}/pcb/dialogs
 )
 list(REMOVE_DUPLICATES VIORAEDA_COMMON_INCLUDE_DIRS)
 
@@ -37,25 +45,25 @@ if(TARGET Qt${QT_VERSION_MAJOR}::WebSockets)
 endif()
 
 set(VIORAEDA_APP_LINK_LIBS
-    FluxCore
-    FluxSymbols
-    FluxSchematicCore
-    FluxSchematicUI
-    FluxUI
+    VioCore
+    VioSymbols
+    VioSchematicCore
+    VioSchematicUI
+    VioUI
     FluxScript
-    FluxFootprints
+    VioFootprints
     VioraPCBCore
     ${VIORAEDA_QT_LINK_LIBS}
 )
 
 set(VIORAEDA_CLI_LINK_LIBS
-    FluxCore
-    FluxSymbols
-    FluxSchematicCore
-    FluxSchematicUI
-    FluxUI
+    VioCore
+    VioSymbols
+    VioSchematicCore
+    VioSchematicUI
+    VioUI
     FluxScript
-    FluxFootprints
+    VioFootprints
     VioraPCBCore
     ${VIORAEDA_QT_LINK_LIBS}
 )
@@ -64,8 +72,11 @@ set(VIORAEDA_PCH_HEADER "${CMAKE_SOURCE_DIR}/cmake/vioraeda_pch.h")
 
 function(vioraeda_configure_module_target target)
     target_include_directories(${target}
-        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-        PRIVATE ${VIORAEDA_COMMON_INCLUDE_DIRS}
+        PUBLIC 
+            ${CMAKE_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        PRIVATE 
+            ${VIORAEDA_COMMON_INCLUDE_DIRS}
     )
     target_link_libraries(${target} PRIVATE ${VIORAEDA_QT_LINK_LIBS} FluxScript)
     if(VIORAEDA_ENABLE_PCH)

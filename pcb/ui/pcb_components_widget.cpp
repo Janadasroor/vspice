@@ -1,7 +1,7 @@
 #include "pcb_components_widget.h"
 #include "footprint_preview_view.h"
 #include "../dialogs/footprint_browser_dialog.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include "../../footprints/footprint_library.h"
 #include "../../footprints/footprint_editor.h"
 #include <QPushButton>

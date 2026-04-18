@@ -2,7 +2,7 @@
 #include "../items/schematic_text_item.h"
 #include "schematic_view.h"
 #include "schematic_commands.h"
-#include "../../core/ui/text_properties_dialog.h"
+#include "ui/text_properties_dialog.h"
 #include <QGraphicsSceneMouseEvent>
 #include <QUndoStack>
 

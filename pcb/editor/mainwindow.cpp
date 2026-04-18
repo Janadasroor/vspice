@@ -29,10 +29,10 @@
 #include <QPdfWriter>
 #include <QPrinter>
 #include <QSvgGenerator>
-#include "../../core/ui/selection_filter_widget.h"
+#include "ui/selection_filter_widget.h"
 #include "theme_manager.h"
-#include "footprint_editor.h"
-#include "footprint_library.h"
+#include "../../footprints/footprint_editor.h"
+#include "../../footprints/footprint_library.h"
 #include "../gerber/gerber_viewer_window.h"
 #include "../ui/pcb_components_widget.h"
 #include "../../python/cpp/dialogs/gemini_dialog.h"
@@ -47,7 +47,7 @@
 #include "copper_pour_item.h"
 #include "shape_item.h"
 #include "image_item.h"
-#include "../../core/ui/command_palette.h"
+#include "ui/command_palette.h"
 #include <QMenuBar>
 #include <QMenu>
 #include <QScreen>
@@ -55,8 +55,8 @@
 #include "ratsnest_item.h"
 #include "sync_manager.h"
 #include "../io/pcb_file_io.h"
-#include "../../core/settings_dialog.h"
-#include "../../core/config_manager.h"
+#include "settings_dialog.h"
+#include "config_manager.h"
 #include <QMenu>
 #include <QMenuBar>
 #include <QTreeWidget>

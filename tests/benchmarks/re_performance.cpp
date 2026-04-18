@@ -7,7 +7,7 @@
 #include "../../reverse_engineering/component_clustering_engine.h"
 #include "../../reverse_engineering/footprint_matcher.h"
 #include "../../reverse_engineering/schematic_exporter.h"
-#include "../../core/eco_types.h"
+#include "eco_types.h"
 #include "../../footprints/footprint_library.h"
 
 using namespace VioraEDA::ReverseEngineering;

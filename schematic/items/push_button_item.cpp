@@ -1,7 +1,7 @@
 #include "push_button_item.h"
 #include "../editor/schematic_editor.h"
 #include "../ui/simulation_panel.h"
-#include "../../core/simulation_manager.h"
+#include "simulation_manager.h"
 #include <QApplication>
 #include <QPainter>
 #include <QJsonObject>

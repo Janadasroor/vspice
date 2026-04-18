@@ -1,6 +1,6 @@
 #include "netlist_editor.h"
-#include "../../core/simulation_manager.h"
-#include "../../core/theme_manager.h"
+#include "simulation_manager.h"
+#include "theme_manager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QPushButton>

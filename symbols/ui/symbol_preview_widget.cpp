@@ -6,7 +6,7 @@
 #include <QJsonObject>
 #include <QPixmap>
 #include <QBuffer>
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 
 using namespace Flux::Model;
 

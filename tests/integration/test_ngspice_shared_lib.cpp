@@ -5,7 +5,7 @@
 #include <QTimer>
 #include <QSignalSpy>
 
-#include "core/simulation_manager.h"
+#include "simulation_manager.h"
 
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);

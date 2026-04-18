@@ -5,7 +5,7 @@
 #include "../../schematic/items/smart_signal_item.h"
 #include "../core/sim_model_parser.h"
 #include "../core/sim_value_parser.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include <QDebug>
 #include <QDir>
 #include <QFile>

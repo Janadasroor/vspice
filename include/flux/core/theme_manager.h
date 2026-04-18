@@ -1,2 +1,2 @@
 #pragma once
-#include "core/theme_manager.h"
+#include "theme_manager.h"

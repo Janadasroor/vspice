@@ -4,7 +4,7 @@
 #include "../core/raw_data_parser.h"
 #include "../../schematic/items/schematic_item.h"
 #include "../../schematic/items/smart_signal_item.h"
-#include "../../core/simulation_manager.h"
+#include "simulation_manager.h"
 #include "../../schematic/analysis/spice_netlist_generator.h"
 #include "../core/sim_value_parser.h"
 #include <QDebug>
@@ -742,6 +742,7 @@ SimManager::SimManager(QObject* parent) : QObject(parent) {
 void SimManager::runDCOP(QGraphicsScene* scene, NetManager* netMgr) {
     SimAnalysisConfig config;
     config.type = SimAnalysisType::OP;
+    compileFluxScripts(scene);
     QString netlist = generateNetlist(scene, netMgr, config);
     runNgspiceSimulation(netlist, config);
 }
@@ -751,6 +752,7 @@ void SimManager::runTransient(QGraphicsScene* scene, NetManager* netMgr, double 
     config.type = SimAnalysisType::Transient;
     config.tStop = tStop;
     config.tStep = tStep;
+    compileFluxScripts(scene);
     QString netlist = generateNetlist(scene, netMgr, config);
     runNgspiceSimulation(netlist, config);
 }
@@ -761,6 +763,7 @@ void SimManager::runAC(QGraphicsScene* scene, NetManager* netMgr, double fStart,
     config.fStart = fStart;
     config.fStop = fStop;
     config.fPoints = points;
+    compileFluxScripts(scene);
     QString netlist = generateNetlist(scene, netMgr, config);
     runNgspiceSimulation(netlist, config);
 }
@@ -1177,6 +1180,8 @@ void SimManager::cleanupSimulation() {
         QFile::remove(m_sharedNetlistPath);
         m_sharedNetlistPath.clear();
     }
+    
+    SimulationManager::instance().clearFluxScriptTargets();
 }
 
 void SimManager::runRealTime(QGraphicsScene* scene, NetManager* netMgr, int intervalMs) {
@@ -1384,4 +1389,44 @@ void SimManager::pauseSimulation(bool pause) {
     QtConcurrent::run([pause]() {
         SimulationManager::instance().sendInternalCommand(pause ? "bg_halt" : "bg_resume");
     });
+}
+
+#include "../../core/jit_context_manager.h"
+
+void SimManager::compileFluxScripts(QGraphicsScene* scene) {
+    if (!scene) return;
+    
+    m_fluxScriptTargets.clear();
+    QStringList targetIds;
+    int compiledCount = 0;
+    
+    for (QGraphicsItem* item : scene->items()) {
+        if (auto* si = dynamic_cast<SchematicItem*>(item)) {
+            if (si->itemType() == SchematicItem::SmartSignalType) {
+                if (auto* smart = dynamic_cast<SmartSignalItem*>(si)) {
+                    QString ref = smart->reference().trimmed().toUpper();
+                    if (ref.isEmpty()) continue;
+                    
+                    m_fluxScriptTargets[ref] = smart;
+                    targetIds << ref;
+                    
+                    // Compile the script into the JIT
+                    QMap<int, QString> errors;
+                    if (Flux::JITContextManager::instance().compileAndLoad(ref, smart->fluxCode(), errors)) {
+                        compiledCount++;
+                    } else {
+                        QString err = errors.value(0);
+                        Q_EMIT logMessage(QString("[FluxScript] Compilation failed for %1: %2").arg(ref, err));
+                    }
+                }
+            }
+        }
+    }
+    
+    if (compiledCount > 0) {
+        Q_EMIT logMessage(QString("[FluxScript] Successfully JIT-compiled %1 smart blocks.").arg(compiledCount));
+    }
+    
+    // Push targets to live simulation manager for the feedback loop
+    SimulationManager::instance().setFluxScriptTargets(targetIds);
 }

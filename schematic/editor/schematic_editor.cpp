@@ -10,10 +10,10 @@
 //   - schematic_editor_file.cpp   : File I/O, export, ERC, netlist, settings
 
 #include "schematic_editor.h"
-#include "../../core/remote_display_server.h"
+#include "remote_display_server.h"
 #include "../../symbols/symbol_editor.h"
 #include "../../symbols/symbol_library.h"
-#include "../../core/library_index.h"
+#include "library_index.h"
 #include "../../ui/spice_model_architect.h"
 #include "schematic_api.h"
 #include "schematic_commands.h"
@@ -44,9 +44,9 @@ static SymbolLibrary* ensureDefaultUserSymbolLibrary() {
 #include "schematic_connectivity.h"
 #include "../analysis/schematic_erc.h"
 #include "theme_manager.h"
-#include "flux/core/net_manager.h"
+#include "net_manager.h"
 #include "schematic_layout_optimizer.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include <QTimer>
 #include <QMessageBox>
 #include <QCloseEvent>
@@ -75,8 +75,8 @@ static SymbolLibrary* ensureDefaultUserSymbolLibrary() {
 
 // ─── Constructor / Destructor ────────────────────────────────────────────────
 
-#include "../../core/sync_manager.h"
-#include "../../core/ws_server.h"
+#include "sync_manager.h"
+#include "ws_server.h"
 #include "schematic_item.h"
 #include "schematic/dialogs/oscilloscope_properties_dialog.h"
 #include "schematic_menu_registry.h"
@@ -656,16 +656,22 @@ void SchematicEditor::addSchematicTab(const QString& name) {
     m_scene = scene;
     m_netManager = netManager;
     m_pageFrame = nullptr; // Let updatePageFrame create it for this new scene
+    qDebug() << "[SchematicEditor] Updating page frame...";
     updatePageFrame();
 
-    // Create Logic Editor (each schematic gets one potentially, or shared)
-    // For now, keep shared logic editor but update its scene
-    if (m_logicEditorPanel) {
+    // Create or update Logic Editor (standalone IDE)
+    qDebug() << "[SchematicEditor] Initializing Logic Editor Panel...";
+    if (!m_logicEditorPanel) {
+        qDebug() << "[SchematicEditor] Creating NEW LogicEditorPanel...";
         m_logicEditorPanel = new LogicEditorPanel(scene, netManager, this);
         connect(m_logicEditorPanel, &LogicEditorPanel::closed, this, [this]() {
-            m_logicEditorPanel->setTargetBlock(nullptr);
+            if (m_logicEditorPanel) m_logicEditorPanel->setTargetBlock(nullptr);
         });
+    } else {
+        qDebug() << "[SchematicEditor] Updating EXISTING LogicEditorPanel scene...";
+        m_logicEditorPanel->setScene(scene, netManager);
     }
+    qDebug() << "[SchematicEditor] Logic Editor Panel ready.";
 
     if (m_geminiPanel) {
         view->setGeminiPanel(m_geminiPanel);

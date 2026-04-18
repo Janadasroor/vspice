@@ -24,15 +24,15 @@ class MainWindow;
 #include "../../symbols/symbol_editor.h"
 #include "../items/net_label_item.h"
 #include "../items/generic_component_item.h"
-#include "../../core/project.h"
-#include "../../core/recent_projects.h"
+#include "project.h"
+#include "recent_projects.h"
 #include "../analysis/spice_netlist_generator.h"
 #include "../ui/simulation_panel.h"
 #include "../../ui/source_control_manager.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include <QMessageBox>
 #include <QRegularExpression>
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QStandardPaths>
@@ -1609,7 +1609,7 @@ void SchematicEditor::onPlaceSymbolInSchematic(const SymbolDefinition& symbol) {
 // ─── Create New Symbol From Schematic ──────────────────────────────────────
 
 #include "../../symbols/models/symbol_primitive.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 
 /**
  * @brief Analyse selected (or all) GenericComponentItem instances on the

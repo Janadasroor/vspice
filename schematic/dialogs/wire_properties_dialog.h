@@ -3,7 +3,7 @@
 
 #include "smart_properties_dialog.h"
 #include "../items/wire_item.h"
-#include "flux/core/net_manager.h"
+#include "net_manager.h"
 
 class WirePropertiesDialog : public SmartPropertiesDialog {
     Q_OBJECT

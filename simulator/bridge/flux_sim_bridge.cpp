@@ -1,8 +1,8 @@
 #include "flux/runtime/flux_sim_service.h"
-#include "../../core/simulation_manager.h"
+#include "simulation_manager.h"
 #include <QString>
 #include <QDebug>
-#include "../../core/jit_context_manager.h"
+#include "jit_context_manager.h"
 
 
 namespace {

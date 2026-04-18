@@ -1,6 +1,6 @@
 #include "logic_analyzer_window.h"
 #if __has_include("../../core/remote_display_server.h") && __has_include(<QtWebSockets/QWebSocketServer>)
-#include "../../core/remote_display_server.h"
+#include "remote_display_server.h"
 #define VIOSPICE_HAS_REMOTE_DISPLAY 1
 #endif
 #include <QVBoxLayout>

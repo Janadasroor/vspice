@@ -1,17 +1,29 @@
-set(FLUXSCHEMATIC_SOURCES ${SCHEMATIC_SOURCES})
-list(TRANSFORM FLUXSCHEMATIC_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/../")
+set(VIOSCHEMATIC_SOURCES ${SCHEMATIC_SOURCES})
+list(TRANSFORM VIOSCHEMATIC_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/../")
 
-add_library(FluxSchematic STATIC ${FLUXSCHEMATIC_SOURCES})
-set_target_properties(FluxSchematic PROPERTIES AUTOMOC ON)
-vioraeda_configure_module_target(FluxSchematic)
-target_link_libraries(FluxSchematic PUBLIC FluxCore FluxSymbols FluxSimulator FluxScriptManager FluxUI Qt${QT_VERSION_MAJOR}::Concurrent)
-target_include_directories(FluxSchematic PRIVATE 
+add_library(VioSchematic STATIC ${VIOSCHEMATIC_SOURCES})
+set_target_properties(VioSchematic PROPERTIES AUTOMOC ON)
+vioraeda_configure_module_target(VioSchematic)
+
+target_include_directories(VioSchematic PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/editor
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/dialogs
+    ${CMAKE_CURRENT_SOURCE_DIR}/items
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools
+    ${CMAKE_CURRENT_SOURCE_DIR}/io
+    ${CMAKE_CURRENT_SOURCE_DIR}/analysis
+    ${CMAKE_CURRENT_SOURCE_DIR}/factories
+)
+
+target_link_libraries(VioSchematic PUBLIC VioCore VioSymbols VioSimulator FluxScriptManager VioUI Qt${QT_VERSION_MAJOR}::Concurrent)
+target_include_directories(VioSchematic PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/../simulator/core
     ${CMAKE_CURRENT_SOURCE_DIR}/../simulator/bridge
 )
 
 # New Phase 2 Components
-target_sources(FluxSchematic PRIVATE
+target_sources(VioSchematic PRIVATE
     ui/schematic_minimap.cpp
     ui/schematic_minimap.h
     ui/smart_probe_overlay.cpp
@@ -23,9 +35,9 @@ target_sources(FluxSchematic PRIVATE
 )
 
 if(VIOSPICE_ENGINE_FOUND)
-    target_include_directories(FluxSchematic PRIVATE ${VIOSPICE_ENGINE_INCLUDE_DIRS})
+    target_include_directories(VioSchematic PRIVATE ${VIOSPICE_ENGINE_INCLUDE_DIRS})
 endif()
 
-# For backward compatibility if other modules use FluxSchematicCore or FluxSchematicUI
-add_library(FluxSchematicCore ALIAS FluxSchematic)
-add_library(FluxSchematicUI ALIAS FluxSchematic)
+# For backward compatibility if other modules use VioSchematicCore or VioSchematicUI
+add_library(VioSchematicCore ALIAS VioSchematic)
+add_library(VioSchematicUI ALIAS VioSchematic)

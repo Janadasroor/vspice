@@ -1,6 +1,6 @@
-set(FLUXSYMBOLS_SOURCES ${SYMBOLS_SOURCES})
-list(TRANSFORM FLUXSYMBOLS_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/../")
+set(VIOSYMBOLS_SOURCES ${SYMBOLS_SOURCES})
+list(TRANSFORM VIOSYMBOLS_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/../")
 
-add_library(FluxSymbols STATIC ${FLUXSYMBOLS_SOURCES})
-vioraeda_configure_module_target(FluxSymbols)
-target_link_libraries(FluxSymbols PUBLIC FluxCore)
+add_library(VioSymbols STATIC ${VIOSYMBOLS_SOURCES})
+vioraeda_configure_module_target(VioSymbols)
+target_link_libraries(VioSymbols PUBLIC VioCore)

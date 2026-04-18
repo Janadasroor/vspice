@@ -22,17 +22,14 @@ JITContextManager::JITContextManager() {
 
 JITContextManager::~JITContextManager() {}
 
-bool JITContextManager::compileAndLoad(const QString& source, QMap<int, QString>& errors) {
+bool JITContextManager::compileAndLoad(const QString& id, const QString& source, QMap<int, QString>& errors) {
 #ifdef HAVE_FLUXSCRIPT
     if (!m_jit) return false;
-
-    // Reset old functions
-    m_updateFunc = nullptr;
 
     // 1. Create compiler components
     std::string code = source.toStdString();
     CompilerOptions options;
-    options.moduleName = "viospice_jit_module";
+    options.moduleName = ("viospice_jit_" + id).toStdString();
     CompilerInstance compiler(options);
     
     std::string errorStr;
@@ -47,28 +44,40 @@ bool JITContextManager::compileAndLoad(const QString& source, QMap<int, QString>
     m_jit->addModule(std::move(artifacts->codegenContext->TheModule), std::move(artifacts->codegenContext->OwnedContext));
 
     // 5. Look up 'update' function for simulation hook
-    m_updateFunc = m_jit->getPointerToFunction("update");
-    if (m_updateFunc) {
-        qDebug() << "FluxScript: Found 'update' function at" << m_updateFunc;
+    void* func = m_jit->getPointerToFunction("update");
+    if (func) {
+        m_updateFunctions[id] = func;
+        qDebug() << "FluxScript: Found 'update' function for" << id << "at" << func;
+    } else {
+        errors[0] = "FluxScript: Function 'update' not found in script.";
+        return false;
     }
 
     Q_EMIT compilationFinished(true, "Script compiled and loaded in JIT.");
     return true;
 #else
+    Q_UNUSED(id);
+    Q_UNUSED(source);
     errors[0] = "FluxScript support is disabled in this build.";
     return false;
 #endif
 }
 
-void JITContextManager::runUpdate(double time) {
+double JITContextManager::runUpdate(const QString& id, double time, const std::vector<double>& inputs) {
 #ifdef HAVE_FLUXSCRIPT
-    if (m_updateFunc) {
-        typedef void (*UpdateFunc)(double);
-        reinterpret_cast<UpdateFunc>(m_updateFunc)(time);
+    void* func = m_updateFunctions.value(id);
+    if (func) {
+        // Optimized JIT call: passing inputs as a double array and count
+        // FluxScript compiler generates this signature for 'def update(t, inputs)'
+        typedef double (*UpdateFunc)(double, const double*, int);
+        return reinterpret_cast<UpdateFunc>(func)(time, inputs.data(), static_cast<int>(inputs.size()));
     }
 #else
+    Q_UNUSED(id);
     Q_UNUSED(time);
+    Q_UNUSED(inputs);
 #endif
+    return 0.0;
 }
 
 void JITContextManager::logMessage(const QString& msg) {
@@ -76,10 +85,9 @@ void JITContextManager::logMessage(const QString& msg) {
 }
 
 void JITContextManager::reset() {
-
 #ifdef HAVE_FLUXSCRIPT
     m_jit = std::make_unique<FluxJIT>();
-    m_updateFunc = nullptr;
+    m_updateFunctions.clear();
 #endif
 }
 

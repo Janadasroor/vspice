@@ -7,7 +7,7 @@
 #include "diff_viewer_dialog.h"
 #include "branch_dialog.h"
 #include "theme_manager.h"
-#include "core/config_manager.h"
+#include "config_manager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>

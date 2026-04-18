@@ -2,7 +2,7 @@
 #include "jfet_model_picker_dialog.h"
 
 #include "../items/schematic_item.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include "../../simulator/bridge/model_library_manager.h"
 
 #include <QCompleter>

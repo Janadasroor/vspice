@@ -1,7 +1,7 @@
 #include "netlist_import_dialog.h"
 #include "../../footprints/footprint_library.h"
-#include "../../core/sync_manager.h"
-#include "../../core/theme_manager.h"
+#include "sync_manager.h"
+#include "theme_manager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>

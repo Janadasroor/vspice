@@ -3,7 +3,7 @@
 #include "../items/schematic_item.h"
 #include "../items/schematic_spice_directive_item.h"
 #include "../editor/schematic_commands.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 
 #include <QGraphicsScene>
 #include <QUndoStack>

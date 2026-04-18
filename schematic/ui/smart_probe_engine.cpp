@@ -1,5 +1,5 @@
 #include "smart_probe_engine.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include "../../python/cpp/gemini/gemini_panel.h"
 #include "smart_probe_overlay.h"
 #include <QDebug>

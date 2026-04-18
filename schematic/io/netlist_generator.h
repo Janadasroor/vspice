@@ -5,7 +5,7 @@
 #include <QList>
 #include <QMap>
 #include <QPointF>
-#include "../../core/eco_types.h"
+#include "eco_types.h"
 
 class QGraphicsScene;
 

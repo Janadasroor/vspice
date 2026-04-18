@@ -1,6 +1,6 @@
 #include "netlist_importer.h"
-#include "../../core/eco_types.h"
-#include "../../core/library_index.h"
+#include "eco_types.h"
+#include "library_index.h"
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>

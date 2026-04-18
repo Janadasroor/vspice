@@ -8,7 +8,7 @@
 #include <QListWidget>
 #include <QHeaderView>
 #include <QMessageBox>
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include "../../symbols/symbol_library.h"
 #include "../../symbols/models/symbol_definition.h"
 #include "../items/schematic_sheet_item.h"

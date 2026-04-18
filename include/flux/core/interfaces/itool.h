@@ -1,2 +1,2 @@
 #pragma once
-#include "core/interfaces/itool.h"
+#include "interfaces/itool.h"

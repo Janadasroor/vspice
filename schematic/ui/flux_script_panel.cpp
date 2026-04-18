@@ -2,14 +2,14 @@
 #include "flux_code_editor.h"
 #include "flux_completer.h"
 #include <QGraphicsScene>
-#include "flux/core/net_manager.h"
+#include "net_manager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QLabel>
 #include <QVariantMap>
 #include <QTextEdit>
-#include "../../core/jit_context_manager.h"
+#include "jit_context_manager.h"
 
 
 namespace Flux {

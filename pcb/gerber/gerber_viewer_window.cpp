@@ -1,6 +1,6 @@
 #include "gerber_viewer_window.h"
 #include "gerber_parser.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QToolBar>

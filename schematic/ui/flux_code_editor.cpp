@@ -1,6 +1,6 @@
 #include "flux_code_editor.h"
 #include <QGraphicsScene>
-#include "flux/core/net_manager.h"
+#include "net_manager.h"
 #include <QCompleter>
 #include <QAbstractItemView>
 #include <QScrollBar>
@@ -15,8 +15,8 @@
 #include <QHBoxLayout>
 #include <QStringListModel>
 #include <QToolTip>
-#include "../../core/diagnostics/debugger.h"
-#include "../../core/jit_context_manager.h"
+#include "diagnostics/debugger.h"
+#include "jit_context_manager.h"
 
 
 namespace Flux {

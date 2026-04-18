@@ -1,6 +1,6 @@
 #include "passive_model_picker_dialog.h"
 
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include "../../simulator/bridge/model_library_manager.h"
 
 #include <QDialogButtonBox>

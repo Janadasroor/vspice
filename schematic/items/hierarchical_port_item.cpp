@@ -1,7 +1,7 @@
 #include "hierarchical_port_item.h"
 #include <QPainter>
 #include <QGraphicsScene>
-#include "flux/core/theme_manager.h"
+#include "theme_manager.h"
 
 HierarchicalPortItem::HierarchicalPortItem(QPointF pos, const QString& label, PortType type, QGraphicsItem* parent)
     : SchematicItem(parent)

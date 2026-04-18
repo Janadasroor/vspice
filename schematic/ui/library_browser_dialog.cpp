@@ -1,7 +1,7 @@
 #include "library_browser_dialog.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include "../../symbols/symbol_library.h"
-#include "../../core/library_index.h"
+#include "library_index.h"
 #include "../../simulator/bridge/model_library_manager.h"
 #include "../items/generic_component_item.h"
 #include <QVBoxLayout>

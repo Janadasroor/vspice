@@ -1,5 +1,5 @@
 #include "wire_router.h"
-#include "core/diagnostics/runtime_diagnostics.h"
+#include "diagnostics/runtime_diagnostics.h"
 #include <QGraphicsItem>
 #include <QDebug>
 #include <QElapsedTimer>

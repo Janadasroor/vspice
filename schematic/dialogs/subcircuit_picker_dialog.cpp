@@ -1,7 +1,7 @@
 #include "subcircuit_picker_dialog.h"
 
 #include "../../simulator/bridge/model_library_manager.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>

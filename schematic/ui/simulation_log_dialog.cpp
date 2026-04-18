@@ -1,5 +1,5 @@
 #include "simulation_log_dialog.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include <QVBoxLayout>
 #include <QPushButton>
 #include <QFont>

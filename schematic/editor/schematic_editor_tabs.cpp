@@ -5,8 +5,8 @@
 #include "schematic_view.h"
 #include "schematic_page_item.h"
 #include "schematic_item.h"
-#include "../../core/config_manager.h"
-#include "../../core/recent_projects.h"
+#include "config_manager.h"
+#include "recent_projects.h"
 #include "../../ui/quick_open_dialog.h"
 #include <QTabBar>
 #include <QMenu>

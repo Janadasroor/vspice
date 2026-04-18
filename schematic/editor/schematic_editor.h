@@ -23,8 +23,8 @@
 #include "../ui/project_explorer_widget.h"
 #include "../ui/flux_script_panel.h"
 #include "../ui/image_preview_panel.h"
-#include "flux/core/net_manager.h"
-#include "../../core/ws_server.h"
+#include "net_manager.h"
+#include "ws_server.h"
 #include "schematic_layout_optimizer.h"
 #include "../analysis/schematic_erc_rules.h"
 #include "../items/schematic_page_item.h"
@@ -196,6 +196,7 @@ private Q_SLOTS:
     void handleIncomingECO();
     bool findAndSelectInScene(QGraphicsScene* scene, const QString& refDes);
     void navigateAndSelectHierarchical(const QString& refDes);
+    void openLogicEditor(class SmartSignalItem* item);
     
     // Panel toggling slots
     void onToggleLeftSidebar();

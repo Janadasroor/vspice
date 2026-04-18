@@ -3,7 +3,7 @@
 
 #include "../core/sim_netlist.h"
 #include <QGraphicsScene>
-#include "flux/core/net_manager.h"
+#include "net_manager.h"
 
 /**
  * @brief Bridge between VioraEDA Schematic Scene and Pure C++ SimNetlist.

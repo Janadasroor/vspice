@@ -1,5 +1,5 @@
 #include "footprint_preview_view.h"
-#include "../../core/theme_manager.h"
+#include "theme_manager.h"
 #include "../../pcb/items/pad_item.h"
 #include <QGraphicsLineItem>
 #include <QGraphicsRectItem>

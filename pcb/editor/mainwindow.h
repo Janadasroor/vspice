@@ -18,7 +18,7 @@
 #include "theme_manager.h"
 #include "../ui/pcb_property_editor.h"
 #include "../drc/pcb_design_rules_editor.h"
-#include "../../core/eco_types.h"
+#include "eco_types.h"
 
 // Forward declarations
 class PCBLayerPanel;

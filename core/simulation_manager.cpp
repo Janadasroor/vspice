@@ -1,5 +1,7 @@
 #include "simulation_manager.h"
 #include "simulator/core/sim_results.h"
+#include "jit_context_manager.h"
+#include "schematic/items/smart_signal_item.h"
 #include <QDebug>
 #include <QThread>
 #include <QFile>
@@ -619,6 +621,14 @@ int SimulationManager::cbControlledExit(int status, bool immediate, bool quit, i
 }
 
 #ifdef HAVE_NGSPICE
+void SimulationManager::setFluxScriptTargets(const QStringList& targetIds) {
+    m_fluxScriptTargets = targetIds;
+}
+
+void SimulationManager::clearFluxScriptTargets() {
+    m_fluxScriptTargets.clear();
+}
+
 int SimulationManager::cbSendData(pvecvaluesall vecArray, int numStructs, int id, void* userData) {
     SimulationManager* self = static_cast<SimulationManager*>(userData);
     if (!self || !vecArray) return 0;
@@ -663,6 +673,23 @@ int SimulationManager::cbSendData(pvecvaluesall vecArray, int numStructs, int id
 
     if (!haveScale || sampleValues.empty()) {
         return 0;
+    }
+
+    // --- FluxScript JIT Feedback Loop ---
+    // If we have active FluxScript targets, we execute them NOW and feed back to ngspice
+    // This creates a "Mixed-Mode" real-time simulation link.
+    if (!self->m_fluxScriptTargets.isEmpty()) {
+        for (const QString& ref : self->m_fluxScriptTargets) {
+            // 1. Gather inputs for this block
+            std::vector<double> inputs = sampleValues; 
+
+            // 2. Run JIT logic
+            double vOut = Flux::JITContextManager::instance().runUpdate(ref, timeValue, inputs);
+
+            // 3. Feedback to ngspice for the NEXT step
+            QString cmd = QString("alter v.%1 dc=%2").arg(ref.toLower()).arg(vOut);
+            ngSpice_Command(cmd.toUtf8().data());
+        }
     }
 
     {

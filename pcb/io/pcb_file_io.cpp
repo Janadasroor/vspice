@@ -1,5 +1,5 @@
 #include "pcb_file_io.h"
-#include "core/diagnostics/runtime_diagnostics.h"
+#include "diagnostics/runtime_diagnostics.h"
 #include "../factories/pcb_item_factory.h"
 #include "../items/pcb_item.h"
 #include "../items/trace_item.h"

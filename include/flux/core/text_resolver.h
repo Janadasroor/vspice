@@ -1,2 +1,2 @@
 #pragma once
-#include "core/text_resolver.h"
+#include "text_resolver.h"

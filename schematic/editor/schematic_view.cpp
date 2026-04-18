@@ -1,5 +1,5 @@
 #include "schematic_view.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include "schematic_tool_registry.h"
 #include "schematic_editor.h"
 #include "../tools/schematic_component_tool.h"
@@ -47,7 +47,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QKeySequence>
-#include "flux/core/net_manager.h"
+#include "net_manager.h"
 #include <QTimer>
 #include <QApplication>
 #include <QGraphicsPixmapItem>
@@ -1315,7 +1315,7 @@ QString SchematicView::getNextReference(const QString& prefix) {
 }
 
 #include "schematic_menu_registry.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include "../dialogs/led_properties_dialog.h"
 #include "../dialogs/switch_properties_dialog.h"
 #include "../dialogs/voltage_controlled_switch_dialog.h"

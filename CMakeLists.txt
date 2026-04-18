@@ -57,7 +57,7 @@ if(VIOSPICE_ENABLE_NANOBIND)
     add_subdirectory(ext/nanobind)
 
     # Headless solver library (zero Qt, shared by simulator and Python bindings)
-    add_library(FluxSolverCore STATIC
+    add_library(VioSolverCore STATIC
         simulator/core/sim_value_parser.cpp
         simulator/core/sim_results.h
         simulator/core/sim_netlist.h
@@ -71,15 +71,15 @@ if(VIOSPICE_ENABLE_NANOBIND)
         simulator/core/raw_data_parser.h
         simulator/core/raw_data_parser.cpp
     )
-    target_include_directories(FluxSolverCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/simulator)
-    set_target_properties(FluxSolverCore PROPERTIES
+    target_include_directories(VioSolverCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/simulator)
+    set_target_properties(VioSolverCore PROPERTIES
         CXX_STANDARD 17
         AUTOMOC OFF
         AUTOUIC OFF
         AUTORCC OFF
         POSITION_INDEPENDENT_CODE ON
     )
-    target_compile_definitions(FluxSolverCore PRIVATE FLUX_SOLVER_HEADLESS)
+    target_compile_definitions(VioSolverCore PRIVATE VIO_SOLVER_HEADLESS)
 
     # Python binding module
     nanobind_add_module(vspice_core MODULE LTO NOMINSIZE
@@ -90,7 +90,7 @@ if(VIOSPICE_ENABLE_NANOBIND)
         ${CMAKE_CURRENT_SOURCE_DIR}/simulator/core
         ${CMAKE_CURRENT_SOURCE_DIR}/bindings
     )
-    target_link_libraries(vspice_core PRIVATE FluxSolverCore)
+    target_link_libraries(vspice_core PRIVATE VioSolverCore)
     # Output as "_core" inside the vspice/ Python package
     set_target_properties(vspice_core PROPERTIES
         OUTPUT_NAME "_core"
@@ -130,11 +130,11 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/schematic/items
     )
     target_link_libraries(test_spice_directive_netlist PRIVATE
-        FluxSchematic
-        FluxSymbols
-        FluxSimulator
-        FluxCore
-        FluxUI
+        VioSchematic
+        VioSymbols
+        VioSimulator
+        VioCore
+        VioUI
         Qt${QT_VERSION_MAJOR}::Core
         Qt${QT_VERSION_MAJOR}::Gui
         Qt${QT_VERSION_MAJOR}::Widgets
@@ -149,12 +149,12 @@ if(BUILD_TESTING)
     )
     set_target_properties(test_design_rule PROPERTIES AUTOMOC ON)
     target_link_libraries(test_design_rule PRIVATE
-        FluxCore
-        FluxSymbols
-        FluxSimulator
+        VioCore
+        VioSymbols
+        VioSimulator
         FluxScript
         FluxScriptManager
-        FluxUI
+        VioUI
         Qt${QT_VERSION_MAJOR}::Core
         Qt${QT_VERSION_MAJOR}::Gui
         Qt${QT_VERSION_MAJOR}::Widgets
@@ -177,15 +177,15 @@ if(BUILD_VIOSPICE_CLI)
     )
 
     target_link_libraries(viora PRIVATE
-        FluxSchematicUI
-        FluxSchematicCore
-        FluxSymbols
-        FluxCore
-        FluxSimulator
+        VioSchematicUI
+        VioSchematicCore
+        VioSymbols
+        VioCore
+        VioSimulator
         FluxScript
         FluxScriptManager
-        FluxUI
-        FluxFootprints
+        VioUI
+        VioFootprints
         VioraPCBCore
     )
     target_compile_definitions(viora PRIVATE HAVE_FLUXSCRIPT)
@@ -223,16 +223,16 @@ if(BUILD_VIOSPICE_APP)
     )
 
     target_link_libraries(viospice PRIVATE
-        FluxUI
-        FluxSchematicUI
-        FluxSchematicCore
-        FluxSymbols
-        FluxSimulator
-        FluxCore
-        FluxUI # Link twice if there are circular dependencies
+        VioUI
+        VioSchematicUI
+        VioSchematicCore
+        VioSymbols
+        VioSimulator
+        VioCore
+        VioUI # Link twice if there are circular dependencies
         FluxScript
         FluxScriptManager
-        FluxFootprints
+        VioFootprints
         VioraPCBCore
     )
 
@@ -274,7 +274,7 @@ add_executable(viospice-merge
     tools/viospice_merge.cpp
 )
 target_link_libraries(viospice-merge PRIVATE
-    FluxCore
+    VioCore
     Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::Widgets
 )

@@ -8,7 +8,7 @@
 #include "../items/copper_pour_item.h"
 #include "../items/image_item.h"
 #include "../layers/pcb_layer.h"
-#include "../../core/config_manager.h"
+#include "config_manager.h"
 #include "../../footprints/footprint_library.h"
 
 #include <QFile>

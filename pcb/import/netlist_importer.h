@@ -5,7 +5,7 @@
 #include <QList>
 #include <QMap>
 #include <QVariant>
-#include "../../core/eco_types.h"
+#include "eco_types.h"
 
 /**
  * @brief Represents a component extracted from a netlist for PCB import.
