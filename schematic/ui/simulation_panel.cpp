@@ -507,15 +507,25 @@ bool signalMatches(const QString& itemText, const QString& signalName) {
         return true;
     }
 
+    // Check for step param suffix: "V(out) [R1=1k]" matches "V(out)"
+    QString textNoSuffix = itemText;
+    int bracketIdx = textNoSuffix.indexOf(" [");
+    if (bracketIdx > 0) {
+        textNoSuffix = textNoSuffix.left(bracketIdx).trimmed();
+        if (textNoSuffix.compare(signalName, Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+    }
+
     // Check V(net) <-> net equivalence
     if (signalName.startsWith("V(", Qt::CaseInsensitive) && signalName.endsWith(")")) {
         const QString bare = signalName.mid(2, signalName.length() - 3);
-        if (itemText.compare(bare, Qt::CaseInsensitive) == 0) {
+        if (itemText.compare(bare, Qt::CaseInsensitive) == 0 || textNoSuffix.compare(bare, Qt::CaseInsensitive) == 0) {
             return true;
         }
     } else {
         const QString vName = QString("V(%1)").arg(signalName);
-        if (itemText.compare(vName, Qt::CaseInsensitive) == 0) {
+        if (itemText.compare(vName, Qt::CaseInsensitive) == 0 || textNoSuffix.compare(vName, Qt::CaseInsensitive) == 0) {
             return true;
         }
     }
@@ -1012,46 +1022,28 @@ void SimulationPanel::updateTransientNetTableOverlay(const SimResults& results) 
 void SimulationPanel::addProbe(const QString& signalName) {
     if (signalName.isEmpty()) return;
     
-    // Check if it already exists (case-insensitive)
-    QListWidgetItem* targetItem = nullptr;
+    // Check if it already exists (case-insensitive and step-aware)
+    QList<QListWidgetItem*> matchedItems;
     for (int i = 0; i < m_signalList->count(); ++i) {
-        if (m_signalList->item(i)->text().compare(signalName, Qt::CaseInsensitive) == 0) {
-            targetItem = m_signalList->item(i);
-            break;
+        if (signalMatches(m_signalList->item(i)->text(), signalName)) {
+            matchedItems.append(m_signalList->item(i));
         }
     }
     
-    if (targetItem) {
-        targetItem->setCheckState(Qt::Checked);
+    if (!matchedItems.isEmpty()) {
+        for (auto* item : matchedItems) {
+            item->setCheckState(Qt::Checked);
+        }
     } else {
-        // Not found exactly, try finding without V() if signalName has it, or vice versa
-        QString alternative = signalName;
-        if (signalName.startsWith("V(", Qt::CaseInsensitive) && signalName.endsWith(")")) {
-            alternative = signalName.mid(2, signalName.length() - 3);
-        } else {
-            alternative = QString("V(%1)").arg(signalName);
-        }
-        
-        for (int i = 0; i < m_signalList->count(); ++i) {
-            if (m_signalList->item(i)->text().compare(alternative, Qt::CaseInsensitive) == 0) {
-                targetItem = m_signalList->item(i);
-                break;
-            }
-        }
-        
-        if (targetItem) {
-            targetItem->setCheckState(Qt::Checked);
-        } else {
-            // Truly new signal, add it
-            targetItem = new QListWidgetItem(signalName);
-            targetItem->setFlags(targetItem->flags() | Qt::ItemIsUserCheckable);
-            targetItem->setCheckState(Qt::Checked);
-            m_signalList->addItem(targetItem);
-        }
+        // Truly new signal, add it
+        QListWidgetItem* targetItem = new QListWidgetItem(signalName);
+        targetItem->setFlags(targetItem->flags() | Qt::ItemIsUserCheckable);
+        targetItem->setCheckState(Qt::Checked);
+        m_signalList->addItem(targetItem);
     }
     
-    const QString matchedName = (targetItem) ? targetItem->text() : signalName;
-    qDebug() << "[PROBE_RT] addProbe requested=" << signalName << "matched=" << matchedName;
+    const QString matchedName = signalName; // Use the base signal name for syncing
+    qDebug() << "[PROBE_RT] addProbe requested=" << signalName;
 
     auto syncExclusiveProbeSelection = [this, &matchedName]() {
         if (!m_signalList) return;

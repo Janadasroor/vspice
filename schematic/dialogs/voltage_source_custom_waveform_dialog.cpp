@@ -40,6 +40,21 @@ void VoltageSourceCustomWaveformDialog::setDefaultSavePath(const QString& dirPat
     m_defaultBaseName = baseName;
 }
 
+VoltageSourceCustomWaveformDialog::Result VoltageSourceCustomWaveformDialog::execCustomDraw(QWidget* parent, const QString& projectDir, const QString& defaultName) {
+    VoltageSourceCustomWaveformDialog dlg(parent);
+    dlg.setDefaultSavePath(projectDir, defaultName);
+    
+    Result res;
+    if (dlg.exec() == QDialog::Accepted) {
+        res.accepted = true;
+        res.points = dlg.pwlPoints();
+        res.repeat = dlg.repeatEnabled();
+        res.filePath = dlg.pwlFilePath();
+        res.saveToFile = dlg.saveToFileEnabled();
+    }
+    return res;
+}
+
 void VoltageSourceCustomWaveformDialog::setupUi() {
     auto* mainLayout = new QVBoxLayout(this);
 
@@ -47,9 +62,20 @@ void VoltageSourceCustomWaveformDialog::setupUi() {
     header->setStyleSheet("color: #e5e7eb; font-weight: 600;");
     mainLayout->addWidget(header);
 
-    // Toolbar for advanced tools - Split into two rows for width management
-    auto* toolLayout1 = new QHBoxLayout();
-    auto* toolLayout2 = new QHBoxLayout();
+    createGeneratorsRow(mainLayout);
+    createTransformationsRow(mainLayout);
+    createOptionsRow(mainLayout);
+
+    m_drawWidget = new WaveformDrawWidget();
+    mainLayout->addWidget(m_drawWidget, 1);
+
+    createFormulaBar(mainLayout);
+    createParameterGrid(mainLayout);
+    createActionButtons(mainLayout);
+}
+
+void VoltageSourceCustomWaveformDialog::createGeneratorsRow(QVBoxLayout* layout) {
+    auto* row = new QHBoxLayout();
     
     auto* sineBtn = new QPushButton("Sine");
     auto* squareBtn = new QPushButton("Square");
@@ -58,13 +84,26 @@ void VoltageSourceCustomWaveformDialog::setupUi() {
     auto* bitsBtn = new QPushButton("Bitstream");
     auto* pulseBtn = new QPushButton("Pulse");
     
-    toolLayout1->addWidget(sineBtn);
-    toolLayout1->addWidget(squareBtn);
-    toolLayout1->addWidget(triBtn);
-    toolLayout1->addWidget(sawBtn);
-    toolLayout1->addWidget(bitsBtn);
-    toolLayout1->addWidget(pulseBtn);
-    toolLayout1->addStretch();
+    row->addWidget(sineBtn);
+    row->addWidget(squareBtn);
+    row->addWidget(triBtn);
+    row->addWidget(sawBtn);
+    row->addWidget(bitsBtn);
+    row->addWidget(pulseBtn);
+    row->addStretch();
+    
+    layout->addLayout(row);
+
+    connect(sineBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplySine);
+    connect(squareBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplySquare);
+    connect(triBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyTriangle);
+    connect(sawBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplySawtooth);
+    connect(bitsBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyBitstream);
+    connect(pulseBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyPulse);
+}
+
+void VoltageSourceCustomWaveformDialog::createTransformationsRow(QVBoxLayout* layout) {
+    auto* row = new QHBoxLayout();
     
     auto* smoothBtn = new QPushButton("Smooth");
     auto* noiseBtn = new QPushButton("Noise");
@@ -74,110 +113,17 @@ void VoltageSourceCustomWaveformDialog::setupUi() {
     auto* scaleBtn = new QPushButton("Scale T/V");
     auto* shiftBtn = new QPushButton("Shift T");
     
-    toolLayout2->addWidget(smoothBtn);
-    toolLayout2->addWidget(noiseBtn);
-    toolLayout2->addWidget(invertBtn);
-    toolLayout2->addWidget(mirrorVBtn);
-    toolLayout2->addWidget(reverseBtn);
-    toolLayout2->addWidget(scaleBtn);
-    toolLayout2->addWidget(shiftBtn);
-    toolLayout2->addStretch();
+    row->addWidget(smoothBtn);
+    row->addWidget(noiseBtn);
+    row->addWidget(invertBtn);
+    row->addWidget(mirrorVBtn);
+    row->addWidget(reverseBtn);
+    row->addWidget(scaleBtn);
+    row->addWidget(shiftBtn);
+    row->addStretch();
     
-    mainLayout->addLayout(toolLayout1);
-    mainLayout->addLayout(toolLayout2);
+    layout->addLayout(row);
 
-    auto* optionLayout = new QHBoxLayout();
-    auto* snapCheck = new QCheckBox("Snap");
-    auto* stepCheck = new QCheckBox("Step Mode");
-    auto* polylineCheck = new QCheckBox("Polyline");
-    m_resampleCheck = new QCheckBox("Resample");
-    m_resampleCheck->setChecked(false); 
-    
-    optionLayout->addWidget(snapCheck);
-    optionLayout->addWidget(stepCheck);
-    optionLayout->addWidget(polylineCheck);
-    optionLayout->addWidget(m_resampleCheck);
-    optionLayout->addStretch();
-    
-    mainLayout->addLayout(optionLayout);
-
-    m_drawWidget = new WaveformDrawWidget();
-    mainLayout->addWidget(m_drawWidget, 1);
-
-    connect(snapCheck, &QCheckBox::toggled, m_drawWidget, &WaveformDrawWidget::setSnapToGrid);
-    connect(stepCheck, &QCheckBox::toggled, m_drawWidget, &WaveformDrawWidget::setStepMode);
-    connect(polylineCheck, &QCheckBox::toggled, m_drawWidget, &WaveformDrawWidget::setPolylineMode);
-    connect(m_resampleCheck, &QCheckBox::toggled, this, [this](bool checked) {
-        if (m_samplesSpin) m_samplesSpin->setEnabled(checked);
-    });
-
-    auto* formulaLayout = new QHBoxLayout();
-    formulaLayout->addWidget(new QLabel("Equation f(x):"));
-    m_formulaEdit = new QLineEdit();
-    m_formulaEdit->setPlaceholderText("e.g. sin(2*pi*x) + 0.5*sin(6*pi*x)");
-    formulaLayout->addWidget(m_formulaEdit, 1);
-    auto* applyFormulaBtn = new QPushButton("Apply");
-    formulaLayout->addWidget(applyFormulaBtn);
-    mainLayout->addLayout(formulaLayout);
-
-    auto* controlLayout = new QGridLayout();
-    controlLayout->addWidget(new QLabel("Period [s]:"), 0, 0);
-    m_periodEdit = new QLineEdit("1m");
-    controlLayout->addWidget(m_periodEdit, 0, 1);
-    controlLayout->addWidget(new QLabel("Amplitude [V]:"), 0, 2);
-    m_amplitudeEdit = new QLineEdit("1");
-    controlLayout->addWidget(m_amplitudeEdit, 0, 3);
-    controlLayout->addWidget(new QLabel("Offset [V]:"), 0, 4);
-    m_offsetEdit = new QLineEdit("0");
-    controlLayout->addWidget(m_offsetEdit, 0, 5);
-    controlLayout->addWidget(new QLabel("Samples:"), 0, 6);
-    m_samplesSpin = new QSpinBox();
-    m_samplesSpin->setRange(8, 512);
-    m_samplesSpin->setValue(64);
-    controlLayout->addWidget(m_samplesSpin, 0, 7);
-    m_repeatCheck = new QCheckBox("Repeat (PWL r=0)");
-    controlLayout->addWidget(m_repeatCheck, 1, 0, 1, 3);
-
-    m_saveToFileCheck = new QCheckBox("Save PWL to file");
-    controlLayout->addWidget(m_saveToFileCheck, 1, 3, 1, 2);
-    m_filePathEdit = new QLineEdit();
-    m_filePathEdit->setPlaceholderText("waveform.pwl");
-    m_filePathEdit->setEnabled(false);
-    controlLayout->addWidget(m_filePathEdit, 1, 5, 1, 2);
-    m_browseBtn = new QPushButton("Browse");
-    m_browseBtn->setEnabled(false);
-    controlLayout->addWidget(m_browseBtn, 1, 7, 1, 1);
-    mainLayout->addLayout(controlLayout);
-
-    auto* btnLayout = new QHBoxLayout();
-    m_clearBtn = new QPushButton("Clear");
-    auto* cancelBtn = new QPushButton("Cancel");
-    auto* okBtn = new QPushButton("OK");
-    btnLayout->addWidget(m_clearBtn);
-    btnLayout->addStretch();
-    btnLayout->addWidget(cancelBtn);
-    btnLayout->addWidget(okBtn);
-    mainLayout->addLayout(btnLayout);
-
-    connect(m_clearBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onClear);
-    connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
-    connect(okBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onAccepted);
-    connect(m_saveToFileCheck, &QCheckBox::toggled, this, [this](bool checked) {
-        m_filePathEdit->setEnabled(checked);
-        m_browseBtn->setEnabled(checked);
-    });
-    connect(m_browseBtn, &QPushButton::clicked, this, [this]() {
-        QString suggested = m_defaultDir.isEmpty() ? QString() : (m_defaultDir + "/" + (m_defaultBaseName.isEmpty() ? "waveform.pwl" : m_defaultBaseName));
-        QString path = QFileDialog::getSaveFileName(this, "Save PWL File", suggested, "PWL Files (*.pwl *.txt *.csv *.dat);;All Files (*)");
-        if (!path.isEmpty()) m_filePathEdit->setText(path);
-    });
-
-    connect(sineBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplySine);
-    connect(squareBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplySquare);
-    connect(triBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyTriangle);
-    connect(sawBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplySawtooth);
-    connect(bitsBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyBitstream);
-    connect(pulseBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyPulse);
     connect(smoothBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplySmooth);
     connect(noiseBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyNoise);
     connect(invertBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyInvert);
@@ -185,7 +131,118 @@ void VoltageSourceCustomWaveformDialog::setupUi() {
     connect(reverseBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyReverse);
     connect(scaleBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyScaleTime);
     connect(shiftBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyShiftTime);
-    connect(applyFormulaBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyFormula);
+}
+
+void VoltageSourceCustomWaveformDialog::createOptionsRow(QVBoxLayout* layout) {
+    auto* row = new QHBoxLayout();
+    
+    auto* snapCheck = new QCheckBox("Snap");
+    auto* stepCheck = new QCheckBox("Step Mode");
+    auto* polylineCheck = new QCheckBox("Polyline");
+    m_resampleCheck = new QCheckBox("Resample");
+    m_resampleCheck->setChecked(false); 
+    
+    row->addWidget(snapCheck);
+    row->addWidget(stepCheck);
+    row->addWidget(polylineCheck);
+    row->addWidget(m_resampleCheck);
+    row->addStretch();
+    
+    layout->addLayout(row);
+
+    connect(snapCheck, &QCheckBox::toggled, m_drawWidget, &WaveformDrawWidget::setSnapToGrid);
+    connect(stepCheck, &QCheckBox::toggled, m_drawWidget, &WaveformDrawWidget::setStepMode);
+    connect(polylineCheck, &QCheckBox::toggled, m_drawWidget, &WaveformDrawWidget::setPolylineMode);
+    connect(m_resampleCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_samplesSpin) m_samplesSpin->setEnabled(checked);
+    });
+}
+
+void VoltageSourceCustomWaveformDialog::createFormulaBar(QVBoxLayout* layout) {
+    auto* row = new QHBoxLayout();
+    row->addWidget(new QLabel("Equation f(x):"));
+    
+    m_formulaEdit = new QLineEdit();
+    m_formulaEdit->setPlaceholderText("e.g. sin(2*pi*x) + 0.5*sin(6*pi*x)");
+    row->addWidget(m_formulaEdit, 1);
+    
+    auto* applyBtn = new QPushButton("Apply");
+    row->addWidget(applyBtn);
+    
+    layout->addLayout(row);
+
+    connect(applyBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyFormula);
+    connect(m_formulaEdit, &QLineEdit::returnPressed, this, &VoltageSourceCustomWaveformDialog::onApplyFormula);
+}
+
+void VoltageSourceCustomWaveformDialog::createParameterGrid(QVBoxLayout* layout) {
+    auto* grid = new QGridLayout();
+    
+    grid->addWidget(new QLabel("Period [s]:"), 0, 0);
+    m_periodEdit = new QLineEdit("1m");
+    grid->addWidget(m_periodEdit, 0, 1);
+    
+    grid->addWidget(new QLabel("Amplitude [V]:"), 0, 2);
+    m_amplitudeEdit = new QLineEdit("1");
+    grid->addWidget(m_amplitudeEdit, 0, 3);
+    
+    grid->addWidget(new QLabel("Offset [V]:"), 0, 4);
+    m_offsetEdit = new QLineEdit("0");
+    grid->addWidget(m_offsetEdit, 0, 5);
+    
+    grid->addWidget(new QLabel("Samples:"), 0, 6);
+    m_samplesSpin = new QSpinBox();
+    m_samplesSpin->setRange(8, 2048);
+    m_samplesSpin->setValue(64);
+    m_samplesSpin->setEnabled(false); // Default resample is off
+    grid->addWidget(m_samplesSpin, 0, 7);
+    
+    m_repeatCheck = new QCheckBox("Repeat (PWL r=0)");
+    grid->addWidget(m_repeatCheck, 1, 0, 1, 3);
+
+    m_saveToFileCheck = new QCheckBox("Save PWL to file");
+    grid->addWidget(m_saveToFileCheck, 1, 3, 1, 2);
+    
+    m_filePathEdit = new QLineEdit();
+    m_filePathEdit->setPlaceholderText("waveform.pwl");
+    m_filePathEdit->setEnabled(false);
+    grid->addWidget(m_filePathEdit, 1, 5, 1, 2);
+    
+    m_browseBtn = new QPushButton("Browse");
+    m_browseBtn->setEnabled(false);
+    grid->addWidget(m_browseBtn, 1, 7, 1, 1);
+    
+    layout->addLayout(grid);
+
+    connect(m_saveToFileCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_filePathEdit->setEnabled(checked);
+        m_browseBtn->setEnabled(checked);
+    });
+    
+    connect(m_browseBtn, &QPushButton::clicked, this, [this]() {
+        QString suggested = m_defaultDir.isEmpty() ? QString() : (m_defaultDir + "/" + (m_defaultBaseName.isEmpty() ? "waveform.pwl" : m_defaultBaseName));
+        QString path = QFileDialog::getSaveFileName(this, "Save PWL File", suggested, "PWL Files (*.pwl *.txt *.csv *.dat);;All Files (*)");
+        if (!path.isEmpty()) m_filePathEdit->setText(path);
+    });
+}
+
+void VoltageSourceCustomWaveformDialog::createActionButtons(QVBoxLayout* layout) {
+    auto* row = new QHBoxLayout();
+    
+    m_clearBtn = new QPushButton("Clear");
+    auto* cancelBtn = new QPushButton("Cancel");
+    auto* okBtn = new QPushButton("OK");
+    
+    row->addWidget(m_clearBtn);
+    row->addStretch();
+    row->addWidget(cancelBtn);
+    row->addWidget(okBtn);
+    
+    layout->addLayout(row);
+
+    connect(m_clearBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onClear);
+    connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
+    connect(okBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onAccepted);
 }
 
 void VoltageSourceCustomWaveformDialog::onApplySine() {

@@ -9,6 +9,7 @@ class QCheckBox;
 class QLineEdit;
 class QSpinBox;
 class QPushButton;
+class QVBoxLayout;
 class WaveformDrawWidget;
 
 class VoltageSourceCustomWaveformDialog : public QDialog {
@@ -17,6 +18,16 @@ class VoltageSourceCustomWaveformDialog : public QDialog {
 public:
     explicit VoltageSourceCustomWaveformDialog(QWidget* parent = nullptr);
     void setDefaultSavePath(const QString& dirPath, const QString& baseName);
+
+    // Static helper for parent dialogs
+    struct Result {
+        bool accepted = false;
+        QString points;
+        bool repeat = false;
+        QString filePath;
+        bool saveToFile = false;
+    };
+    static Result execCustomDraw(QWidget* parent, const QString& projectDir, const QString& defaultName);
 
     QString pwlPoints() const { return m_pwlPoints; }
     bool repeatEnabled() const { return m_repeatEnabled; }
@@ -43,6 +54,13 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void createGeneratorsRow(QVBoxLayout* layout);
+    void createTransformationsRow(QVBoxLayout* layout);
+    void createOptionsRow(QVBoxLayout* layout);
+    void createFormulaBar(QVBoxLayout* layout);
+    void createParameterGrid(QVBoxLayout* layout);
+    void createActionButtons(QVBoxLayout* layout);
+
     QString buildPwlPoints() const;
 
     WaveformDrawWidget* m_drawWidget;

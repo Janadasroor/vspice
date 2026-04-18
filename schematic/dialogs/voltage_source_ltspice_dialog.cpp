@@ -937,39 +937,28 @@ void VoltageSourceLTSpiceDialog::onCustomDraw() {
     if (isDrawing) return;
     isDrawing = true;
 
-    VoltageSourceCustomWaveformDialog dlg(this);
-    dlg.setDefaultSavePath(m_projectDir, m_item ? (m_item->reference() + ".pwl") : "waveform.pwl");
-    if (dlg.exec() == QDialog::Accepted) {
-        if (m_pwlRepeat) {
-            m_pwlRepeat->setChecked(dlg.repeatEnabled());
-        }
+    auto result = VoltageSourceCustomWaveformDialog::execCustomDraw(
+        this, m_projectDir, m_item ? (m_item->reference() + ".pwl") : "waveform.pwl"
+    );
 
-        if (dlg.saveToFileEnabled()) {
-            const QString path = dlg.pwlFilePath();
-            if (!path.isEmpty()) {
-                m_pwlFile->setText(path);
-                m_pwlFileRadio->blockSignals(true);
-                m_pwlFileRadio->setChecked(true);
-                m_pwlFileRadio->blockSignals(false);
-                m_paramStack->setCurrentIndex(0);
-                isDrawing = false;
-                return;
-            }
-        }
+    if (result.accepted) {
+        if (m_pwlRepeat) m_pwlRepeat->setChecked(result.repeat);
 
-        const QString points = dlg.pwlPoints();
-        if (!points.isEmpty()) {
-            m_pwlPoints->setText(points);
-            if (m_customRadio && m_customRadio->isChecked()) {
-                m_paramStack->setCurrentIndex(5);
-            } else {
-                m_pwlRadio->blockSignals(true);
-                m_pwlRadio->setChecked(true);
-                m_pwlRadio->blockSignals(false);
-                m_paramStack->setCurrentIndex(5);
-            }
+        if (result.saveToFile && !result.filePath.isEmpty()) {
+            m_pwlFile->setText(result.filePath);
+            m_pwlFileRadio->blockSignals(true);
+            m_pwlFileRadio->setChecked(true);
+            m_pwlFileRadio->blockSignals(false);
+            m_paramStack->setCurrentIndex(0);
+        } else if (!result.points.isEmpty()) {
+            m_pwlPoints->setText(result.points);
+            m_pwlRadio->blockSignals(true);
+            m_pwlRadio->setChecked(true);
+            m_pwlRadio->blockSignals(false);
+            m_paramStack->setCurrentIndex(5);
         }
     }
+    
     isDrawing = false;
 }
 
