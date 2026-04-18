@@ -102,6 +102,46 @@ class ToolRegistry:
             }
         except Exception as e:
             return {"error": str(e)}
+    def setup_parameter_sweep(self, component_ref, sweep_start, sweep_stop, sweep_step, analysis_type, analysis_args):
+        try:
+            # We construct a command that tells the editor to set the spice directive.
+            # In viospice, the AI uses `execute_commands` to add directives, but here we can just output a snippet.
+            # We'll create a snippet that adds the .step command to the schematic.
+            
+            step_cmd = f".step param {component_ref} {sweep_start} {sweep_stop} {sweep_step}"
+            sim_cmd = f".{analysis_type} {analysis_args}"
+            
+            # Use the existing execute_commands logic to place a spice directive
+            cmd_json = [
+                {
+                    "cmd": "setProperty", 
+                    "reference": component_ref,
+                    "property": "value", 
+                    "value": f"{{{component_ref}}}" # Tell spice to treat it as a parameter
+                },
+                {
+                    "cmd": "addComponent",
+                    "type": "Spice Directive",
+                    "x": -100,
+                    "y": -100,
+                    "properties": {
+                        "value": f"{step_cmd}\\n{sim_cmd}"
+                    }
+                }
+            ]
+            
+            return {
+                "status": "success",
+                "instructions": "I have configured the parameter sweep. Click 'Execute' on the command snippet below to apply the changes to your schematic.",
+                "snippet": {
+                    "commands": [
+                        f"execute_commands '{json.dumps(cmd_json)}'"
+                    ]
+                }
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
     def list_nodes(self):
         try:
             nodes = self.adapter.get_nodes()
@@ -159,8 +199,46 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e)}
 
+    def assign_real_world_part(self, reference, search_query):
+        try:
+            results = self.supply_chain.search_component(search_query)
+            if not results:
+                return {"error": f"No components found for query: '{search_query}'"}
+            
+            best_match = results[0]
+            mpn = best_match.get("mpn", "Unknown")
+            desc = best_match.get("description", "No description")
+            
+            # Create a snippet to assign the MPN and update the value to the MPN
+            cmd_json = [
+                {
+                    "cmd": "setProperty", 
+                    "reference": reference,
+                    "property": "MPN", 
+                    "value": mpn
+                },
+                {
+                    "cmd": "setProperty", 
+                    "reference": reference,
+                    "property": "value", 
+                    "value": mpn
+                }
+            ]
+            
+            return {
+                "status": "success",
+                "instructions": f"Found {mpn} ({desc}). Click 'Execute' below to assign it to {reference}.",
+                "snippet": {
+                    "commands": [
+                        f"execute_commands '{json.dumps(cmd_json)}'"
+                    ]
+                }
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
     def lookup_component_data(self, part_number):
-        return self.supply_chain.lookup(part_number)
+        return self.supply_chain.search_component(part_number)
 
     def _ensure_tran_results(self, stop_time="10m", step_size="100u"):
         pass

@@ -18,6 +18,9 @@ public:
     void setStepMode(bool enabled);
     bool isStepMode() const;
 
+    void setPolylineMode(bool enabled);
+    bool isPolylineMode() const { return m_polylineMode; }
+
     // Transformations
     void reverseTime();
     void shiftTime(double delta);
@@ -36,9 +39,12 @@ private:
     QPointF toWidget(const QPointF& n) const;
 
     QVector<QPointF> m_points;
+    QPointF m_previewPoint;
     bool m_drawing;
     bool m_snapToGrid;
     bool m_stepMode;
+    bool m_polylineMode;
+    bool m_hasPreview;
 };
 
 #endif // WAVEFORM_DRAW_WIDGET_H

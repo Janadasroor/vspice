@@ -355,6 +355,10 @@ void CurrentSourceLTSpiceDialog::setupUi() {
 }
 
 void CurrentSourceLTSpiceDialog::onFunctionChanged() {
+    // Only proceed if this is the radio button being CHECKED
+    QRadioButton* rb = qobject_cast<QRadioButton*>(sender());
+    if (rb && !rb->isChecked()) return;
+
     if (m_noneRadio->isChecked()) m_paramStack->setCurrentIndex(0);
     else if (m_pulseRadio->isChecked()) m_paramStack->setCurrentIndex(1);
     else if (m_sineRadio->isChecked()) m_paramStack->setCurrentIndex(2);
@@ -378,6 +382,10 @@ void CurrentSourceLTSpiceDialog::onPwlBrowse() {
 }
 
 void CurrentSourceLTSpiceDialog::onCustomDraw() {
+    static bool isDrawing = false;
+    if (isDrawing) return;
+    isDrawing = true;
+
     VoltageSourceCustomWaveformDialog dlg(this);
     dlg.setDefaultSavePath(m_projectDir, m_item ? (m_item->reference() + ".pwl") : "waveform.pwl");
     if (dlg.exec() == QDialog::Accepted) {
@@ -389,8 +397,11 @@ void CurrentSourceLTSpiceDialog::onCustomDraw() {
             const QString path = dlg.pwlFilePath();
             if (!path.isEmpty()) {
                 m_pwlFile->setText(path);
+                m_pwlFileRadio->blockSignals(true);
                 m_pwlFileRadio->setChecked(true);
+                m_pwlFileRadio->blockSignals(false);
                 m_paramStack->setCurrentIndex(0);
+                isDrawing = false;
                 return;
             }
         }
@@ -401,11 +412,14 @@ void CurrentSourceLTSpiceDialog::onCustomDraw() {
             if (m_customRadio && m_customRadio->isChecked()) {
                 m_paramStack->setCurrentIndex(5);
             } else {
+                m_pwlRadio->blockSignals(true);
                 m_pwlRadio->setChecked(true);
+                m_pwlRadio->blockSignals(false);
                 m_paramStack->setCurrentIndex(5);
             }
         }
     }
+    isDrawing = false;
 }
 
 void CurrentSourceLTSpiceDialog::loadFromItem() {

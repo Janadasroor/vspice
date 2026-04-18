@@ -111,6 +111,28 @@ QVector<QPointF> generatePulse(double v1, double v2, double delay, double width,
     return res;
 }
 
+QVector<QPointF> generateBitstream(const QString& bits) {
+    QVector<QPointF> res;
+    if (bits.isEmpty()) return res;
+
+    QString filtered;
+    for (const QChar& c : bits) {
+        if (c == '0' || c == '1') filtered.append(c);
+    }
+    if (filtered.isEmpty()) return res;
+
+    double dt = 1.0 / filtered.length();
+    for (int i = 0; i < filtered.length(); ++i) {
+        double val = (filtered[i] == '1') ? 1.0 : -1.0;
+        // One point at the exact start of each bit
+        res.append(QPointF(i * dt, val));
+    }
+    // Final closure point at the very end
+    res.append(QPointF(1.0, (filtered.at(filtered.length() - 1) == '1') ? 1.0 : -1.0));
+
+    return res;
+}
+
 double evaluateFormula(const QString& formula, double x, bool* ok) {
     Parser p;
     p.s = formula.toLower().replace(" ", "").replace("pi", QString::number(M_PI, 'g', 15));
@@ -155,6 +177,69 @@ void addNoise(QVector<QPointF>& points, double factor) {
     for (auto& p : points) {
         p.setY(qBound(-1.0, p.y() + dis(gen), 1.0));
     }
+}
+
+QString convertToPwl(QVector<QPointF> points, const ExportParams& params) {
+    if (points.isEmpty()) return "0 0 1 0";
+
+    // Ensure sorted and bounded [0, 1]
+    std::sort(points.begin(), points.end(), [](const QPointF& a, const QPointF& b) {
+        return a.x() < b.x();
+    });
+
+    if (points.first().x() > 0.0) points.prepend(QPointF(0.0, points.first().y()));
+    if (points.last().x() < 1.0) points.append(QPointF(1.0, points.last().y()));
+
+    QStringList tokens;
+
+    if (params.resample) {
+        double lastY = -9e9;
+        for (int i = 0; i < params.sampleCount; ++i) {
+            double x = double(i) / (params.sampleCount - 1);
+            double y = 0;
+            for (int j = 1; j < points.size(); ++j) {
+                if (x <= points[j].x()) {
+                    const QPointF a = points[j - 1];
+                    const QPointF b = points[j];
+                    if (params.isStepMode) y = a.y();
+                    else {
+                        double t = (b.x() - a.x()) <= 1e-12 ? 0.0 : (x - a.x()) / (b.x() - a.x());
+                        y = a.y() + t * (b.y() - a.y());
+                    }
+                    break;
+                }
+            }
+            double currentY = params.offset + params.amplitude * y;
+            if (i == 0 || i == params.sampleCount - 1 || qAbs(currentY - lastY) > 1e-9) {
+                tokens << QString::number(x * params.period, 'g', 15) << QString::number(currentY, 'g', 15);
+                lastY = currentY;
+            }
+        }
+    } else {
+        double lastT = -1.0;
+        double lastY = -9e9;
+        const double tr = 1e-9; // 1ns fixed transition
+
+        for (int i = 0; i < points.size(); ++i) {
+            double rawT = points[i].x() * params.period;
+            double rawY = params.offset + params.amplitude * points[i].y();
+
+            if (i > 0 && qAbs(rawT - lastT) < 1e-15 && qAbs(rawY - lastY) < 1e-12) continue;
+
+            if (i > 0 && params.isStepMode) {
+                if (qAbs(rawY - lastY) > 1e-9) {
+                    double jumpStart = std::max(lastT + 1e-15, rawT - tr);
+                    tokens << QString::number(jumpStart, 'g', 15) << QString::number(lastY, 'g', 15);
+                } else if (i < points.size() - 1) {
+                    continue; 
+                }
+            }
+            tokens << QString::number(rawT, 'g', 15) << QString::number(rawY, 'g', 15);
+            lastT = rawT;
+            lastY = rawY;
+        }
+    }
+    return tokens.join(' ');
 }
 
 } // namespace WaveformEngine

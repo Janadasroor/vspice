@@ -256,7 +256,7 @@ void PropertyEditor::addProperty(const QString &name, const QVariant &value, con
         check->setStyleSheet(
             "QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #8a8a8a; border-radius: 2px; background: #1f1f1f; }"
             "QCheckBox::indicator:hover { border-color: #569cd6; }"
-            "QCheckBox::indicator:checked { border-color: #569cd6; background: #569cd6; }"
+            "QCheckBox::indicator:checked { border-color: #569cd6; background: #569cd6; image: url(:/icons/check.svg); }"
         );
         connect(check, &QCheckBox::stateChanged, this, [this, name](int state) {
             if (!m_blockSignals) Q_EMIT propertyChanged(name, state == Qt::Checked);

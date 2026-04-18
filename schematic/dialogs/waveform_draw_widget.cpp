@@ -6,10 +6,22 @@
 #include <algorithm>
 
 WaveformDrawWidget::WaveformDrawWidget(QWidget* parent)
-    : QWidget(parent), m_drawing(false), m_snapToGrid(false), m_stepMode(false) {
+    : QWidget(parent), m_drawing(false), m_snapToGrid(false), m_stepMode(false),
+      m_polylineMode(false), m_hasPreview(false) {
     setMinimumSize(360, 180);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+}
+
+void WaveformDrawWidget::setPolylineMode(bool enabled) {
+    m_polylineMode = enabled;
+    m_hasPreview = false;
+    if (m_polylineMode) {
+        setCursor(Qt::CrossCursor);
+    } else {
+        setCursor(Qt::ArrowCursor);
+    }
+    update();
 }
 
 void WaveformDrawWidget::clearPoints() {
@@ -84,17 +96,34 @@ void WaveformDrawWidget::scaleValue(double factor) {
 
 void WaveformDrawWidget::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
-        m_drawing = true;
-        if (!(event->modifiers() & Qt::ControlModifier)) {
-            m_points.clear();
+        if (m_polylineMode) {
+            // In polyline mode, we always append
+            addPoint(event->pos());
+        } else {
+            m_drawing = true;
+            if (!(event->modifiers() & Qt::ControlModifier)) {
+                m_points.clear();
+            }
+            addPoint(event->pos());
         }
-        addPoint(event->pos());
         event->accept();
+    } else if (event->button() == Qt::RightButton && m_polylineMode) {
+        // Right click to finish current polyline (stop showing preview)
+        m_hasPreview = false;
+        update();
     }
 }
 
 void WaveformDrawWidget::mouseMoveEvent(QMouseEvent* event) {
-    if (m_drawing && (event->buttons() & Qt::LeftButton)) {
+    if (m_polylineMode) {
+        m_previewPoint = toNormalized(event->pos());
+        if (m_snapToGrid) {
+            m_previewPoint.setX(qRound(m_previewPoint.x() * 20.0) / 20.0);
+            m_previewPoint.setY(qRound(m_previewPoint.y() * 10.0) / 10.0);
+        }
+        m_hasPreview = true;
+        update();
+    } else if (m_drawing && (event->buttons() & Qt::LeftButton)) {
         addPoint(event->pos());
         event->accept();
     }
@@ -102,8 +131,10 @@ void WaveformDrawWidget::mouseMoveEvent(QMouseEvent* event) {
 
 void WaveformDrawWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
-        m_drawing = false;
-        addPoint(event->pos());
+        if (!m_polylineMode) {
+            m_drawing = false;
+            addPoint(event->pos());
+        }
         event->accept();
     }
 }
@@ -151,6 +182,25 @@ void WaveformDrawWidget::paintEvent(QPaintEvent*) {
     } else if (m_points.size() == 1) {
         p.setPen(QColor("#60a5fa"));
         p.drawEllipse(toWidget(m_points.first()), 2.5, 2.5);
+    }
+    
+    // Preview line
+    if (m_polylineMode && m_hasPreview && !m_points.isEmpty()) {
+        QColor previewColor("#60a5fa");
+        previewColor.setAlpha(128);
+        QPen previewPen(previewColor);
+        previewPen.setStyle(Qt::DashLine);
+        p.setPen(previewPen);
+        
+        QPointF lastW = toWidget(m_points.last());
+        QPointF nextW = toWidget(m_previewPoint);
+        
+        if (m_stepMode) {
+            p.drawLine(lastW.x(), lastW.y(), nextW.x(), lastW.y());
+            p.drawLine(nextW.x(), lastW.y(), nextW.x(), nextW.y());
+        } else {
+            p.drawLine(lastW, nextW);
+        }
     }
     
     if (m_drawing && !m_points.isEmpty()) {

@@ -99,24 +99,72 @@ QString SmartProbeEngine::formatInstantValue(const QString& netName, const SimRe
         return QString("V = %1 V (DC)").arg(results.nodeVoltages.at(stdNet), 0, 'f', 3);
     }
 
-    // Check waveforms for Transient/AC
+    // Check waveforms for Transient/AC (including .step suffixes like "V(out) [step]")
+    QStringList stepResults;
+    int maxStepsToShow = 3;
+    int matchedCount = 0;
+
+    std::string targetExact = stdNet;
+    std::string targetV = "V(" + stdNet + ")";
+
     for (const auto& wf : results.waveforms) {
-        if (wf.name == stdNet || wf.name == "V(" + stdNet + ")") {
-            if (wf.yData.empty()) return "Analyzing...";
+        // Match exact name or name with a step suffix
+        bool isMatch = false;
+        if (wf.name == targetExact || wf.name == targetV) {
+            isMatch = true;
+        } else if (wf.name.find(targetExact + " [") == 0 || wf.name.find(targetV + " [") == 0) {
+            isMatch = true;
+        }
+
+        if (isMatch) {
+            matchedCount++;
+            if (stepResults.size() >= maxStepsToShow) continue;
+
+            if (wf.yData.empty()) {
+                stepResults.append("Analyzing...");
+                continue;
+            }
             
             double maxV = -1e308, minV = 1e308, sumSq = 0;
+            size_t validPoints = 0;
             for (double v : wf.yData) {
+                if (std::isnan(v) || std::isinf(v)) continue;
                 if (v > maxV) maxV = v;
                 if (v < minV) minV = v;
                 sumSq += v * v;
+                validPoints++;
             }
-            double rms = std::sqrt(sumSq / wf.yData.size());
+
+            if (validPoints == 0) {
+                stepResults.append("Invalid Data");
+                continue;
+            }
+
+            double rms = std::sqrt(sumSq / validPoints);
             
-            return QString("V_rms = %1 V (Peak-Peak: %2 V to %3 V)")
-                    .arg(rms, 0, 'f', 3)
-                    .arg(minV, 0, 'f', 3)
-                    .arg(maxV, 0, 'f', 3);
+            // Extract step suffix if present for display
+            QString label = "V_rms";
+            if (wf.name.find('[') != std::string::npos) {
+                QString qName = QString::fromStdString(wf.name);
+                int idx = qName.indexOf('[');
+                if (idx >= 0) {
+                    label = "V " + qName.mid(idx);
+                }
+            }
+
+            stepResults.append(QString("%1 = %2 V (Peak-Peak: %3 V to %4 V)")
+                    .arg(label)
+                    .arg(rms, 0, 'f', 2)
+                    .arg(minV, 0, 'f', 2)
+                    .arg(maxV, 0, 'f', 2));
         }
+    }
+
+    if (matchedCount > 0) {
+        if (matchedCount > maxStepsToShow) {
+            stepResults.append(QString("...and %1 more steps").arg(matchedCount - maxStepsToShow));
+        }
+        return stepResults.join("\n");
     }
 
     return "No simulation data available.";

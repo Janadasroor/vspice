@@ -19,11 +19,19 @@
 #include "../../simulator/core/sim_value_parser.h"
 
 VoltageSourceCustomWaveformDialog::VoltageSourceCustomWaveformDialog(QWidget* parent)
-    : QDialog(parent), m_drawWidget(nullptr), m_periodEdit(nullptr), m_amplitudeEdit(nullptr),
+    : QDialog(parent), m_drawWidget(nullptr), m_formulaEdit(nullptr), m_periodEdit(nullptr), m_amplitudeEdit(nullptr),
       m_offsetEdit(nullptr), m_samplesSpin(nullptr), m_repeatCheck(nullptr),
-      m_saveToFileCheck(nullptr), m_filePathEdit(nullptr), m_browseBtn(nullptr),
+      m_saveToFileCheck(nullptr), m_resampleCheck(nullptr), m_filePathEdit(nullptr), m_browseBtn(nullptr),
       m_clearBtn(nullptr), m_repeatEnabled(false), m_saveToFileEnabled(false) {
-    setWindowTitle("Custom Waveform (Draw)");
+    
+    setWindowTitle("Custom Waveform Editor");
+    
+    // Add maximize/minimize buttons to existing dialog flags
+    setWindowFlags(windowFlags() | Qt::WindowMinMaxButtonsHint);
+    
+    // Set a safe default size that fits on practically any monitor
+    resize(750, 550);
+    
     setupUi();
 }
 
@@ -39,21 +47,24 @@ void VoltageSourceCustomWaveformDialog::setupUi() {
     header->setStyleSheet("color: #e5e7eb; font-weight: 600;");
     mainLayout->addWidget(header);
 
-    // Toolbar for advanced tools
-    auto* toolLayout = new QHBoxLayout();
+    // Toolbar for advanced tools - Split into two rows for width management
+    auto* toolLayout1 = new QHBoxLayout();
+    auto* toolLayout2 = new QHBoxLayout();
     
     auto* sineBtn = new QPushButton("Sine");
     auto* squareBtn = new QPushButton("Square");
     auto* triBtn = new QPushButton("Triangle");
     auto* sawBtn = new QPushButton("Sawtooth");
+    auto* bitsBtn = new QPushButton("Bitstream");
     auto* pulseBtn = new QPushButton("Pulse");
     
-    toolLayout->addWidget(sineBtn);
-    toolLayout->addWidget(squareBtn);
-    toolLayout->addWidget(triBtn);
-    toolLayout->addWidget(sawBtn);
-    toolLayout->addWidget(pulseBtn);
-    toolLayout->addSpacing(10);
+    toolLayout1->addWidget(sineBtn);
+    toolLayout1->addWidget(squareBtn);
+    toolLayout1->addWidget(triBtn);
+    toolLayout1->addWidget(sawBtn);
+    toolLayout1->addWidget(bitsBtn);
+    toolLayout1->addWidget(pulseBtn);
+    toolLayout1->addStretch();
     
     auto* smoothBtn = new QPushButton("Smooth");
     auto* noiseBtn = new QPushButton("Noise");
@@ -63,28 +74,42 @@ void VoltageSourceCustomWaveformDialog::setupUi() {
     auto* scaleBtn = new QPushButton("Scale T/V");
     auto* shiftBtn = new QPushButton("Shift T");
     
-    toolLayout->addWidget(smoothBtn);
-    toolLayout->addWidget(noiseBtn);
-    toolLayout->addWidget(invertBtn);
-    toolLayout->addWidget(mirrorVBtn);
-    toolLayout->addWidget(reverseBtn);
-    toolLayout->addWidget(scaleBtn);
-    toolLayout->addWidget(shiftBtn);
-    toolLayout->addSpacing(20);
+    toolLayout2->addWidget(smoothBtn);
+    toolLayout2->addWidget(noiseBtn);
+    toolLayout2->addWidget(invertBtn);
+    toolLayout2->addWidget(mirrorVBtn);
+    toolLayout2->addWidget(reverseBtn);
+    toolLayout2->addWidget(scaleBtn);
+    toolLayout2->addWidget(shiftBtn);
+    toolLayout2->addStretch();
+    
+    mainLayout->addLayout(toolLayout1);
+    mainLayout->addLayout(toolLayout2);
 
+    auto* optionLayout = new QHBoxLayout();
     auto* snapCheck = new QCheckBox("Snap");
     auto* stepCheck = new QCheckBox("Step Mode");
-    toolLayout->addWidget(snapCheck);
-    toolLayout->addWidget(stepCheck);
-    toolLayout->addStretch();
+    auto* polylineCheck = new QCheckBox("Polyline");
+    m_resampleCheck = new QCheckBox("Resample");
+    m_resampleCheck->setChecked(false); 
     
-    mainLayout->addLayout(toolLayout);
+    optionLayout->addWidget(snapCheck);
+    optionLayout->addWidget(stepCheck);
+    optionLayout->addWidget(polylineCheck);
+    optionLayout->addWidget(m_resampleCheck);
+    optionLayout->addStretch();
+    
+    mainLayout->addLayout(optionLayout);
 
     m_drawWidget = new WaveformDrawWidget();
     mainLayout->addWidget(m_drawWidget, 1);
 
     connect(snapCheck, &QCheckBox::toggled, m_drawWidget, &WaveformDrawWidget::setSnapToGrid);
     connect(stepCheck, &QCheckBox::toggled, m_drawWidget, &WaveformDrawWidget::setStepMode);
+    connect(polylineCheck, &QCheckBox::toggled, m_drawWidget, &WaveformDrawWidget::setPolylineMode);
+    connect(m_resampleCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_samplesSpin) m_samplesSpin->setEnabled(checked);
+    });
 
     auto* formulaLayout = new QHBoxLayout();
     formulaLayout->addWidget(new QLabel("Equation f(x):"));
@@ -151,6 +176,7 @@ void VoltageSourceCustomWaveformDialog::setupUi() {
     connect(squareBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplySquare);
     connect(triBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyTriangle);
     connect(sawBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplySawtooth);
+    connect(bitsBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyBitstream);
     connect(pulseBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyPulse);
     connect(smoothBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplySmooth);
     connect(noiseBtn, &QPushButton::clicked, this, &VoltageSourceCustomWaveformDialog::onApplyNoise);
@@ -178,6 +204,21 @@ void VoltageSourceCustomWaveformDialog::onApplyTriangle() {
 
 void VoltageSourceCustomWaveformDialog::onApplySawtooth() {
     m_drawWidget->setPoints(WaveformEngine::generateSawtooth());
+}
+
+void VoltageSourceCustomWaveformDialog::onApplyBitstream() {
+    bool ok;
+    QString bits = QInputDialog::getText(this, "Logic Bitstream", "Enter bits (e.g. 101101):", QLineEdit::Normal, "", &ok);
+    if (ok && !bits.isEmpty()) {
+        m_drawWidget->setPoints(WaveformEngine::generateBitstream(bits));
+        m_drawWidget->setStepMode(true);
+        // Update UI checkbox to match
+        for (auto* obj : children()) {
+            if (auto* cb = qobject_cast<QCheckBox*>(obj)) {
+                if (cb->text() == "Step Mode") cb->setChecked(true);
+            }
+        }
+    }
 }
 
 void VoltageSourceCustomWaveformDialog::onApplyPulse() {
@@ -275,35 +316,15 @@ static double parseOrDefault(const QString& text, double fallback) {
 }
 
 QString VoltageSourceCustomWaveformDialog::buildPwlPoints() const {
-    QVector<QPointF> points = m_drawWidget->points();
-    if (points.isEmpty()) return "0 0 1 0";
+    if (!m_drawWidget) return "0 0 1 0";
 
-    std::sort(points.begin(), points.end(), [](const QPointF& a, const QPointF& b) { return a.x() < b.x(); });
-    if (points.first().x() > 0.0) points.prepend({0.0, points.first().y()});
-    if (points.last().x() < 1.0) points.append({1.0, points.last().y()});
+    WaveformEngine::ExportParams p;
+    p.period = qMax(1e-12, parseOrDefault(m_periodEdit->text(), 1.0));
+    p.amplitude = parseOrDefault(m_amplitudeEdit->text(), 1.0);
+    p.offset = parseOrDefault(m_offsetEdit->text(), 0.0);
+    p.isStepMode = m_drawWidget->isStepMode();
+    p.resample = m_resampleCheck && m_resampleCheck->isChecked();
+    p.sampleCount = m_samplesSpin->value();
 
-    const int samples = m_samplesSpin->value();
-    const double period = qMax(1e-12, parseOrDefault(m_periodEdit->text(), 1.0));
-    const double amplitude = parseOrDefault(m_amplitudeEdit->text(), 1.0);
-    const double offset = parseOrDefault(m_offsetEdit->text(), 0.0);
-
-    QStringList tokens;
-    for (int i = 0; i < samples; ++i) {
-        double x = double(i) / (samples - 1);
-        double y = 0;
-        for (int j = 1; j < points.size(); ++j) {
-            if (x <= points[j].x()) {
-                const QPointF a = points[j - 1];
-                const QPointF b = points[j];
-                if (m_drawWidget->isStepMode()) y = a.y();
-                else {
-                    double t = (x - a.x()) / (b.x() - a.x());
-                    y = a.y() + t * (b.y() - a.y());
-                }
-                break;
-            }
-        }
-        tokens << QString::number(x * period, 'g', 12) << QString::number(offset + amplitude * y, 'g', 12);
-    }
-    return tokens.join(' ');
+    return WaveformEngine::convertToPwl(m_drawWidget->points(), p);
 }

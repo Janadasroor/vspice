@@ -23,6 +23,18 @@ GENERAL_TOOLS = [
         },
     },
     {
+        "name": "assign_real_world_part",
+        "description": "Searches for a real-world component (e.g. '10V 2A Schottky diode SMD') via supply chain/lookup and assigns its MPN (Manufacturer Part Number) and value to a generic symbol in the active schematic.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reference": {"type": "string", "description": "The reference designator of the generic part to update, e.g., 'D1' or 'U2'."},
+                "search_query": {"type": "string", "description": "The natural language query describing the required specifications, e.g., '10V 2A Schottky diode SMD' or 'low noise rail-to-rail op-amp'."}
+            },
+            "required": ["reference", "search_query"]
+        }
+    },
+    {
         "name": "save_logic_template",
         "description": "Saves a custom generated Python logic script directly to the user's template library so they can load it smoothly into Smart Signal Blocks.",
         "parameters": {

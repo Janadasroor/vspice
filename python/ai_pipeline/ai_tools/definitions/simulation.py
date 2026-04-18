@@ -59,4 +59,20 @@ SIMULATION_TOOLS = [
             "required": ["analysis_type"],
         },
     },
+    {
+        "name": "setup_parameter_sweep",
+        "description": "Configures and runs a simulation sweeping a specific parameter (e.g., sweeping R1 from 1k to 10k). This is extremely useful for analyzing how a component's value affects the circuit's performance.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "component_ref": {"type": "string", "description": "The reference of the component to sweep (e.g., 'R1', 'C2', 'V1')."},
+                "sweep_start": {"type": "string", "description": "The starting value of the sweep (e.g., '1k')."},
+                "sweep_stop": {"type": "string", "description": "The ending value of the sweep (e.g., '10k')."},
+                "sweep_step": {"type": "string", "description": "The step size of the sweep (e.g., '1k')."},
+                "analysis_type": {"type": "string", "enum": ["op", "tran", "ac"], "description": "The type of analysis to run for each sweep step."},
+                "analysis_args": {"type": "string", "description": "The arguments for the analysis (e.g., '1u 5m' for tran or 'dec 10 1 100k' for ac)."}
+            },
+            "required": ["component_ref", "sweep_start", "sweep_stop", "sweep_step", "analysis_type", "analysis_args"]
+        }
+    },
 ]

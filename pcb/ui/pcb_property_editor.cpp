@@ -295,6 +295,7 @@ void PCBPropertyEditor::populateProperties() {
             "}"
             "QCheckBox::indicator:checked {"
             "   background: #3b82f6; border-color: #3b82f6;"
+            "   image: url(:/icons/check.svg);"
             "}"
         );
         connect(check, &QCheckBox::toggled, [this, name](bool v) {

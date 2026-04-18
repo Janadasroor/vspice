@@ -30,6 +30,7 @@ private Q_SLOTS:
     void onApplySquare();
     void onApplyTriangle();
     void onApplySawtooth();
+    void onApplyBitstream();
     void onApplyPulse();
     void onApplyMirrorV();
     void onApplySmooth();
@@ -52,6 +53,7 @@ private:
     QSpinBox* m_samplesSpin;
     QCheckBox* m_repeatCheck;
     QCheckBox* m_saveToFileCheck;
+    QCheckBox* m_resampleCheck;
     QLineEdit* m_filePathEdit;
     QPushButton* m_browseBtn;
     QPushButton* m_clearBtn;

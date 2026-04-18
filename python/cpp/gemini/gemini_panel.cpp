@@ -1158,18 +1158,24 @@ void GeminiPanel::parseAndExecuteCommandModeInput(const QString& in) {
     // Advanced Parser: Handle quoted strings and multi-line arguments (like netlists)
     QStringList args;
     QString currentArg;
-    bool inQuotes = false;
+    QChar inQuoteChar; // null character means not in quotes
     for (int i = 0; i < raw.size(); ++i) {
         QChar c = raw[i];
-        if (c == '\"') {
-            // Handle escaped quotes: \"
+        if (c == '\"' || c == '\'') {
+            // Handle escaped quotes
             if (i > 0 && raw[i-1] == '\\') {
                 currentArg.chop(1); // remove the backslash
-                currentArg += '\"';
+                currentArg += c;
             } else {
-                inQuotes = !inQuotes;
+                if (inQuoteChar.isNull()) {
+                    inQuoteChar = c; // start quote
+                } else if (inQuoteChar == c) {
+                    inQuoteChar = QChar(); // end quote
+                } else {
+                    currentArg += c; // quote inside different quote
+                }
             }
-        } else if (c.isSpace() && !inQuotes) {
+        } else if (c.isSpace() && inQuoteChar.isNull()) {
             if (!currentArg.isEmpty()) {
                 args << currentArg;
                 currentArg.clear();
@@ -1228,9 +1234,60 @@ void GeminiPanel::parseAndExecuteCommandModeInput(const QString& in) {
     } else if (cmd == "run erc" || cmd == "run_erc") {
         appendSystemAction("ERC", "Running Electrical Rules Check...", "");
         Q_EMIT runERCRequested();
-    } else if (cmd == "run simulation" || cmd == "run sim" || cmd == "run_simulation" || cmd == "run_sim") {
+    } else if (cmd == "run simulation" || cmd == "run sim" || cmd == "run_simulation" || cmd == "run_sim" || cmd == "simulate") {
         appendSystemAction("Simulation", "Initializing SPICE simulation...", "");
         Q_EMIT runSimulationRequested();
+    } else if (cmd == "set_property" && args.size() >= 4) {
+        QString ref = args[1];
+        QString prop = args[2];
+        QString val = args[3];
+        
+        QJsonObject cmdObj;
+        cmdObj["cmd"] = "setProperty";
+        cmdObj["reference"] = ref;
+        cmdObj["property"] = prop;
+        cmdObj["value"] = val;
+        
+        QJsonArray cmdArr;
+        cmdArr.append(cmdObj);
+        QJsonObject snipObj;
+        snipObj["commands"] = cmdArr;
+        
+        Q_EMIT snippetGenerated(QString(QJsonDocument(snipObj).toJson(QJsonDocument::Compact)));
+        appendSystemNote("<b>Property Updated:</b> " + ref + " -> " + prop + " = " + val);
+    } else if (cmd == "add_directive" && args.size() >= 2) {
+        QString directive = raw.mid(raw.indexOf("add_directive") + 13).trimmed();
+        if (directive.startsWith("\"") && directive.endsWith("\"")) {
+            directive = directive.mid(1, directive.length() - 2);
+        }
+        
+        QJsonObject props;
+        props["value"] = directive;
+        
+        QJsonObject cmdObj;
+        cmdObj["cmd"] = "addComponent";
+        cmdObj["type"] = "Spice Directive";
+        cmdObj["x"] = -100;
+        cmdObj["y"] = -100;
+        cmdObj["properties"] = props;
+        
+        QJsonArray cmdArr;
+        cmdArr.append(cmdObj);
+        QJsonObject snipObj;
+        snipObj["commands"] = cmdArr;
+        
+        Q_EMIT snippetGenerated(QString(QJsonDocument(snipObj).toJson(QJsonDocument::Compact)));
+        appendSystemNote("<b>Directive Added:</b> " + directive);
+    } else if (cmd == "execute_commands" && args.size() >= 2) {
+        QString jsonStr = args[1];
+        QJsonDocument doc = QJsonDocument::fromJson(jsonStr.toUtf8());
+        if (doc.isArray()) {
+            QJsonObject snipObj;
+            snipObj["commands"] = doc.array();
+            Q_EMIT snippetGenerated(QString(QJsonDocument(snipObj).toJson(QJsonDocument::Compact)));
+        } else {
+            appendSystemNote("<b>Error:</b> Invalid JSON array for execute_commands.");
+        }
     } else if (cmd == "list components" || cmd == "list parts" || cmd == "list_components" || cmd == "list_parts") {
         if (!m_scene) {
             appendSystemNote("<b>Error:</b> Schematic scene is not active.");

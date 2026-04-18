@@ -727,6 +727,10 @@ void VoltageSourceLTSpiceDialog::setupUi() {
 }
 
 void VoltageSourceLTSpiceDialog::onFunctionChanged() {
+    // Only proceed if this is the radio button being CHECKED
+    QRadioButton* rb = qobject_cast<QRadioButton*>(sender());
+    if (rb && !rb->isChecked()) return;
+
     if (m_noneRadio->isChecked()) m_paramStack->setCurrentIndex(0);
     else if (m_pulseRadio->isChecked()) m_paramStack->setCurrentIndex(1);
     else if (m_sineRadio->isChecked()) m_paramStack->setCurrentIndex(2);
@@ -736,6 +740,9 @@ void VoltageSourceLTSpiceDialog::onFunctionChanged() {
     else if (m_behavioralRadio->isChecked()) m_paramStack->setCurrentIndex(6);
     else if (m_customRadio->isChecked()) {
         m_paramStack->setCurrentIndex(5);
+        // Only open if it's the currently focused window or explicitly clicked
+        // We use the guard inside onCustomDraw, but we can also check if we are 
+        // in the middle of a setup/load pass.
         onCustomDraw();
     }
     else if (m_pwlFileRadio->isChecked()) m_paramStack->setCurrentIndex(0);
@@ -926,6 +933,10 @@ void VoltageSourceLTSpiceDialog::onWavBrowse() {
 }
 
 void VoltageSourceLTSpiceDialog::onCustomDraw() {
+    static bool isDrawing = false;
+    if (isDrawing) return;
+    isDrawing = true;
+
     VoltageSourceCustomWaveformDialog dlg(this);
     dlg.setDefaultSavePath(m_projectDir, m_item ? (m_item->reference() + ".pwl") : "waveform.pwl");
     if (dlg.exec() == QDialog::Accepted) {
@@ -937,8 +948,11 @@ void VoltageSourceLTSpiceDialog::onCustomDraw() {
             const QString path = dlg.pwlFilePath();
             if (!path.isEmpty()) {
                 m_pwlFile->setText(path);
+                m_pwlFileRadio->blockSignals(true);
                 m_pwlFileRadio->setChecked(true);
+                m_pwlFileRadio->blockSignals(false);
                 m_paramStack->setCurrentIndex(0);
+                isDrawing = false;
                 return;
             }
         }
@@ -949,11 +963,14 @@ void VoltageSourceLTSpiceDialog::onCustomDraw() {
             if (m_customRadio && m_customRadio->isChecked()) {
                 m_paramStack->setCurrentIndex(5);
             } else {
+                m_pwlRadio->blockSignals(true);
                 m_pwlRadio->setChecked(true);
+                m_pwlRadio->blockSignals(false);
                 m_paramStack->setCurrentIndex(5);
             }
         }
     }
+    isDrawing = false;
 }
 
 void VoltageSourceLTSpiceDialog::loadFromItem() {
