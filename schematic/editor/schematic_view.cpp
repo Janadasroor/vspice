@@ -871,7 +871,17 @@ void SchematicView::mouseMoveEvent(QMouseEvent *event) {
             // Trigger Smart Probe logic (Follow mouse or handle hide grace period)
             m_smartProbeEngine->probe(hoveredNet, context, event->pos() + QPoint(26, 20));
         } else {
-            m_smartProbeEngine->probe("", "", event->pos());
+            // Check if hovering over a component body
+            SchematicItem* hoveredComp = findProbeableComponentAt(this, event->pos(), scenePos);
+            if (hoveredComp && !hoveredComp->reference().trimmed().isEmpty()) {
+                const bool powerHeld = event->modifiers() & Qt::ShiftModifier;
+                const QString kindTag = powerHeld ? "P" : "I";
+                const QString sigName = (kindTag == "I") ? "I(" + hoveredComp->reference() + ")" : "P(" + hoveredComp->reference() + ")";
+                
+                m_smartProbeEngine->probe(sigName, hoveredComp->reference() + " Current/Power", event->pos() + QPoint(26, 20));
+            } else {
+                m_smartProbeEngine->probe("", "", event->pos());
+            }
         }
     } else if (m_smartProbeEngine) {
         m_smartProbeEngine->probe("", "", event->pos());

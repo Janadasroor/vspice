@@ -4,6 +4,35 @@
 #include "smart_probe_overlay.h"
 #include <QDebug>
 
+namespace {
+QStringList getWaveformNetAliases(const QString& netName) {
+    const QString trimmed = netName.trimmed();
+    if (trimmed.isEmpty()) return {};
+
+    QStringList aliases{trimmed};
+    
+    if (trimmed.startsWith("I(", Qt::CaseInsensitive) && trimmed.endsWith(")")) {
+        QString comp = trimmed.mid(2, trimmed.size() - 3).trimmed();
+        aliases << QString("@%1[i]").arg(comp) << QString("@%1[I]").arg(comp);
+    } else if (trimmed.startsWith("P(", Qt::CaseInsensitive) && trimmed.endsWith(")")) {
+        QString comp = trimmed.mid(2, trimmed.size() - 3).trimmed();
+        aliases << QString("@%1[p]").arg(comp) << QString("@%1[P]").arg(comp);
+    } else {
+        aliases << QString("V(%1)").arg(trimmed);
+        if (trimmed.startsWith("V(", Qt::CaseInsensitive) && trimmed.endsWith(")")) {
+            aliases << trimmed.mid(2, trimmed.size() - 3).trimmed();
+        }
+    }
+
+    const QString upper = trimmed.toUpper();
+    if (upper == "GND" || trimmed == "0") {
+        aliases << "0" << "GND" << "V(0)" << "V(GND)";
+    }
+    aliases.removeDuplicates();
+    return aliases;
+}
+} // namespace
+
 SmartProbeEngine::SmartProbeEngine(GeminiPanel* geminiPanel, SmartProbeOverlay* overlay, QObject* parent) 
     : QObject(parent), m_geminiPanel(geminiPanel), m_overlay(overlay) {
     m_debounceTimer = new QTimer(this);
@@ -104,16 +133,32 @@ QString SmartProbeEngine::formatInstantValue(const QString& netName, const SimRe
     int maxStepsToShow = 3;
     int matchedCount = 0;
 
-    std::string targetExact = stdNet;
-    std::string targetV = "V(" + stdNet + ")";
+    QStringList aliases = getWaveformNetAliases(netName);
 
     for (const auto& wf : results.waveforms) {
-        // Match exact name or name with a step suffix
+        QString wName = QString::fromStdString(wf.name);
+        
         bool isMatch = false;
-        if (wf.name == targetExact || wf.name == targetV) {
-            isMatch = true;
-        } else if (wf.name.find(targetExact + " [") == 0 || wf.name.find(targetV + " [") == 0) {
-            isMatch = true;
+        // Check exact match with aliases
+        for (const QString& alias : aliases) {
+            if (wName.compare(alias, Qt::CaseInsensitive) == 0) {
+                isMatch = true;
+                break;
+            }
+        }
+        
+        // Check for step param suffix: "@R1[i] [step=1]"
+        if (!isMatch) {
+            int bracketIdx = wName.indexOf(" [");
+            if (bracketIdx > 0) {
+                QString textNoSuffix = wName.left(bracketIdx).trimmed();
+                for (const QString& alias : aliases) {
+                    if (textNoSuffix.compare(alias, Qt::CaseInsensitive) == 0) {
+                        isMatch = true;
+                        break;
+                    }
+                }
+            }
         }
 
         if (isMatch) {
@@ -143,18 +188,25 @@ QString SmartProbeEngine::formatInstantValue(const QString& netName, const SimRe
             double rms = std::sqrt(sumSq / validPoints);
             
             // Extract step suffix if present for display
-            QString label = "V_rms";
-            if (wf.name.find('[') != std::string::npos) {
-                QString qName = QString::fromStdString(wf.name);
-                int idx = qName.indexOf('[');
+            bool isCurrent = netName.startsWith("I(", Qt::CaseInsensitive);
+            bool isPower = netName.startsWith("P(", Qt::CaseInsensitive);
+            
+            QString baseLabel = isCurrent ? "I_rms" : (isPower ? "P_avg" : "V_rms");
+            QString unit = isCurrent ? "A" : (isPower ? "W" : "V");
+            QString prefix = isCurrent ? "I " : (isPower ? "P " : "V ");
+
+            QString label = baseLabel;
+            if (wName.indexOf('[') >= 0) {
+                int idx = wName.indexOf('[');
                 if (idx >= 0) {
-                    label = "V " + qName.mid(idx);
+                    label = prefix + wName.mid(idx);
                 }
             }
 
-            stepResults.append(QString("%1 = %2 V (Peak-Peak: %3 V to %4 V)")
+            stepResults.append(QString("%1 = %2 %3 (Peak-Peak: %4 %3 to %5 %3)")
                     .arg(label)
                     .arg(rms, 0, 'f', 2)
+                    .arg(unit)
                     .arg(minV, 0, 'f', 2)
                     .arg(maxV, 0, 'f', 2));
         }

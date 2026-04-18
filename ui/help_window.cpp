@@ -99,16 +99,23 @@ void HelpWindow::populateGuides() {
 
     // Create Categories
     QTreeWidgetItem* catBasics = new QTreeWidgetItem(m_docTree);
-    catBasics->setText(0, "Getting Started");
-    catBasics->setIcon(0, QIcon(":/icons/folder_open.svg"));
+    catBasics->setText(0, "GETTING STARTED");
+    catBasics->setFirstColumnSpanned(true);
     
     QTreeWidgetItem* catWorkflow = new QTreeWidgetItem(m_docTree);
-    catWorkflow->setText(0, "Workflows & Features");
-    catWorkflow->setIcon(0, QIcon(":/icons/folder_open.svg"));
+    catWorkflow->setText(0, "WORKFLOWS & FEATURES");
+    catWorkflow->setFirstColumnSpanned(true);
 
     QTreeWidgetItem* catRef = new QTreeWidgetItem(m_docTree);
-    catRef->setText(0, "References");
-    catRef->setIcon(0, QIcon(":/icons/folder_open.svg"));
+    catRef->setText(0, "REFERENCES");
+    catRef->setFirstColumnSpanned(true);
+
+    // Apply bold font to headers
+    QFont headerFont = m_docTree->font();
+    headerFont.setBold(true);
+    catBasics->setFont(0, headerFont);
+    catWorkflow->setFont(0, headerFont);
+    catRef->setFont(0, headerFont);
 
     QStringList filters;
     filters << "*.md";
@@ -208,18 +215,36 @@ void HelpWindow::applyTheme() {
     QString accent = theme->accentColor().name();
     QString itemHover = (theme->type() == PCBTheme::Light) ? "#f1f5f9" : "#2d2d30";
     QString searchBg = (theme->type() == PCBTheme::Light) ? "#ffffff" : "#1a1a1a";
+    QString secondaryFg = theme->textSecondary().name();
 
     setStyleSheet(QString(
         "QMainWindow { background-color: %1; }"
         "QWidget#sidebar { background-color: %2; border-right: 1px solid %4; }"
-        "QLineEdit { background-color: %7; border: 1px solid %4; border-radius: 5px; padding: 5px 10px; color: %3; }"
+        
+        "QLineEdit { background-color: %7; border: 1px solid %4; border-radius: 6px; padding: 6px 12px; color: %3; font-size: 13px; }"
         "QLineEdit:focus { border-color: %5; }"
-        "QTreeWidget { background-color: transparent; border: none; color: %3; outline: none; }"
-        "QTreeWidget::item { padding: 8px 5px; border-radius: 4px; margin: 2px 0; }"
-        "QTreeWidget::item:selected { background-color: %5; color: white; }"
+        
+        "QTreeWidget { background-color: transparent; border: none; color: %3; outline: none; "
+        "               show-decoration-selected: 0; selection-background-color: transparent; }"
+        
+        /* Category styling (Items with no data) */
+        "QTreeWidget::item { padding: 8px 12px; border-radius: 4px; color: %3; font-size: 13px; }"
+        
+        /* Article selection - Left bar + subtle background */
+        "QTreeWidget::item:selected { "
+        "   background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 %5, stop:0.04 %5, stop:0.041 rgba(86, 156, 214, 20), stop:1 rgba(86, 156, 214, 10));"
+        "   color: %5; font-weight: bold; border-radius: 0px; "
+        "}"
+        
         "QTreeWidget::item:hover:!selected { background-color: %6; }"
+        
+        /* Modern branch indicators */
+        "QTreeWidget::branch { background-color: transparent; }"
+        "QTreeWidget::branch:has-children:closed:has-siblings, QTreeWidget::branch:has-children:closed:!has-siblings { image: url(:/icons/chevron_right.svg); }"
+        "QTreeWidget::branch:open:has-children:has-siblings, QTreeWidget::branch:open:has-children:!has-siblings { image: url(:/icons/chevron_down.svg); }"
+        
         "QTextBrowser { background-color: %1; color: %3; selection-background-color: %5; border: none; }"
         "QSplitter::handle { background-color: %4; }"
-        "QStatusBar { background-color: %5; color: white; border-top: 1px solid %4; }"
-    ).arg(bg, panelBg, fg, border, accent, itemHover, searchBg));
+        "QStatusBar { background-color: %2; color: %8; border-top: 1px solid %4; font-size: 11px; }"
+    ).arg(bg, panelBg, fg, border, accent, itemHover, searchBg, secondaryFg));
 }

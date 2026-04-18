@@ -659,15 +659,6 @@ void SimulationPanel::appendDerivedPowerWaveforms(SimResults& results) const {
     if (!m_scene || !m_netManager) return;
     m_netManager->updateNets(m_scene);
 
-    auto findWave = [&](const QString& nameA, const QString& nameB = QString()) -> const SimWaveform* {
-        for (const auto& w : results.waveforms) {
-            const QString wName = QString::fromStdString(w.name);
-            if (wName.compare(nameA, Qt::CaseInsensitive) == 0) return &w;
-            if (!nameB.isEmpty() && wName.compare(nameB, Qt::CaseInsensitive) == 0) return &w;
-        }
-        return nullptr;
-    };
-
     QSet<QString> existing;
     for (const auto& w : results.waveforms) {
         existing.insert(QString::fromStdString(w.name).toUpper());
@@ -681,29 +672,63 @@ void SimulationPanel::appendDerivedPowerWaveforms(SimResults& results) const {
         const QString ref = item->reference().trimmed();
         if (ref.isEmpty()) continue;
 
-        const QString powerName = QString("P(%1)").arg(ref);
-        if (existing.contains(powerName.toUpper())) continue;
-
         const QStringList nets = connectedNetsForItem(item, false);
         if (nets.size() < 2) continue;
 
-        const SimWaveform* currentWave = findWave(QString("I(%1)").arg(ref));
-        const SimWaveform* posWave = findWaveByNetAliases(results.waveforms, nets[0]);
-        const SimWaveform* negWave = findWaveByNetAliases(results.waveforms, nets[1]);
-        if (!currentWave || !posWave || !negWave) continue;
+        const QString baseCurrentName = QString("I(%1)").arg(ref);
+        const QString basePowerName = QString("P(%1)").arg(ref);
 
-        const size_t count = std::min({currentWave->xData.size(), currentWave->yData.size(), posWave->yData.size(), negWave->yData.size()});
-        if (count == 0) continue;
+        // Find all current traces for this component (could be multiple if swept)
+        for (const auto& w : results.waveforms) {
+            QString wName = QString::fromStdString(w.name);
+            if (!signalMatches(wName, baseCurrentName)) continue;
 
-        SimWaveform pWave;
-        pWave.name = powerName.toStdString();
-        pWave.xData.reserve(count);
-        pWave.yData.reserve(count);
-        for (size_t i = 0; i < count; ++i) {
-            pWave.xData.push_back(currentWave->xData[i]);
-            pWave.yData.push_back((posWave->yData[i] - negWave->yData[i]) * currentWave->yData[i]);
+            // Extract the step suffix if it exists
+            QString stepSuffix;
+            int bracketIdx = wName.indexOf(" [");
+            if (bracketIdx > 0) {
+                stepSuffix = wName.mid(bracketIdx);
+            }
+
+            const QString powerName = basePowerName + stepSuffix;
+            if (existing.contains(powerName.toUpper())) continue;
+
+            // Find matching voltage traces for the two nets, with the SAME step suffix
+            const SimWaveform* posWave = nullptr;
+            const SimWaveform* negWave = nullptr;
+
+            for (const auto& vw : results.waveforms) {
+                QString vwName = QString::fromStdString(vw.name);
+                
+                // For voltage, we must match the net name AND the exact step suffix
+                if (signalMatches(vwName, nets[0])) {
+                    int vBracketIdx = vwName.indexOf(" [");
+                    QString vSuffix = (vBracketIdx > 0) ? vwName.mid(vBracketIdx) : "";
+                    if (vSuffix == stepSuffix) posWave = &vw;
+                }
+                
+                if (signalMatches(vwName, nets[1])) {
+                    int vBracketIdx = vwName.indexOf(" [");
+                    QString vSuffix = (vBracketIdx > 0) ? vwName.mid(vBracketIdx) : "";
+                    if (vSuffix == stepSuffix) negWave = &vw;
+                }
+            }
+
+            if (!posWave || !negWave) continue;
+
+            const size_t count = std::min({w.xData.size(), w.yData.size(), posWave->yData.size(), negWave->yData.size()});
+            if (count == 0) continue;
+
+            SimWaveform pWave;
+            pWave.name = powerName.toStdString();
+            pWave.xData.reserve(count);
+            pWave.yData.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                pWave.xData.push_back(w.xData[i]);
+                pWave.yData.push_back((posWave->yData[i] - negWave->yData[i]) * w.yData[i]);
+            }
+            powerWaves.push_back(std::move(pWave));
         }
-        powerWaves.push_back(std::move(pWave));
     }
     
     if (!powerWaves.empty()) {
@@ -1103,28 +1128,7 @@ void SimulationPanel::addProbe(const QString& signalName) {
     
     // Sync with WaveformViewer
     if (m_waveformViewer) {
-        auto findWaveform = [&](const QString& name) -> const SimWaveform* {
-            if (name.isEmpty()) return nullptr;
-            QString bare = name;
-            QString vName;
-            if (name.startsWith("V(", Qt::CaseInsensitive) && name.endsWith(")")) {
-                bare = name.mid(2, name.length() - 3);
-                vName = name;
-            } else {
-                vName = QString("V(%1)").arg(name);
-            }
-            for (const auto& w : m_lastResults.waveforms) {
-                const QString wName = QString::fromStdString(w.name);
-                if (wName.compare(name, Qt::CaseInsensitive) == 0 ||
-                    wName.compare(bare, Qt::CaseInsensitive) == 0 ||
-                    wName.compare(vName, Qt::CaseInsensitive) == 0) {
-                    return &w;
-                }
-            }
-            return nullptr;
-        };
-
-        auto addWaveform = [&](const SimWaveform* w) {
+        auto addWaveform = [&](const SimWaveform* w, const QString& displayLabel) {
             QVector<double> time;
             QVector<double> values;
             time.reserve(static_cast<int>(w->xData.size()));
@@ -1135,19 +1139,17 @@ void SimulationPanel::addProbe(const QString& signalName) {
                 QVector<double> phase;
                 phase.reserve(static_cast<int>(w->yPhase.size()));
                 for (size_t i = 0; i < w->yPhase.size(); ++i) phase.append(w->yPhase[i]);
-                m_waveformViewer->addSignal(matchedName, time, values, phase);
+                m_waveformViewer->addSignal(displayLabel, time, values, phase);
             } else {
-                m_waveformViewer->addSignal(matchedName, time, values);
+                m_waveformViewer->addSignal(displayLabel, time, values);
             }
         };
 
         bool found = false;
-        if (const SimWaveform* w = findWaveform(signalName)) {
-            addWaveform(w);
-            found = true;
-        } else if (matchedName != signalName) {
-            if (const SimWaveform* w = findWaveform(matchedName)) {
-                addWaveform(w);
+        for (const auto& w : m_lastResults.waveforms) {
+            QString wName = QString::fromStdString(w.name);
+            if (signalMatches(wName, matchedName)) {
+                addWaveform(&w, wName);
                 found = true;
             }
         }
